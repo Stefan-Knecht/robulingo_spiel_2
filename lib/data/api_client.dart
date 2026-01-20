@@ -199,7 +199,9 @@ class ApiClient {
     try {
       final r = await _head(url);
       if (r.statusCode == 200) return (true, r.statusCode);
+      if (kIsWeb) return (false, r.statusCode);
     } catch (_) {
+      if (kIsWeb) return (false, -1);
       // ignore and fall back to GET
     }
     try {
@@ -277,6 +279,14 @@ class ApiClient {
   }
 
   Future<(bool ok, int status)> _audioUrlOk(Uri url) async {
+    if (kIsWeb) {
+      try {
+        final res = await _head(url);
+        return (res.statusCode == 200, res.statusCode);
+      } catch (_) {
+        return (false, -1);
+      }
+    }
     try {
       final req = http.Request('GET', url)
         ..headers['range'] = 'bytes=0-${_missingAudioSampleSize - 1}';

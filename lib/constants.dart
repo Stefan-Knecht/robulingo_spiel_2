@@ -18,7 +18,20 @@ const String userDataBucketPathBase =
     'https://aec343e9a0970f4dcdf10224e7414efb.r2.cloudflarestorage.com/userdata';
 // Standard-Seed (existiert im Bucket/Worker); vorheriger Default war leer.
 const String defaultStartCurriculum = 'start_curriculum_a.json';
-const List<String> langChoices = ['de', 'en', 'ar', 'fr', 'es', 'it', 'ru', 'sv', 'el', 'zh'];
+const List<String> langChoices = [
+  'de',
+  'en',
+  'ar',
+  'fr',
+  'es',
+  'it',
+  'ru',
+  'sv',
+  'el',
+  'zh',
+  'tr',
+  'ja',
+];
 const int batchSize = 12; // Wie viele Items wir in einem Rutsch vom Worker holen
 const double prefetchThreshold = 0.6; // sobald Rest kleiner als 60% des Fensters ist, laden wir nach
 const int prefetchWindowSize = 12; // Größe des Fensters, auf das sich das Verhältnis bezieht
@@ -40,6 +53,8 @@ const Map<String, String> langFlags = {
   'sv': '🇸🇪',
   'el': '🇬🇷',
   'zh': '🇨🇳',
+  'tr': '🇹🇷',
+  'ja': '🇯🇵',
 };
 
 const Map<String, String> speechLocaleOverrides = {
@@ -53,6 +68,8 @@ const Map<String, String> speechLocaleOverrides = {
   'sv': 'sv-SE',
   'el': 'el-GR',
   'zh': 'zh-CN',
+  'tr': 'tr-TR',
+  'ja': 'ja-JP',
 };
 
 const Map<String, String> startCurriculumIcons = {
