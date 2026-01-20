@@ -1,0 +1,143 @@
+// ------------------------------------------------------------
+// Ziel (Laien): Lokale NDJSON-Logs schreiben (session/trials), um Verhalten nachzuvollziehen.
+// Strategie: Append-only Datei im App-Dokumente-Ordner, keine Abhängigkeit zur Hauptlogik.
+// Schritte: init (Datei anlegen), startSession/endSession, log(type, data).
+// Tücken: I/O-Fehler werden geschluckt; Pfad bei Plattformwechsel prüfen.
+// ------------------------------------------------------------
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+
+import 'package:path_provider/path_provider.dart';
+
+import 'data/log_uploader.dart';
+
+/// Append-only NDJSON logger for local analytics.
+class EventLogger {
+  static final EventLogger _instance = EventLogger._internal();
+  factory EventLogger() => _instance;
+  EventLogger._internal();
+
+  File? _file;
+  bool _ready = false;
+  String sessionId = '';
+  String userId = '';
+  String workerHost = '';
+  String apiPrefix = '';
+  String? startKey;
+  String? lang;
+  String? nativeLang;
+  String? storyId;
+  String? mode;
+  LogUploader? _uploader;
+  final List<String> _pendingUpload = []; // Zeilen, die noch hochgeladen werden.
+  bool _uploading = false;
+  bool _uploadScheduled = false;
+
+  bool get isReady => _ready;
+
+  Future<void> init() async {
+    if (_ready) return;
+    final dir = await getApplicationDocumentsDirectory();
+    final logsDir = Directory('${dir.path}/logs');
+    // Lege den lokalen Ordner fuer Log-Dateien an.
+    await logsDir.create(recursive: true);
+    _file = File('${logsDir.path}/events.ndjson');
+    _ready = true;
+  }
+
+  void configureRemote({
+    required String userId,
+    required String workerHost,
+    required String apiPrefix,
+  }) {
+    this.userId = userId;
+    this.workerHost = workerHost;
+    this.apiPrefix = apiPrefix;
+    _uploader = LogUploader(workerHost: workerHost, apiPrefix: apiPrefix);
+    _scheduleUpload();
+  }
+
+  void setSessionContext({
+    String? startKey,
+    String? lang,
+    String? nativeLang,
+    String? storyId,
+    String? mode,
+  }) {
+    this.startKey = startKey ?? this.startKey;
+    this.lang = lang ?? this.lang;
+    this.nativeLang = nativeLang ?? this.nativeLang;
+    this.storyId = storyId ?? this.storyId;
+    this.mode = mode ?? this.mode;
+  }
+
+  String _newSessionId() {
+    final rnd = Random();
+    return 's${DateTime.now().microsecondsSinceEpoch}_${rnd.nextInt(1 << 32)}';
+  }
+
+  Future<void> startSession({required String lang}) async {
+    if (!_ready) return;
+    // Neue Session-ID fuer eine zusammenhaengende Trainingsrunde.
+    sessionId = _newSessionId();
+    setSessionContext(lang: lang);
+    await log('session_start', {'lang': lang});
+  }
+
+  Future<void> endSession() async {
+    await log('session_end', {});
+  }
+
+  Future<void> log(String type, Map<String, dynamic> data) async {
+    if (!_ready || _file == null) return;
+    final now = DateTime.now().toUtc().toIso8601String();
+    // Eine Zeile pro Event (NDJSON), damit sie leicht lesbar und append-only ist.
+    final payload = {
+      'ts': now,
+      'type': type,
+      'session': sessionId,
+      if (userId.isNotEmpty) 'user': userId,
+      if (startKey != null) 'start_key': startKey,
+      if (lang != null) 'lang': lang,
+      if (nativeLang != null) 'native': nativeLang,
+      if (storyId != null) 'story_id': storyId,
+      if (mode != null) 'mode': mode,
+      ...data,
+    };
+    final line = '${jsonEncode(payload)}\n';
+    try {
+      await _file!.writeAsString(line, mode: FileMode.append, flush: false);
+      _pendingUpload.add(line.trimRight());
+      _scheduleUpload();
+    } catch (_) {
+      // swallow logging errors
+    }
+  }
+
+  void _scheduleUpload() {
+    if (_uploadScheduled) return;
+    // Upload nur wenn Remote-Konfig vorhanden ist.
+    if (_uploader == null || userId.isEmpty) return;
+    _uploadScheduled = true;
+    Future.microtask(_flushUploads);
+  }
+
+  Future<void> _flushUploads() async {
+    _uploadScheduled = false;
+    if (_uploading) return;
+    if (_uploader == null || userId.isEmpty) return;
+    if (_pendingUpload.isEmpty) return;
+    _uploading = true;
+    // Schicke Logs im Batch; bei Erfolg entfernen.
+    final batch = List<String>.from(_pendingUpload);
+    final ok = await _uploader!.upload(userId: userId, lines: batch);
+    if (ok) {
+      _pendingUpload.removeRange(0, batch.length);
+    }
+    _uploading = false;
+    if (_pendingUpload.isNotEmpty) {
+      _scheduleUpload();
+    }
+  }
+}

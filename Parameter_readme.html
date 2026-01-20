@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RobuLingo Parameter Overview</title>
+</head>
+<body>
+  <h1>RobuLingo Parameter Reference</h1>
+
+  <section id="download-criteria">
+    <h2>Cloudflare download criteria</h2>
+    <p>
+      The app fetches start curricula from Cloudflare (R2 buckets) via
+      <code>ApiClient.loadStartCurriculum</code>. This method builds the URL list in
+      <code>_startCurriculumCandidates</code>, tries both the virtual host and the
+      <code>/file</code> API, and falls back to <code>start_curriculum_a.json</code>
+      if <code>allowDefaultFallback</code> is true.
+    </p>
+    <p>
+      Curricula that should only contain items with JSON, language audio, and an
+      image are filtered through <code>_pickCompleteEntries</code>. That helper checks
+      each UUID with <code>_isCompleteStartItem</code>, which double-checks the catalog,
+      audio (via <code>hasAudioForLang</code>), and images before including the entry.
+    </p>
+    <p>
+      The constant <code>startCurriculumWindowSize</code> in
+      <code>lib/constants.dart</code> controls how many entries are kept after this
+      filtering. Adjust it there (or the fallback flag passed to
+      <code>loadStartCurriculum</code>) if you want larger/smaller downloads.
+    </p>
+    <p>
+      The Cloudflare hosts themselves are defined in
+      <code>lib/constants.dart</code> (<code>curriculumBucketVirtualHost</code>,
+      <code>curriculumBucketPathBase</code>). Changing them reroutes every download.
+    </p>
+  </section>
+
+  <section id="distractors">
+    <h2>Distractor selection relative to target</h2>
+    <p>
+      Trials are built inside <code>TrialBuffer</code> (see
+      <code>lib/logic/trial_buffer.dart</code>). For each new target, the controller
+      prefers distractors located within a ±5-item vicinity (the <code>_vicinityWindow</code>
+      constant), excludes the same <code>uuid</code> or identical images, and expands outward
+      only if no valid candidates appear in the first 5 positions.
+    </p>
+    <p>
+      Review trials are inserted every <code>reviewInterval</code> items
+      (<code>lib/constants.dart</code>). They use the same vicinity rules but only
+      consider previously presented targets.
+    </p>
+    <p>
+      To adjust the balance between locality and variety, tweak
+      <code>_vicinityWindow</code>, the logic inside <code>_pickDistractor</code>,
+      or <code>reviewInterval</code>.
+    </p>
+  </section>
+
+  <section id="native-text">
+    <h2>Mother-tongue text display</h2>
+    <p>
+      The UI only renders the native-language string when the learner selected a
+      mother tongue in <code>NativeLangSelector</code> and the current item contains a
+      <code>nativeText</code> (this happens during <code>loadItem</code> when
+      <code>nativeLang</code> differs from the target language).
+    </p>
+    <p>
+      The visibility gate lives in <code>_shouldShowNative</code> in
+      <code>lib/app/robulingo_app.dart</code>. It returns true only if
+      <code>nativeLang</code> is set, <code>nativeText</code> is not empty, and
+      <code>nativeSeenCounts[item.uuid] &lt; 1</code> (the counter is bumped in
+      <code>_gotoNextTrial</code>). Change that logic or the counter to show the
+      translation more than once, to delay it, or to base it on another flag.
+    </p>
+  </section>
+
+  <section id="hexamatch-duel">
+    <h2>Hexamatch duel logic</h2>
+    <p>
+      Hexamatch is powered by <code>HexagonController</code> in
+      <code>lib/logic/hexagon_controller.dart</code>. Calling
+      <code>applyPlayerStep(correct: bool)</code> advances the hero along the hex grid,
+      while <code>_scheduleRivalMove()</code> and <code>applyPlayerStep</code>
+      simulate the rival race with configurable probabilities.
+    </p>
+    <p>
+      Forward/backward movement depends on the grid neighbors, the current delta, and
+      the <code>_chooseForwardWithFallback</code> / <code>_chooseVerticalOrLeft</code>
+      helpers to prevent double backsteps. The rival pacing parameters
+      (<code>rivalSigma</code>, <code>rivalCoupledProb</code>, <code>rivalMaxProbBase</code>,
+      moods, idle boosts, etc.) are constructor defaults of <code>HexagonController</code>.
+    </p>
+    <p>
+      Change any of those constructor parameters or the move-choosing helpers inside
+      <code>hexagon_controller.dart</code> to influence duel difficulty, trail behavior,
+      or win detection.
+    </p>
+  </section>
+
+  <section id="seeds">
+    <h2>Seed handling</h2>
+    <p>
+      Seeds are loaded from <code>start_curriculum_a.json</code> by
+      <code>_loadSeeds</code> (see <code>lib/app/robulingo_app.dart</code>). The method
+      steps through the file, checks each UUID for language audio via
+      <code>api.hasAudioForLang</code>, and loads the full <code>ItemData</code> only
+      when the audio exists.
+    </p>
+    <p>
+      The constant <code>seedCount</code> in <code>lib/constants.dart</code> limits
+      how many seed entries are pulled; it is currently set to zero, so no seeds
+      are added. Increase the constant or change the hard-coded file to
+      use a different start curriculum.
+    </p>
+    <p>
+      Loaded seeds are appended via <code>trialBuffer.addNewItems</code>, so their
+      distractor logic and review rules behave exactly like regular items.
+    </p>
+  </section>
+</body>
+</html>

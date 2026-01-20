@@ -1,0 +1,109 @@
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Duell Logik (Rival)</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111; margin: 24px;">
+  <h1 style="margin-top: 0;">Duell Logik (Rival)</h1>
+  <p>
+    Diese Datei beschreibt die Rival-Logik im Hexa-Duell. Ziel: nachvollziehbare,
+    steuerbare Gewinnchancen mit sichtbaren "Streaks/Launen", ohne starres Rubber-Banding.
+  </p>
+
+  <h2>Kurzer Ablauf</h2>
+  <pre><code>Player Trial -> correct? -> lastTenResults ----+
+                                              |
+diff = rivalProgress - youProgress --------+  |
+                                           |  |
+idleDays (Logs) -> idleBoost ----+         |  |
+                                |         |  |
+mood (Markov) -> moodOffset -----+         |  |
+                                           v  v
+                     pCorrect = f(baseProb, catchup, moodOffset, idleBoost)
+                                           |
+                                           v
+                                  Rival move (forward/side/back)</code></pre>
+
+  <h2>Mood / Launen (Variante B)</h2>
+  <p>
+    Der Rival wechselt zwischen diskreten Modi. Jeder Modus verschiebt die Trefferwahrscheinlichkeit.
+    Die Modi bleiben mehrere Zuege, dadurch entstehen Streaks.
+  </p>
+  <pre><code>[slacking] <--> [steady] <--> [hot]
+   ^             ^             ^
+   | stayProb    | stayProb    | stayProb
+   +---- idleBoost bias -> mehr Wechsel nach oben bei Inaktivitaet</code></pre>
+
+  <h2>Formel (vereinfacht)</h2>
+  <pre><code>baseProb = coupledProb              (fruehe Phase, an Spieler gekoppelt)
+baseProb = base + slope * accuracy (spaeter, aus letzten 10 Antworten)
+
+catchup = 1 / (1 + exp((rivalProgress - youProgress) / sigma))
+
+boosted = clamp(baseProb + moodOffset + idleBoost, 0..1)
+pCorrect = minProb + (boosted - minProb) * catchup
+minProb = minProbRatio * boosted</code></pre>
+
+  <h2>Idle / Rival Training</h2>
+  <p>
+    idleDays wird aus den lokalen Logs berechnet (events.ndjson). Je laenger der Spieler
+    nicht trainiert hat, desto staerker der Rival:
+  </p>
+  <pre><code>idleBoost = min(idleBoostMax, max(0, idleDays - idleGraceDays) * idleBoostPerDay)</code></pre>
+
+  <h2>Parameter (Defaultwerte)</h2>
+  <table cellpadding="6" cellspacing="0" border="1" style="border-collapse: collapse;">
+    <tr><th>Parameter</th><th>Bedeutung</th><th>Default</th></tr>
+    <tr><td>rivalSigma</td><td>Staerke des Catchup-Effekts</td><td>7.2</td></tr>
+    <tr><td>rivalCoupledProb</td><td>Fruehe Kopplung an Spielerantwort</td><td>0.9</td></tr>
+    <tr><td>rivalMaxProbBase</td><td>Basis fuer spaetere Rival-Accuracy</td><td>0.4</td></tr>
+    <tr><td>rivalMaxProbSlope</td><td>Skalierung ueber Spieler-Accuracy</td><td>0.6</td></tr>
+    <tr><td>rivalMinProbRatio</td><td>Untergrenze relativ zur Max-Prob (Fairness)</td><td>0.8</td></tr>
+    <tr><td>rivalMoodOffsets</td><td>Offsets fuer [slacking, steady, hot]</td><td>[-0.06, 0.0, 0.08]</td></tr>
+    <tr><td>rivalMoodStayProb</td><td>Wie lange ein Modus bleibt</td><td>0.85</td></tr>
+    <tr><td>rivalMoodMinMoves</td><td>Mindestzuege im Modus</td><td>3</td></tr>
+    <tr><td>rivalIdleGraceDays</td><td>Tage ohne Effekt</td><td>2</td></tr>
+    <tr><td>rivalIdleBoostPerDay</td><td>Boost pro Idle-Tag</td><td>0.02</td></tr>
+    <tr><td>rivalIdleBoostMax</td><td>Maximaler Boost</td><td>0.10</td></tr>
+  </table>
+
+  <h2>Wo im Code</h2>
+  <ul>
+    <li><strong>Rival-Logik:</strong> <code>lib/logic/hexagon_controller.dart</code></li>
+    <li><strong>Idle-Tage aus Logs:</strong> <code>lib/ui/training_calendar_panel.dart</code> (TrainingCalendarData)</li>
+    <li><strong>Setzen der Idle-Tage:</strong> <code>lib/app/robulingo_app.dart</code></li>
+  </ul>
+
+  <h2>Monte Carlo</h2>
+  <p>
+    Die Logik ist absichtlich parameterarm und probabilistisch, damit Gewinnchancen
+    simulierbar bleiben. Fuer Simulationen reichen: accuracy-Verlauf des Spielers,
+    diff-Startwert, mood-Parameter und idleBoost.
+  </p>
+  <pre><code># Konstante Accuracy, Rennen bis zum ersten Sieg
+python3 tools/rival_sim.py --mode race --runs 5000 --steps 120 --acc 0.8
+
+# Steigende Accuracy (Beispiel A)
+python3 tools/rival_sim.py --mode race --runs 5000 --steps 120 \\
+  --acc-profile "0:0.65,60:0.8,120:0.9"
+
+# Idle-Boost aktivieren (Rival trainiert bei Faulheit)
+python3 tools/rival_sim.py --mode race --runs 5000 --steps 120 --acc 0.8 --idle-days 6</code></pre>
+  <pre><code># Plot der Gewinnwahrscheinlichkeit ueber die Schritte
+python3 tools/rival_sim.py --mode race --runs 5000 --steps 120 --acc 0.8 --plot
+
+# Plot als Datei speichern
+python3 tools/rival_sim.py --mode race --runs 5000 --steps 120 --acc 0.8 --plot --out plot.png</code></pre>
+  <p>
+    Hinweis: Wenn keine Siege auftreten, erhoehe <code>--steps</code>.
+  </p>
+  <p>
+    Hinweis zu matplotlib (macOS + Homebrew): Falls <code>pip</code> wegen
+    "externally-managed-environment" blockiert, nutze eine venv:
+  </p>
+  <pre><code>cd /Pfad/zum/SK_Codex
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install matplotlib</code></pre>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<!-- saved from url=(0040)file:///Users/knecht/Downloads/Mike.html -->
+<html lang="de"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  
+  <title>Mikro für RehaLingo</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.5; color: #111; margin: 24px; }
+    h1, h2 { margin-bottom: 0.2em; }
+    ul, ol { margin-top: 0.2em; }
+    code { background: #f5f5f5; padding: 2px 4px; border-radius: 4px; }
+    details { margin: 8px 0 4px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    pre { background: #f8f9fa; padding: 10px; border-radius: 6px; overflow-x: auto; border: 1px solid #e5e7eb; }
+  </style>
+</head>
+<body>
+  <h1>Mikro für RehaLingo</h1>
+  <p>Ziel: Überblick, Annahmen und nächste Schritte, um das blockierte Mikro/ASR auf dem iPad zu debuggen und produktionsreif zu machen.</p>
+
+  <h2>Kurzfassung</h2>
+  <ul>
+    <li>Mikro/ASR nutzt <code>speech_to_text</code> 6.6.2 + <code>permission_handler</code> (Mikrofon + Speech), gekapselt in <code>lib/logic/naming_controller.dart</code> + <code>lib/logic/voice_state.dart</code> und getriggert aus <code>lib/app/robulingo_app.dart</code>.</li>
+    <li>Auf dem aktuellen iPad fehlt Developer Mode; daher konnte die System-Permission nicht sauber erteilt/getestet werden (Verdacht: iPadOS &lt;16, MDM oder ScreenTime blockiert den Dev-Mode).</li>
+    <li>UI fällt aktuell mit Skip/Weiter auf 2AFC zurück, wenn Mic/Speech verweigert wird; wir unterstellen, dass Berechtigungen später oder auf anderem Gerät funktionieren.</li>
+  </ul>
+
+  <h2>Grundannahmen &amp; Vermutungen</h2>
+  <ul>
+    <li>Ohne Developer Mode lässt sich der Build nicht als vertrauenswürdige Dev-App starten; dadurch erscheinen entweder keine Permission-Dialoge oder die Status-API meldet dauerhaft abgelehnt.</li>
+    <li>iPadOS 16+ erforderlich; MDM/ScreenTime kann Developer Mode und Mikrofon/Speech blockieren.</li>
+    <li><code>speech_to_text</code> benötigt funktionierende Apple Speech Services (Siri/Dictation, Online-Fallback). Fehlende Netzwerkfreigabe oder deaktivierte Diktierfunktion kann als <code>no_match</code> / <code>notAuthorized</code> auftauchen.</li>
+    <li>Im Code ist der Simulator-Fallback deaktiviert (<code>assumeIOSDebugSim = false</code>), d. h. ein <code>permanentlyDenied</code> blockiert sofort.</li>
+  </ul>
+
+  <h2>Bisherige ASR-/Mikro-Versuche im Code</h2>
+  <ol>
+    <li><strong>Permissions + Init (Haupt-Flow)</strong> – <code>lib/logic/naming_controller.dart</code> ruft Mikro- und (auf iOS) Speech-Permission ab und initialisiert <code>SpeechToText</code>:
+      <details>
+        <summary>Codeauszug: ensureMicReadyDetailed()</summary>
+        <pre><code>Future&lt;MicInitResult&gt; ensureMicReadyDetailed() async {
+  const bool assumeIOSDebugSim = false;
+  final micStatus = await Permission.microphone.request();
+  PermissionStatus speechStatus = PermissionStatus.granted;
+  if (Platform.isIOS || Platform.isMacOS) {
+    speechStatus = await Permission.speech.status;
+    if (!speechStatus.isGranted &amp;&amp; !speechStatus.isPermanentlyDenied) {
+      speechStatus = await Permission.speech.request();
+    }
+  }
+  if (!micStatus.isGranted || !speechStatus.isGranted) {
+    return MicInitResult(ready: false, ...);
+  }
+  final ok = await speech.initialize(onStatus: onStatus, onError: onError);
+  return MicInitResult(ready: ok &amp;&amp; micStatus.isGranted, ...);
+}</code></pre>
+      </details>
+    </li>
+
+    <li><strong>Listening &amp; Scoring</strong> – zwei Hörfenster, Token-gesichert, mit Diktiermodus und partielle Ergebnisse:
+      <details>
+        <summary>Codeauszug: _listenForDuration()</summary>
+        <pre><code>await speech.listen(
+  listenFor: duration,
+  pauseFor: const Duration(milliseconds: 800),
+  listenOptions: stt.SpeechListenOptions(
+    listenMode: stt.ListenMode.dictation,
+    partialResults: true,
+    cancelOnError: true,
+  ),
+  onResult: (res) {
+    _liveTranscript = res.recognizedWords;
+    if (res.finalResult) completer.complete();
+  },
+);</code></pre>
+      </details>
+    </li>
+
+    <li><strong>Locale-Handhabung</strong> – im Haupt-Flow wird aktuell keine Locale gesetzt, um iOS-Speech-Engines nicht zu blockieren (<code>_startNamingFlow</code> in <code>lib/app/robulingo_app.dart</code>): <em>Temporär: <code>localeId = null</code></em>.</li>
+
+    <li><strong>MicGate &amp; Block</strong> – expliziter Tap auf das Mikro vor dem ersten Benennen; Ablehnung/Timeout blockt 20 Trials:
+      <details>
+        <summary>Codeauszug: lib/ui/mic_gate.dart</summary>
+        <pre><code>// Timeout nach 15s, dann onTimeout()
+GestureDetector(
+  onTap: () { if (_handled) return; _handled = true; widget.onAllow(); },
+  child: Container(width: 110, height: 110, ... Icon(Icons.mic) ...),
+);</code></pre>
+      </details>
+      Die UI zeigt bei verweigertem Mic einen Weiter-Button und Einstellungen-Link (<code>NamingView</code> in <code>lib/ui/session/session_widgets.dart</code>).</li>
+
+    <li><strong>Standalone-Demo</strong> – <code>lib/naming_demo.dart</code> als minimaler Smoke-Test (Locale <code>de_DE</code>, Start/Stop-Buttons, Debug-Anzeige der Permission-Status):
+      <details>
+        <summary>Codeauszug: NamingDemoScreen</summary>
+        <pre><code>var micStatus = await Permission.microphone.status;
+var speechStatus = await Permission.speech.status;
+...
+final ok = await _speech.initialize(
+  onStatus: (s) =&gt; setState(() =&gt; _status = 'Status: $s'),
+  onError: (e) =&gt; setState(() =&gt; _status = 'Fehler: ${e.errorMsg}'),
+);
+await _speech.listen(localeId: 'de_DE', listenFor: Duration(seconds: 8), ...);</code></pre>
+      </details>
+    </li>
+
+    <li><strong>Mic-Probe</strong> – <code>lib/ui/mic_probe_page.dart</code> zum reinen Mikrofon-Dialog (lesen/anfordern, App-Einstellungen öffnen), ohne ASR-Init.</li>
+
+    <li><strong>Info.plist</strong> – Nutzungszwecke hinterlegt:
+      <details>
+        <summary>Codeauszug: ios/Runner/Info.plist</summary>
+        <pre><code>&lt;key&gt;NSMicrophoneUsageDescription&lt;/key&gt;
+&lt;string&gt;Mikrofon wird zum Einsprechen und Bewerten der Antworten genutzt.&lt;/string&gt;
+&lt;key&gt;NSSpeechRecognitionUsageDescription&lt;/key&gt;
+&lt;string&gt;Spracherkennung wird benötigt, um gesprochene Antworten zu prüfen.&lt;/string&gt;</code></pre>
+      </details>
+    </li>
+
+    <li><strong>Fehler-Logging</strong> – <code>_handleSpeechError</code> in <code>lib/app/robulingo_app.dart</code> zeigt ASR-Fehler im UI; <code>no_match</code> wird ignoriert, alles andere wird als Status gesetzt.</li>
+  </ol>
+
+  <h2>Aktueller Status / Problem</h2>
+  <ul>
+    <li>Auf dem Ziel-iPad fehlt (noch) der Developer Mode → kein sauberer Deployment-/Permission-Flow, vermutlich deshalb <code>permanentlyDenied</code> oder kein Dialog.</li>
+    <li>Keine validierte Messung, ob <code>Permission.speech</code> / <code>Permission.microphone</code> tatsächlich erteilt werden; ASR auf macOS lief, aber iOS-Gerät wurde nicht bestätigt.</li>
+    <li>Simulator-Fallback ist bewusst aus (kein „trotz permanent deny weitermachen“), dadurch blockt jeder echte Deny.</li>
+  </ul>
+
+  <h2>Wie wir das Problem aktuell ausklammern</h2>
+  <ul>
+    <li>Benennen blockiert bei verweigertem Mic/Speech; UI bietet „Weiter“ (Skip) und „Einstellungen öffnen“, sodass der restliche 2AFC-Flow weiterläuft.</li>
+    <li>Wir gehen davon aus, dass ein späteres oder anderes Gerät (mit Developer Mode + erlaubten Berechtigungen) den Flow freischaltet; bis dahin bleibt <code>namingHold</code>/<code>micDenied</code> gesetzt.</li>
+    <li>Falls nötig für Tests ohne echte Permissions: <code>assumeIOSDebugSim</code> (in <code>ensureMicReadyDetailed</code>) könnte temporär auf <code>true</code> gesetzt werden, um <code>permanentlyDenied</code> zu ignorieren – nur als Dev-Hack, nicht für Produktion.</li>
+    <li><code>namingDisabled</code> (State in <code>VoiceState</code>) kann gesetzt werden, um Benennen komplett auszuschalten und nur 2AFC laufen zu lassen.</li>
+  </ul>
+
+  <h2>Nächste Schritte für Engineers</h2>
+  <ol>
+    <li>Device fixen: iPad auf iPadOS 16/17 aktualisieren, Developer Mode freischalten (oder MDM/ScreenTime entfernen), dann Build via Xcode installieren und Trust-Dialog bestätigen.</li>
+    <li>Permissions testen: <code>MicProbePage</code> und <code>NamingDemoScreen</code> auf dem Gerät starten; erwarteter Status: Mic/Speech granted, <code>SpeechToText.initialize()</code> liefert <code>ok=true</code>, <code>isAvailable=true</code>.</li>
+    <li>ASR-Status sammeln: Debug-Logs (<code>[naming][perm]</code>, <code>[naming][init]</code>, <code>[asr][error]</code>) aus <code>robulingo_app.dart</code>/<code>naming_controller.dart</code> prüfen; falls <code>restricted/notAuthorized</code>, iOS-Einstellungen checken (Siri &amp; Diktierfunktion, Datenschutz &gt; Sprache &amp; Region).</li>
+    <li>Locale-Recheck: Falls ASR nicht startet, erneut mit explizitem Locale (<code>_speechLocaleFor(lang)</code>) testen; derzeit auskommentiert, um iOS nicht zu blockieren.</li>
+    <li>Fallback-Plan: Wenn <code>speech_to_text</code> auf iPad nicht stabil läuft, Evaluate Alternativen (z. B. native <code>SFSpeechRecognizer</code> via MethodChannel oder Remote-ASR über Backend) und vergleichen.</li>
+  </ol>
+
+
+</body></html>

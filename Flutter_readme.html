@@ -1,0 +1,102 @@
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>RobuLingo - Flutter App</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111; margin: 24px;">
+  <h1 style="margin-top: 0;">RobuLingo - Flutter App</h1>
+  <p>This Flutter client loads curricula and item assets from the RobuLingo Worker/R2 buckets, builds 2AFC trials, and logs session activity for review.</p>
+
+  <h2>Runtime workflow (step-by-step)</h2>
+  <ol>
+    <li>Start the app via <code>lib/main.dart</code>, which mounts <code>RobuLingoApp</code>.</li>
+    <li>Select the target language and a start curriculum file.</li>
+    <li><code>ApiClient</code> loads curricula and item assets (JSON, images, audio) from the Worker/R2.</li>
+    <li><code>TrialBuffer</code> builds the trial queue, inserts review trials, and keeps a window of items.</li>
+    <li>The session UI renders 2AFC choices, handles audio playback, and updates progress tracks.</li>
+    <li>If enabled, the naming gate uses speech recognition to capture spoken answers.</li>
+    <li><code>EventLogger</code> writes NDJSON locally and uploads batches via <code>LogUploader</code>.</li>
+    <li>User curriculum deltas are fetched and pushed through <code>UserCurriculumService</code>.</li>
+  </ol>
+
+  <h2>Eingebaute Logiken (einfach erklaert)</h2>
+  <ul>
+    <li><strong>Session-Logging:</strong> Jede Aktion schreibt eine JSON-Zeile in <code>logs/events.ndjson</code> (lokal). Uploads sind optional und passieren spaeter.</li>
+    <li><strong>Session-Gruppierung:</strong> Events werden per Session-ID gebuendelt; die gesamte Session zaehlt fuer den Tag, an dem sie gestartet wurde.</li>
+    <li><strong>Aktive Zeit:</strong> Zeitabstaende zwischen Events werden summiert, aber lange Pausen werden auf <code>idleCapSeconds</code> gedeckelt.</li>
+    <li><strong>Qualifizierte Tage:</strong> Ein Tag gilt als "geschafft", wenn die aktive Zeit den Schwellwert <code>thresholdMinutes</code> erreicht.</li>
+    <li><strong>Rival-Markierungen:</strong> Der Rival-Kreis erscheint auf jedem Trainingstag (gemeinsam) und zusaetzlich einmal pro Woche auf einem Rival-only-Tag, wenn im 14-Tage-Fenster weniger als 9 Tage qualifiziert sind.</li>
+    <li><strong>Kalender-Refresh:</strong> Die Ansicht laedt die Logs in festen Intervallen neu, damit neue Eintraege sichtbar sind.</li>
+  </ul>
+
+  <h2>App presentation order</h2>
+  <p>The in-app order is driven by the curriculum, with periodic review trials to keep previously seen items active.</p>
+  <ol>
+    <li>Curriculum entries are sorted by <code>position</code>, falling back to original index if missing.</li>
+    <li>Items load in batches and each item becomes a target for a 2AFC trial.</li>
+    <li>Distractors are selected from nearby items (next 5, then previous 5, then expand outward), skipping identical UUIDs or image signatures.</li>
+    <li>Image variants are selected randomly per trial and the target side is randomized.</li>
+    <li>Every <code>reviewInterval</code> trials, a review trial is injected from previously presented items.</li>
+  </ol>
+
+  <h2>ASCII flowchart (Flutter runtime)</h2>
+  <pre><code>+--------------------+
+| lib/constants.dart |
++--------------------+
+           |
+           v
++--------------------+
+| lib/main.dart      |
++--------------------+
+           |
+           v
++-----------------------------+
+| app/robulingo_app.dart      |
+| (session orchestration)     |
++-----------------------------+
+   |            |             |
+   v            v             v
++---------------------+  +--------------------------+  +--------------------+
+| data/api_client.dart|  | data/user_curriculum_*   |  | event_logger.dart  |
+| (curriculum, items) |  | (delta fetch/push)       |  | -> log_uploader    |
++---------------------+  +--------------------------+  +--------------------+
+           |
+           v
++-----------------------------+     +---------------------------+
+| logic/trial_buffer.dart     |<--->| logic/session_cache.dart  |
+| (2AFC + review trials)      |     | logic/onboarding_store    |
++-----------------------------+     +---------------------------+
+           |
+           v
++-------------------------------+     +---------------------------+
+| ui/session/session_widgets   |<--->| logic/naming_controller   |
+| ui/* tracks + selectors      |     | logic/voice_state         |
++-------------------------------+     +---------------------------+</code></pre>
+
+  <h2>Key modules</h2>
+  <ul>
+    <li><strong>lib/main.dart:</strong> App entry point and theme setup.</li>
+    <li><strong>lib/app/robulingo_app.dart:</strong> Core session state, loading, and orchestration.</li>
+    <li><strong>lib/data/api_client.dart:</strong> Curriculum and item loading from Worker/R2.</li>
+    <li><strong>lib/data/user_curriculum_service.dart:</strong> Fetch/push per-user curriculum deltas.</li>
+    <li><strong>lib/logic/trial_buffer.dart:</strong> Trial queue with distractor selection and review injection.</li>
+    <li><strong>lib/logic/naming_controller.dart:</strong> Speech recognition and naming flow.</li>
+    <li><strong>lib/event_logger.dart:</strong> Local NDJSON logging and upload scheduling.</li>
+    <li><strong>lib/ui/session/session_widgets.dart:</strong> Session UI and trial rendering.</li>
+    <li><strong>lib/constants.dart:</strong> Hosts, bucket URLs, review intervals, and language list.</li>
+  </ul>
+
+  <h2>Run and build</h2>
+  <ul>
+    <li><code>flutter pub get</code></li>
+    <li><code>flutter run -d macos</code> (or choose another target device)</li>
+    <li>Update <code>lib/constants.dart</code> if Worker hosts or bucket URLs change.</li>
+  </ul>
+
+  <h2>Assets and configuration</h2>
+  <ul>
+    <li><strong>assets/:</strong> Local images and sounds referenced in <code>pubspec.yaml</code>.</li>
+    <li><strong>pubspec.yaml:</strong> Dependencies, assets, and Flutter config.</li>
+  </ul>
+</body>
+</html>

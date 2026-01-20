@@ -1,0 +1,10 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - P_robulingo_viewer.dart
+    - Pc_robulingo_viewer.dart
+    - robolingo_viewer.dart
+    - test/widget_test.dart
+    - robulingo_viewer.dart
+    - working versions/**
