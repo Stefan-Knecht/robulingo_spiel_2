@@ -231,6 +231,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       onStatus: (s) => debugPrint('[asr][status] $s'),
     );
     player.setReleaseMode(ReleaseMode.stop);
+    hintPlayer.setReleaseMode(ReleaseMode.stop);
     playbackSub = player.onPlayerStateChanged.listen((state) {
       debugPrint(
           '[audio] state=$state playing=${state == PlayerState.playing}');
@@ -1273,7 +1274,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final base = item.audioVariants.isNotEmpty
         ? item.audioVariants.first
         : item.audioUri;
-    await _playAudioUri(base);
+    await _playHintUri(base);
+  }
+
+  Future<void> _playHintUri(Uri uri) async {
+    try {
+      await hintPlayer.stop();
+      await hintPlayer.play(UrlSource(uri.toString()));
+      await hintPlayer.onPlayerComplete.first;
+    } catch (e) {
+      debugPrint('[audio][hint-error] url=$uri err=$e');
+    }
   }
 
   Future<void> _playNextTrialAudio(int token) async {
@@ -1423,6 +1434,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hasAnswered = true; // block Selektionen/Advances während Naming
     });
     const int windowFirst = 5; // mehr Zeit für erste Aufnahme
+    const int windowRepeat = 5;
     // Temporär ohne Locale, um iOS-Speech-Engines nicht zu blockieren.
     final String? localeId =
         (isIOS || isMacOS) ? null : await _resolveLocaleId();
@@ -1446,8 +1458,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       isCurrent: isCurrent,
       userInitiated: userInitiated,
       firstWindow: const Duration(seconds: windowFirst),
-      repeatWindow: Duration.zero,
-      allowRepeat: false,
+      repeatWindow: const Duration(seconds: windowRepeat),
+      allowRepeat: true,
       localeId: localeId,
     );
 
