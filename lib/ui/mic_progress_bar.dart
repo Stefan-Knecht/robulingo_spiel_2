@@ -35,6 +35,12 @@ class MicProgressBar extends StatelessWidget {
         } else {
           progColor = Colors.grey.shade400;
         }
+        final bool isHintStage = micStage == 1;
+        final IconData movingIcon =
+            isHintStage ? Icons.volume_up : Icons.mic;
+        final Color bubbleColor = isHintStage
+            ? Colors.orangeAccent
+            : (micOn ? Colors.greenAccent : Colors.white);
         return Stack(
           alignment: Alignment.centerLeft,
           children: [
@@ -59,11 +65,13 @@ class MicProgressBar extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: (micStage == 1) ? Colors.orangeAccent : (micOn ? Colors.greenAccent : Colors.white),
+                  color: bubbleColor,
                   shape: BoxShape.circle,
-                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black12, blurRadius: 4)
+                  ],
                 ),
-                child: const Icon(Icons.mic, size: 18),
+                child: Icon(movingIcon, size: 18),
               ),
             ),
           ],
