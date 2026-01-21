@@ -4,6 +4,7 @@
 // Tücken: Erwartet Status/Callbacks aus dem App-State (Trials, Naming-Flow, Wins); kein eigener State.
 // ------------------------------------------------------------
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
@@ -218,7 +219,9 @@ class _RestartModuleProgressIndicator extends StatelessWidget {
 class NamingView extends StatelessWidget {
   const NamingView({
     super.key,
-    required this.imageBytes,
+    required this.leftImageBytes,
+    required this.rightImageBytes,
+    required this.targetOnLeft,
     required this.imageHeight,
     required this.namingOutcome,
     required this.namingStatus,
@@ -235,7 +238,9 @@ class NamingView extends StatelessWidget {
     required this.onSkip,
   });
 
-  final Uint8List imageBytes;
+  final Uint8List leftImageBytes;
+  final Uint8List rightImageBytes;
+  final bool targetOnLeft;
   final double imageHeight;
   final bool? namingOutcome;
   final String namingStatus;
@@ -272,6 +277,56 @@ class NamingView extends StatelessWidget {
         namingOutcome != null || liveTranscript.isNotEmpty;
     final String transcriptText =
         liveTranscript.isEmpty ? 'Keine ASR-Erkennung' : liveTranscript;
+    final Uint8List targetImageBytes =
+        targetOnLeft ? leftImageBytes : rightImageBytes;
+    final Uint8List otherImageBytes =
+        targetOnLeft ? rightImageBytes : leftImageBytes;
+
+    Widget buildImageTile(
+      Uint8List bytes, {
+      required bool isTarget,
+      required bool dimNonTarget,
+      required double tileWidth,
+      required double tileHeight,
+    }) {
+      final bool showOutcome = isTarget && namingOutcome != null;
+      final Widget image = Image.memory(bytes, fit: BoxFit.contain);
+      final Widget imageLayer = dimNonTarget
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                ImageFiltered(
+                  imageFilter: ImageFilter.blur(sigmaX: 2.0, sigmaY: 2.0),
+                  child: image,
+                ),
+                Container(color: Colors.grey.withValues(alpha: 0.35)),
+              ],
+            )
+          : image;
+
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: SizedBox(
+          width: tileWidth,
+          height: tileHeight,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                imageLayer,
+                if (showOutcome)
+                  Container(
+                    color: namingOutcome!
+                        ? Colors.green.withValues(alpha: 0.6)
+                        : Colors.red.withValues(alpha: 0.45),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Column(
       children: [
@@ -286,34 +341,42 @@ class NamingView extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Stack(
-            alignment: Alignment.topRight,
+            alignment: Alignment.center,
             children: [
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: imageHeight,
-                  minHeight: imageHeight,
-                ),
-                child: AspectRatio(
-                  aspectRatio: 3 / 4,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.memory(
-                          imageBytes,
-                          fit: BoxFit.contain,
-                        ),
-                        if (namingOutcome != null)
-                          Container(
-                            color: namingOutcome!
-                                ? Colors.green.withValues(alpha: 0.6)
-                                : Colors.red.withValues(alpha: 0.45),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final double maxWidth = constraints.maxWidth.isFinite
+                      ? constraints.maxWidth
+                      : imageHeight * 1.5;
+                  final double desiredWidth = imageHeight * 0.75;
+                  final double availableWidth =
+                      (maxWidth - 24).clamp(0.0, maxWidth).toDouble();
+                  final double tileWidth =
+                      (availableWidth / 2).clamp(0.0, desiredWidth).toDouble();
+                  final double tileHeight =
+                      (tileWidth * 4 / 3).clamp(0.0, imageHeight).toDouble();
+
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      buildImageTile(
+                        targetImageBytes,
+                        isTarget: true,
+                        dimNonTarget: false,
+                        tileWidth: tileWidth,
+                        tileHeight: tileHeight,
+                      ),
+                      buildImageTile(
+                        otherImageBytes,
+                        isTarget: false,
+                        dimNonTarget: true,
+                        tileWidth: tileWidth,
+                        tileHeight: tileHeight,
+                      ),
+                    ],
+                  );
+                },
               ),
               if (namingOutcome != null)
                 Positioned.fill(
@@ -652,7 +715,9 @@ class SessionBody extends StatelessWidget {
 
     final trialWidget = isNaming
         ? NamingView(
-            imageBytes: targetOnLeft ? leftImageBytes : rightImageBytes,
+            leftImageBytes: leftImageBytes,
+            rightImageBytes: rightImageBytes,
+            targetOnLeft: targetOnLeft,
             imageHeight: imageHeight,
             namingOutcome: namingOutcome,
             namingStatus: namingStatus,
