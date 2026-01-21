@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:robulingo_flutter/data/hint_models.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
 import 'package:robulingo_flutter/ui/dashboard_button.dart';
@@ -645,6 +646,13 @@ class SessionBody extends StatelessWidget {
     this.onTogglePhonetic,
     required this.nativeText,
     required this.showNative,
+    required this.hintEntries,
+    required this.hintLabel,
+    this.hintMissingText,
+    required this.hintButtonVisible,
+    required this.hintButtonActive,
+    required this.onToggleHints,
+    this.hintPanelKey,
     required this.showDashboardButton,
     required this.showGlobalHourglass,
     required this.onPrimeMic,
@@ -680,6 +688,13 @@ class SessionBody extends StatelessWidget {
   final VoidCallback? onTogglePhonetic;
   final String? nativeText;
   final bool showNative;
+  final List<HintContent> hintEntries;
+  final String hintLabel;
+  final String? hintMissingText;
+  final bool hintButtonVisible;
+  final bool hintButtonActive;
+  final VoidCallback onToggleHints;
+  final Key? hintPanelKey;
   final bool showDashboardButton;
   final bool showGlobalHourglass;
   final VoidCallback onPrimeMic;
@@ -809,6 +824,43 @@ class SessionBody extends StatelessWidget {
                 fontSize: 20, fontWeight: FontWeight.w600, color: Colors.green),
           ),
         ],
+        if (hintButtonVisible) ...[
+          const SizedBox(height: 6),
+          Center(
+            child: GestureDetector(
+              onTap: onToggleHints,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: hintButtonActive ? const Color(0xFFFFF2C0) : Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.black12),
+                  boxShadow: const [
+                    BoxShadow(
+                        color: Colors.black12, blurRadius: 2, offset: Offset(0, 1))
+                  ],
+                ),
+                child: Image.asset(
+                  'assets/icons/Magnifying_glass.webp',
+                  width: 30,
+                  height: 30,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (hintEntries.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _HintPanel(key: hintPanelKey, label: hintLabel, hints: hintEntries),
+        ] else if (hintMissingText != null && hintMissingText!.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            hintMissingText!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14, color: Colors.black45),
+          ),
+        ],
         const SizedBox(height: 12),
         Column(
           children: [
@@ -859,6 +911,75 @@ class SessionBody extends StatelessWidget {
         const SizedBox(height: 12),
         trialWidget,
       ],
+    );
+  }
+}
+
+class _HintPanel extends StatelessWidget {
+  const _HintPanel({super.key, required this.label, required this.hints});
+
+  final String label;
+  final List<HintContent> hints;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7DD),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.4,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...hints.map(
+            (hint) {
+              final title = hint.title?.trim();
+              final body = hint.body?.trim();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (title != null && title.isNotEmpty)
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    if (body != null && body.isNotEmpty)
+                      Text(
+                        body,
+                        style: const TextStyle(fontSize: 14, color: Colors.black87),
+                      ),
+                    if (hint.examples.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Examples: ${hint.examples.join(', ')}',
+                        style: const TextStyle(fontSize: 13, color: Colors.black54),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }

@@ -10,6 +10,8 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:robulingo_flutter/constants.dart';
 import 'package:robulingo_flutter/data/api_client.dart';
+import 'package:robulingo_flutter/data/hint_models.dart';
+import 'package:robulingo_flutter/data/hints_service.dart';
 import 'package:robulingo_flutter/data/models.dart';
 import 'package:robulingo_flutter/data/user_curriculum_delta.dart';
 import 'package:robulingo_flutter/data/user_curriculum_service.dart';
@@ -90,6 +92,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingMinUniqueItems = 2;
   late ApiClient api;
   late UserCurriculumService userCurriculumService;
+  late HintsService hintsService;
   String workerHost = defaultWorkerHost;
   String apiPrefix = defaultApiPrefix;
   final AudioPlayer player = AudioPlayer();
@@ -159,6 +162,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       []; // letzte 10 Spieler-Ergebnisse (true = korrekt)
 
   String lang = 'de';
+  HintPack? hintPack;
+  int hintLoadToken = 0;
+  final Set<String> hintRevealed = {};
+  final GlobalKey _hintPanelKey = GlobalKey();
   List<CurriculumEntry> curriculum = [];
   int curriculumStartOffset = 0; // Delta-Cursor aus user_curriculum
   final TrialBuffer trialBuffer = TrialBuffer();
@@ -264,6 +271,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     api = ApiClient(workerHost: workerHost, apiPrefix: apiPrefix);
     userCurriculumService =
         UserCurriculumService(workerHost: workerHost, apiPrefix: apiPrefix);
+    hintsService = HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
     voiceController.initSpeech();
     _initLogger();
     _initUserId();
@@ -359,9 +367,81 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       loading = false;
       error = null;
     });
+    unawaited(_loadHintPack());
     ladderController.setWins(you: saved.winsYou, rival: saved.winsRival);
     await _loadLastSessionWins();
     unawaited(_updateRestartModuleProgress());
+  }
+
+  Future<void> _loadHintPack({bool forceRefresh = false}) async {
+    final l1 = nativeLang;
+    if (l1 == null || l1.isEmpty) {
+      if (hintPack != null) {
+        setState(() {
+          hintPack = null;
+        });
+      }
+      return;
+    }
+    final token = ++hintLoadToken;
+    final pack = await hintsService.loadPack(
+      l1: l1,
+      l2: lang,
+      forceRefresh: forceRefresh,
+    );
+    if (!mounted || token != hintLoadToken) return;
+    setState(() {
+      hintPack = pack;
+    });
+    if (pack != null &&
+        trials.isNotEmpty &&
+        trialIndex < trials.length &&
+        hintRevealed.contains(trials[trialIndex].target.uuid)) {
+      final normL2 = HintsService.normalizeLangCode(lang);
+      final hintIds =
+          trials[trialIndex].target.hintRefsByLang[normL2] ?? const <String>[];
+      if (hintIds.isNotEmpty && pack.hintsForIds(hintIds).isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollHintPanelIntoView();
+        });
+      }
+    }
+  }
+
+  void _toggleHintsForCurrent() {
+    if (trials.isEmpty || trialIndex >= trials.length) return;
+    final uuid = trials[trialIndex].target.uuid;
+    final bool shouldReveal = !hintRevealed.contains(uuid);
+    setState(() {
+      if (hintRevealed.contains(uuid)) {
+        hintRevealed.remove(uuid);
+      } else {
+        hintRevealed.add(uuid);
+      }
+    });
+    if (shouldReveal) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollHintPanelIntoView();
+      });
+    }
+    if (hintPack != null) {
+      final l1 = HintsService.normalizeLangCode(nativeLang);
+      final l2 = HintsService.normalizeLangCode(lang);
+      final hintIds = trials[trialIndex].target.hintRefsByLang[l2] ?? const <String>[];
+      final resolved = hintPack!.hintsForIds(hintIds).length;
+      debugPrint('[hints][item] uuid=$uuid l1=$l1 l2=$l2 ids=${hintIds.length} resolved=$resolved');
+    }
+  }
+
+  void _scrollHintPanelIntoView() {
+    final ctx = _hintPanelKey.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      alignment: 0.2,
+    );
   }
 
   Future<void> _restartOnboarding() async {
@@ -504,6 +584,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                 text: c.text,
                 nativeText: c.nativeText,
                 phonetic: c.phonetic,
+                hintRefsByLang: c.hintRefsByLang,
                 imageBytes: c.imageVariants.isNotEmpty
                     ? c.imageVariants.first
                     : c.imageBytes,
@@ -689,8 +770,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         api = ApiClient(workerHost: workerHost, apiPrefix: apiPrefix);
         userCurriculumService =
             UserCurriculumService(workerHost: workerHost, apiPrefix: apiPrefix);
+        hintsService = HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
       });
       _configureLoggerRemote();
+      unawaited(_loadHintPack(forceRefresh: true));
       _loadInitial();
     }
   }
@@ -716,6 +799,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       awaitingStart = true;
       activeStartCurriculumKey = null;
       nativeLang = null;
+      hintPack = null;
+      hintRevealed.clear();
     });
   }
 
@@ -737,7 +822,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       nativeLang = motherLang;
       awaitingNative = false;
+      hintPack = null;
+      hintRevealed.clear();
     });
+    unawaited(_loadHintPack(forceRefresh: true));
     await _loadInitial(startKey: startKey);
   }
 
@@ -796,6 +884,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       sessionEnded = false;
       nativeSeenCounts.clear();
       curriculumStartOffset = 0;
+      hintRevealed.clear();
     });
     logger.setSessionContext(
         startKey: resolvedStart, lang: lang, nativeLang: nativeLang);
@@ -1122,6 +1211,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
               text: i.text,
               nativeText: i.nativeText,
               phonetic: i.phonetic,
+              hintRefsByLang: i.hintRefsByLang,
               imageSignature: i.imageSignature,
               audioUri: i.audioUri.toString(),
               audioVariants: i.audioVariants.map((u) => u.toString()).toList(),
@@ -1985,7 +2075,33 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final bool phoneticOverrideActive = phoneticOverrideCount > 0;
       final bool showPhonetic =
           hasPhoneticData && (phoneticSeen < 4 || phoneticOverrideActive);
-
+      final bool showNative = _shouldShowNative(trial.target);
+      final bool hintsEnabled =
+          nativeLang != null && nativeLang!.trim().isNotEmpty;
+      final String normL1 =
+          hintsEnabled ? HintsService.normalizeLangCode(nativeLang) : '';
+      final String normL2 = HintsService.normalizeLangCode(lang);
+      final bool hintPackMatches = hintPack != null &&
+          hintPack!.l1 == normL1 &&
+          hintPack!.l2 == normL2;
+      final List<String> hintIds = hintPackMatches
+          ? (trial.target.hintRefsByLang[normL2] ?? const <String>[])
+          : const <String>[];
+      final bool hintButtonVisible =
+          showNative && hintPackMatches && hintIds.isNotEmpty;
+      final bool hintRevealedForItem =
+          hintButtonVisible && hintRevealed.contains(trial.target.uuid);
+      final List<HintContent> hintEntries = hintRevealedForItem
+          ? hintPack!.hintsForIds(hintIds)
+          : const <HintContent>[];
+      final String hintLabel =
+          hintsEnabled ? HintsService.hintLabelFor(nativeLang!) : 'Hint';
+      final String? hintMissingText = hintRevealedForItem &&
+              hintPackMatches &&
+              hintIds.isNotEmpty &&
+              hintEntries.isEmpty
+          ? 'No hint text found for ids: ${hintIds.join(', ')}'
+          : null;
       body = SessionBody(
         ladder: ladder,
         isNaming: isNamingView,
@@ -2013,7 +2129,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         onTogglePhonetic:
             hasPhoneticData ? () => _reinstatePhoneticsFor(trial.target) : null,
         nativeText: trial.target.nativeText,
-        showNative: _shouldShowNative(trial.target),
+        showNative: showNative,
+        hintEntries: hintEntries,
+        hintLabel: hintLabel,
+        hintMissingText: hintMissingText,
+        hintButtonVisible: hintButtonVisible,
+        hintButtonActive: hintRevealedForItem,
+        onToggleHints: _toggleHintsForCurrent,
+        hintPanelKey: _hintPanelKey,
         showDashboardButton: showDashboardButton,
         showGlobalHourglass: showGlobalHourglass,
         onPrimeMic: _primeMicAndStart,

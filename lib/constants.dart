@@ -16,6 +16,11 @@ const String userDataBucketVirtualHost =
     'https://userdata.aec343e9a0970f4dcdf10224e7414efb.r2.cloudflarestorage.com';
 const String userDataBucketPathBase =
     'https://aec343e9a0970f4dcdf10224e7414efb.r2.cloudflarestorage.com/userdata';
+// Hint-Packs (Cloudflare R2) – virtuell und Pfad-Variante
+const String hintsBucketVirtualHost =
+    'https://hints.aec343e9a0970f4dcdf10224e7414efb.r2.cloudflarestorage.com';
+const String hintsBucketPathBase =
+    'https://aec343e9a0970f4dcdf10224e7414efb.r2.cloudflarestorage.com/hints';
 // Standard-Seed (existiert im Bucket/Worker); vorheriger Default war leer.
 const String defaultStartCurriculum = 'start_curriculum_a.json';
 const List<String> langChoices = [
