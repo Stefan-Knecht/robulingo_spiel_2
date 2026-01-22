@@ -2042,8 +2042,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final size = MediaQuery.of(context).size;
       final bool isLandscape = size.width > size.height;
       final double imageHeight = isLandscape
-          ? min(size.height * 0.45, min(size.width * 0.55, 360.0))
-          : min(size.height * 0.45, 360.0);
+          ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
+          : min(size.height * 0.38, 320.0);
       final bool isNamingTrial = _isNamingTrial();
       final bool isNamingView =
           isNamingTrial || namingInProgress || namingOutcome != null;
@@ -2087,17 +2087,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final List<String> hintIds = hintPackMatches
           ? (trial.target.hintRefsByLang[normL2] ?? const <String>[])
           : const <String>[];
-      final bool hintButtonVisible =
-          showNative && hintPackMatches && hintIds.isNotEmpty;
+      final bool showHintsInline =
+          !isNamingView && hintPackMatches && hintIds.isNotEmpty;
       final bool hintRevealedForItem =
-          hintButtonVisible && hintRevealed.contains(trial.target.uuid);
-      final List<HintContent> hintEntries = hintRevealedForItem
+          showHintsInline && hintRevealed.contains(trial.target.uuid);
+      final List<HintContent> hintEntries = showHintsInline
           ? hintPack!.hintsForIds(hintIds)
           : const <HintContent>[];
       final String hintLabel =
           hintsEnabled ? HintsService.hintLabelFor(nativeLang!) : 'Hint';
-      final String? hintMissingText = hintRevealedForItem &&
-              hintPackMatches &&
+      final String? hintMissingText = showHintsInline &&
               hintIds.isNotEmpty &&
               hintEntries.isEmpty
           ? 'No hint text found for ids: ${hintIds.join(', ')}'
@@ -2128,15 +2127,20 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         phoneticOverrideRemaining: phoneticOverrideCount,
         onTogglePhonetic:
             hasPhoneticData ? () => _reinstatePhoneticsFor(trial.target) : null,
+        spokenCueText: !isNamingView ? trial.target.text : null,
         nativeText: trial.target.nativeText,
         showNative: showNative,
         hintEntries: hintEntries,
         hintLabel: hintLabel,
         hintMissingText: hintMissingText,
-        hintButtonVisible: hintButtonVisible,
+        hintButtonVisible: false,
         hintButtonActive: hintRevealedForItem,
         onToggleHints: _toggleHintsForCurrent,
         hintPanelKey: _hintPanelKey,
+        audioHintEnabled: !isNamingView,
+        onPlayAudioHint: () {
+          unawaited(_playHintAudioForItem(trial.target));
+        },
         showDashboardButton: showDashboardButton,
         showGlobalHourglass: showGlobalHourglass,
         onPrimeMic: _primeMicAndStart,
