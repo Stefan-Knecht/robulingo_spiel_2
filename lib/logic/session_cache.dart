@@ -9,7 +9,7 @@ import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
-const int _sessionCacheVersion = 1;
+const int _sessionCacheVersion = 2;
 
 class CachedItem {
   final String uuid;
@@ -18,6 +18,7 @@ class CachedItem {
   final String text;
   final String? nativeText;
   final String? phonetic;
+  final Map<String, List<String>> hintRefsByLang;
   final String imageSignature;
   final String audioUri;
   final List<String> audioVariants;
@@ -31,6 +32,7 @@ class CachedItem {
     required this.text,
     this.nativeText,
     this.phonetic,
+    required this.hintRefsByLang,
     required this.imageSignature,
     required this.audioUri,
     required this.audioVariants,
@@ -45,6 +47,7 @@ class CachedItem {
         'text': text,
         if (nativeText != null) 'nativeText': nativeText,
         if (phonetic != null) 'phonetic': phonetic,
+        if (hintRefsByLang.isNotEmpty) 'hintRefsByLang': hintRefsByLang,
         'imageSignature': imageSignature,
         'audioUri': audioUri,
         'audioVariants': audioVariants,
@@ -68,6 +71,22 @@ class CachedItem {
     } else if (rawPosition is String) {
       position = int.tryParse(rawPosition);
     }
+    final rawHintRefs = json['hintRefsByLang'];
+    final Map<String, List<String>> hintRefsByLang = {};
+    if (rawHintRefs is Map) {
+      rawHintRefs.forEach((key, value) {
+        if (value is List) {
+          final cleaned = value
+              .whereType<String>()
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+          if (cleaned.isNotEmpty) {
+            hintRefsByLang[key.toString().toLowerCase()] = cleaned;
+          }
+        }
+      });
+    }
     return CachedItem(
       uuid: json['uuid'] as String,
       index: json['index'] as String,
@@ -75,6 +94,7 @@ class CachedItem {
       text: json['text'] as String,
       nativeText: json['nativeText'] as String?,
       phonetic: json['phonetic'] as String?,
+      hintRefsByLang: hintRefsByLang,
       imageSignature: json['imageSignature'] as String,
       audioUri: baseAudioUri,
       audioVariants: normalizedVariants,

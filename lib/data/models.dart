@@ -20,6 +20,7 @@ class ItemData {
   final String text;
   final String? nativeText;
   final String? phonetic; // Lautschrift für die aktuelle Sprache (z.B. phonetic_de)
+  final Map<String, List<String>> hintRefsByLang;
   final Uint8List imageBytes; // primary for convenience
   final List<Uint8List> imageVariants;
   final Uri audioUri;
@@ -32,6 +33,7 @@ class ItemData {
     required this.text,
     this.nativeText,
     this.phonetic,
+    required this.hintRefsByLang,
     required this.imageBytes,
     required this.imageVariants,
     required this.audioUri,

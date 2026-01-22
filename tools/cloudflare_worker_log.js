@@ -1,11 +1,18 @@
 // Cloudflare Worker for RobuLingo logs + user curriculum delta.
 // Bindings: R2 bucket named USERDATA -> bucket "userdata"
+// Bindings: R2 bucket named HINTS -> bucket "hints"
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '');
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
     try {
+      if (path.endsWith('/hints')) {
+        return await handleHints(request, env);
+      }
       if (path.endsWith('/log')) {
         return await handleLog(request, env);
       }
@@ -20,6 +27,62 @@ export default {
     }
   },
 };
+
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET,HEAD,OPTIONS',
+  'access-control-allow-headers': 'content-type,if-none-match',
+};
+
+// ---------- /hints ----------
+async function handleHints(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  const l1 = normalizeLang(url.searchParams.get('l1'));
+  const l2 = normalizeLang(url.searchParams.get('l2'));
+  if (!l1 || !l2) {
+    return new Response('missing l1/l2', {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const key = `hints_${l1}_${l2}.json`;
+  const obj = await env.HINTS.get(key);
+  console.log('[hints]', { l1, l2, key, hit: !!obj });
+  if (!obj) {
+    return new Response('not found', {
+      status: 404,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const etag = obj.etag;
+  const ifNoneMatch = request.headers.get('if-none-match');
+  if (ifNoneMatch && etag && ifNoneMatch === etag) {
+    return new Response(null, {
+      status: 304,
+      headers: { ...CORS_HEADERS, etag, 'cache-control': 'public, max-age=300' },
+    });
+  }
+  const headers = {
+    ...CORS_HEADERS,
+    'cache-control': 'public, max-age=300',
+    'content-type': obj.httpMetadata?.contentType || 'application/json',
+  };
+  if (etag) headers.etag = etag;
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(obj.body, { status: 200, headers });
+}
+
+function normalizeLang(raw) {
+  if (!raw) return '';
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return '';
+  return trimmed.split(/[-_]/)[0];
+}
 
 // ---------- /log ----------
 const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)

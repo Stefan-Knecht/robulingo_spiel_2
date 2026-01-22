@@ -372,6 +372,22 @@ class ApiClient {
     }
     int? position = entry.position;
     position ??= _parsePosition(meta['position']);
+    final Map<String, List<String>> hintRefsByLang = {};
+    final rawHintRefs = meta['hint_refs_by_lang'];
+    if (rawHintRefs is Map) {
+      rawHintRefs.forEach((key, value) {
+        if (value is List) {
+          final cleaned = value
+              .whereType<String>()
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+          if (cleaned.isNotEmpty) {
+            hintRefsByLang[key.toString().toLowerCase()] = cleaned;
+          }
+        }
+      });
+    }
 
     // Bildvarianten (PNG/GIF) laden; falls mehrere vorhanden, später zufällig wählen
     final variants = await _loadImageVariants(entry.uuid);
@@ -387,6 +403,7 @@ class ApiClient {
       text: text.isEmpty ? jsonEncode(meta) : text,
       nativeText: nativeText,
       phonetic: phonetic,
+      hintRefsByLang: hintRefsByLang,
       imageBytes: variants.first,
       imageVariants: variants,
       audioUri: audioUri,
