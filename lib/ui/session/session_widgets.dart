@@ -502,6 +502,7 @@ class TrialOptionsRow extends StatelessWidget {
     required this.lastSelectionIsLeft,
     required this.targetOnLeft,
     required this.disableSelection,
+    this.spokenCueText,
     required this.onSelect,
   });
 
@@ -512,35 +513,65 @@ class TrialOptionsRow extends StatelessWidget {
   final bool? lastSelectionIsLeft;
   final bool targetOnLeft;
   final bool disableSelection;
+  final String? spokenCueText;
   final void Function(bool choseLeft) onSelect;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: imageHeight + 24,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      height: imageHeight,
+      child: Stack(
         children: [
-          _TrialOption(
-            imageBytes: leftImageBytes,
-            imageHeight: imageHeight,
-            hasAnswered: hasAnswered,
-            lastSelectionIsLeft: lastSelectionIsLeft,
-            targetOnLeft: targetOnLeft,
-            isLeft: true,
-            disableSelection: disableSelection,
-            onSelect: onSelect,
+          Align(
+            alignment: Alignment.topCenter,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _TrialOption(
+                  imageBytes: leftImageBytes,
+                  imageHeight: imageHeight,
+                  hasAnswered: hasAnswered,
+                  lastSelectionIsLeft: lastSelectionIsLeft,
+                  targetOnLeft: targetOnLeft,
+                  isLeft: true,
+                  disableSelection: disableSelection,
+                  onSelect: onSelect,
+                ),
+                _TrialOption(
+                  imageBytes: rightImageBytes,
+                  imageHeight: imageHeight,
+                  hasAnswered: hasAnswered,
+                  lastSelectionIsLeft: lastSelectionIsLeft,
+                  targetOnLeft: targetOnLeft,
+                  isLeft: false,
+                  disableSelection: disableSelection,
+                  onSelect: onSelect,
+                ),
+              ],
+            ),
           ),
-          _TrialOption(
-            imageBytes: rightImageBytes,
-            imageHeight: imageHeight,
-            hasAnswered: hasAnswered,
-            lastSelectionIsLeft: lastSelectionIsLeft,
-            targetOnLeft: targetOnLeft,
-            isLeft: false,
-            disableSelection: disableSelection,
-            onSelect: onSelect,
-          ),
+          /*if (spokenCueText != null && spokenCueText!.isNotEmpty)
+            Positioned(
+              top: 0,
+              left: 12,
+              right: 12,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.black12),
+                  boxShadow: const [
+                    BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 3)),
+                  ],
+                ),
+                child: const Text("")
+              ),
+            ),*/
         ],
       ),
     );
@@ -644,6 +675,7 @@ class SessionBody extends StatelessWidget {
     required this.phoneticOverrideActive,
     required this.phoneticOverrideRemaining,
     this.onTogglePhonetic,
+    this.spokenCueText,
     required this.nativeText,
     required this.showNative,
     required this.hintEntries,
@@ -653,6 +685,8 @@ class SessionBody extends StatelessWidget {
     required this.hintButtonActive,
     required this.onToggleHints,
     this.hintPanelKey,
+    required this.audioHintEnabled,
+    required this.onPlayAudioHint,
     required this.showDashboardButton,
     required this.showGlobalHourglass,
     required this.onPrimeMic,
@@ -686,6 +720,7 @@ class SessionBody extends StatelessWidget {
   final bool phoneticOverrideActive;
   final int phoneticOverrideRemaining;
   final VoidCallback? onTogglePhonetic;
+  final String? spokenCueText;
   final String? nativeText;
   final bool showNative;
   final List<HintContent> hintEntries;
@@ -695,6 +730,8 @@ class SessionBody extends StatelessWidget {
   final bool hintButtonActive;
   final VoidCallback onToggleHints;
   final Key? hintPanelKey;
+  final bool audioHintEnabled;
+  final VoidCallback onPlayAudioHint;
   final bool showDashboardButton;
   final bool showGlobalHourglass;
   final VoidCallback onPrimeMic;
@@ -756,6 +793,7 @@ class SessionBody extends StatelessWidget {
             lastSelectionIsLeft: lastSelectionIsLeft,
             targetOnLeft: targetOnLeft,
             disableSelection: isNaming,
+            spokenCueText: spokenCueText,
             onSelect: onSelect,
           );
 
@@ -765,34 +803,27 @@ class SessionBody extends StatelessWidget {
       children: [
         if (isLandscape) const SizedBox(height: 4),
         trialWidget,
-        const SizedBox(height: 32),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisSize: MainAxisSize.max,
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            if (phoneticButtonVisible)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: IconButton(
-                  padding: const EdgeInsets.all(2),
-                  constraints:
-                      const BoxConstraints(minWidth: 36, minHeight: 36),
-                  iconSize: 28,
-                  icon: ImageIcon(
-                    const AssetImage('assets/icons/phonetic.webp'),
-                    color:
-                        phoneticOverrideActive ? Colors.blue : Colors.grey[600],
-                  ),
-                  onPressed: onTogglePhonetic,
-                  tooltip: phoneticOverrideActive
-                      ? 'Phonetik bleibt noch $phoneticOverrideRemaining Durchläufe sichtbar'
-                      : 'Phonetik für 10 Durchläufe anzeigen',
-                ),
-              ),
-            Flexible(
-              child: Text.rich(
+        //const SizedBox(height: 32),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFF9FAFF), Color(0xFFEFF3FF)],
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black12),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x14000000),
+                  blurRadius: 8,
+                  offset: Offset(0, 4)),
+            ],
+          ),
+          child: Column(
+            children: [
+              Text.rich(
                 TextSpan(
                   text: targetText,
                   children: [
@@ -812,55 +843,107 @@ class SessionBody extends StatelessWidget {
                 style:
                     const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
               ),
-            ),
-          ],
-        ),
-        if (showNative && nativeText != null && nativeText!.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(
-            nativeText!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 20, fontWeight: FontWeight.w600, color: Colors.green),
-          ),
-        ],
-        if (hintButtonVisible) ...[
-          const SizedBox(height: 6),
-          Center(
-            child: GestureDetector(
-              onTap: onToggleHints,
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: hintButtonActive ? const Color(0xFFFFF2C0) : Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black12),
-                  boxShadow: const [
-                    BoxShadow(
-                        color: Colors.black12, blurRadius: 2, offset: Offset(0, 1))
+              if (showNative && nativeText != null && nativeText!.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  nativeText!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green),
+                ),
+              ],
+              if (phoneticButtonVisible ||
+                  audioHintEnabled ||
+                  hintButtonVisible) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    if (phoneticButtonVisible)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: phoneticOverrideActive
+                              ? const Color(0xFFE7F0FF)
+                              : Colors.white,
+                          foregroundColor: Colors.black87,
+                          side: BorderSide(
+                            color: phoneticOverrideActive
+                                ? const Color(0xFF8AB4F8)
+                                : Colors.black12,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        onPressed: onTogglePhonetic,
+                        icon: ImageIcon(
+                          const AssetImage('assets/icons/phonetic.webp'),
+                          color: phoneticOverrideActive
+                              ? Colors.blue
+                              : Colors.grey[700],
+                          size: 20,
+                        ),
+                        label: const Text('Phonetic'),
+                      ),
+                    if (audioHintEnabled)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black87,
+                          side: const BorderSide(color: Colors.black12),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        onPressed: onPlayAudioHint,
+                        icon: const Icon(Icons.volume_up, size: 20),
+                        label: const Text('Audio hint'),
+                      ),
+                    if (hintButtonVisible)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: hintButtonActive
+                              ? const Color(0xFFFFF2C0)
+                              : Colors.white,
+                          foregroundColor: Colors.black87,
+                          side: BorderSide(
+                            color: hintButtonActive
+                                ? const Color(0xFFE7C36A)
+                                : Colors.black12,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        onPressed: onToggleHints,
+                        icon: const Icon(Icons.search, size: 20),
+                        label: Text(hintLabel),
+                      ),
                   ],
                 ),
-                child: Image.asset(
-                  'assets/icons/Magnifying_glass.webp',
-                  width: 30,
-                  height: 30,
-                  fit: BoxFit.contain,
+              ],
+              if (hintEntries.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _HintPanel(key: hintPanelKey, label: hintLabel, hints: hintEntries),
+              ] else if (hintMissingText != null &&
+                  hintMissingText!.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  hintMissingText!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14, color: Colors.black45),
                 ),
-              ),
-            ),
+              ],
+            ],
           ),
-        ],
-        if (hintEntries.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          _HintPanel(key: hintPanelKey, label: hintLabel, hints: hintEntries),
-        ] else if (hintMissingText != null && hintMissingText!.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Text(
-            hintMissingText!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 14, color: Colors.black45),
-          ),
-        ],
+        ),
         const SizedBox(height: 12),
         Column(
           children: [
@@ -883,7 +966,6 @@ class SessionBody extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             trackWidget,
-            const SizedBox(height: 12),
             contentColumn,
           ],
         ),
@@ -892,14 +974,16 @@ class SessionBody extends StatelessWidget {
 
     final double trialHeight = imageHeight + 24;
     final double maxTrackHeight =
-        (availableHeight - trialHeight - 12).clamp(0.0, availableHeight);
-    final Widget landscapeTrackWidget = SizedBox(
-      height: maxTrackHeight,
-      width: double.infinity,
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
+        (availableHeight - trialHeight - 12).clamp(0.0, availableHeight) * 0.85;
+    final Widget landscapeTrackWidget = ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxTrackHeight),
+      child: Align(
         alignment: Alignment.topCenter,
-        child: trackWidget,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.topCenter,
+          child: trackWidget,
+        ),
       ),
     );
 
@@ -908,8 +992,7 @@ class SessionBody extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         landscapeTrackWidget,
-        const SizedBox(height: 12),
-        trialWidget,
+        contentColumn,
       ],
     );
   }
