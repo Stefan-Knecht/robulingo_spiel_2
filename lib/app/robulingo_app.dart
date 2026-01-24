@@ -39,7 +39,7 @@ import 'package:robulingo_flutter/ui/training_calendar_panel.dart';
 import 'package:robulingo_flutter/utils/platform_info.dart';
 import 'package:robulingo_flutter/utils/text_utils.dart';
 
-const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh'};
+const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi'};
 
 // ------------------------------------------------------------
 // RobuLingo Viewer – Überblick für Laien
