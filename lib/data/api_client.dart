@@ -215,18 +215,23 @@ class ApiClient {
     final meta = await _fetchItemMeta(uuid);
     final text = _textForLang(meta, lang);
     final native = nativeLang != null ? _textForLang(meta, nativeLang) : null;
-    return ItemTexts(text: text, nativeText: native);
+    final phonetic = _phoneticForLang(meta, lang);
+    final nativePhonetic =
+        (nativeLang != null) ? _phoneticForLang(meta, nativeLang) : null;
+    return ItemTexts(
+      text: text,
+      nativeText: native,
+      phonetic: phonetic,
+      nativePhonetic: nativePhonetic,
+    );
   }
 
   Future<bool> hasAudioForLang(String uuid, String lang) async {
     final dyn = await _fetchItemMeta(uuid);
     final filenames = dyn['filenames'];
-    if (filenames is! Map) return false;
-    final audio = filenames['audio'];
-    if (audio is Map) {
-      return (audio[lang] is String) && (audio[lang] as String).isNotEmpty;
-    }
-    return false;
+    if (filenames is! Map<String, dynamic>) return false;
+    final manifest = _buildManifest(uuid, dyn);
+    return _audioKeyForLang(manifest, lang) != null;
   }
 
   Future<bool> audioUrlOk(Uri uri) async {
@@ -299,6 +304,16 @@ class ApiClient {
     return '';
   }
 
+  String? _phoneticForLang(Map<String, dynamic> meta, String lang) {
+    final lower = lang.trim().toLowerCase();
+    if (lower.isEmpty) return null;
+    final value = meta['phonetic_$lower'];
+    if (value is String && value.isNotEmpty) {
+      return value;
+    }
+    return null;
+  }
+
   _ItemManifest _buildManifest(String uuid, Map<String, dynamic> meta) {
     final filenames = meta['filenames'];
     final images = <String>{};
@@ -355,8 +370,23 @@ class ApiClient {
   }
 
   String? _requiredL2AudioKey(_ItemManifest mf, String lang) {
+    return _audioKeyForLang(mf, lang);
+  }
+
+  String? _audioKeyForLang(_ItemManifest mf, String lang) {
     final normalized = lang.trim().toLowerCase();
-    return mf.audio[normalized] ?? mf.audio['default'];
+    if (normalized.isNotEmpty) {
+      final specific = mf.audio[normalized];
+      if (specific?.isNotEmpty == true) {
+        return specific;
+      }
+      return '${mf.uuid}_$normalized.mp3';
+    }
+    final defaultKey = mf.audio['default'];
+    if (defaultKey?.isNotEmpty == true) {
+      return defaultKey;
+    }
+    return null;
   }
 
   String _imageSignature(Uint8List bytes) {

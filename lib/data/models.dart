@@ -10,7 +10,32 @@ class CurriculumEntry {
   final String uuid;
   final String index;
   final int? position;
-  CurriculumEntry({required this.uuid, required this.index, this.position});
+  CurriculumEntry({
+    required this.uuid,
+    required Object index,
+    this.position,
+  }) : index = index.toString();
+
+  factory CurriculumEntry.fromJson(Map<String, dynamic> json,
+      {int fallbackIndex = 0}) {
+    final uuid = (json['uuid'] ?? json['id'] ?? '').toString();
+    String idx;
+    final idxDyn = json['index'];
+    if (idxDyn is String && idxDyn.isNotEmpty) {
+      idx = idxDyn;
+    } else if (idxDyn is num) {
+      idx = idxDyn.toString();
+    } else {
+      idx = fallbackIndex.toString();
+    }
+    final posDyn = json['position'];
+    final position = (posDyn is int)
+        ? posDyn
+        : (posDyn is num)
+            ? posDyn.toInt()
+            : null;
+    return CurriculumEntry(uuid: uuid, index: idx, position: position);
+  }
 }
 
 class ItemData {
@@ -19,13 +44,15 @@ class ItemData {
   final int? position;
   final String text;
   final String? nativeText;
-  final String? phonetic; // Lautschrift für die aktuelle Sprache (z.B. phonetic_de)
+  final String?
+      phonetic; // Lautschrift für die aktuelle Sprache (z.B. phonetic_de)
   final Map<String, List<String>> hintRefsByLang;
   final Uint8List imageBytes; // primary for convenience
   final List<Uint8List> imageVariants;
   final Uri audioUri;
   final List<Uri> audioVariants;
-  final String imageSignature; // einfache Signatur zur Erkennung gleicher Bilder
+  final String
+      imageSignature; // einfache Signatur zur Erkennung gleicher Bilder
   ItemData({
     required this.uuid,
     required this.index,
@@ -56,5 +83,19 @@ class Trial {
     required this.targetImageBytes,
     required this.distractorImageBytes,
     this.isReview = false,
+  });
+}
+
+class ItemTexts {
+  final String text;
+  final String? nativeText;
+  final String? phonetic;
+  final String? nativePhonetic;
+
+  const ItemTexts({
+    required this.text,
+    this.nativeText,
+    this.phonetic,
+    this.nativePhonetic,
   });
 }

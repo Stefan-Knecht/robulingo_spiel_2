@@ -41,6 +41,7 @@ const int batchSize = 12; // Wie viele Items wir in einem Rutsch vom Worker hole
 const double prefetchThreshold = 0.6; // sobald Rest kleiner als 60% des Fensters ist, laden wir nach
 const int prefetchWindowSize = 12; // Größe des Fensters, auf das sich das Verhältnis bezieht
 const int minTrials = 10; // Mindestens so viele Übungsrunden wollen wir initial haben
+const int initialItemDownloadLimit = minTrials; // Items, deren Assets wir sofort laden (Rest per Refresh)
 const int seedCount = 0; // Anzahl Seed-Items (aus start_curriculum_a.json)
 const int reviewInterval = 10; // nach jeweils ~10 Trials eine Wiederholung aus der Vergangenheit
 const bool dashboardOnlyAfterSession = true; // bei true erst nach Session-Ende freischalten
@@ -84,3 +85,6 @@ const Map<String, String> startCurriculumIcons = {
   'start_curriculum_s.json': 'assets/icons/step.webp',
   'start_curriculum_l.json': 'assets/icons/glasses.webp',
 };
+
+/// File that lists available pick manifests in the curriculum bucket.
+const String pickManifestIndexKey = 'pick_manifest_index.json';
