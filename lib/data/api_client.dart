@@ -1,377 +1,179 @@
-// ------------------------------------------------------------
-// Ziel (Laien): Worker ansprechen, Curriculum laden und Assets prüfen.
-// Strategie: HEAD/Range-Checks nutzen, Bildvarianten sammeln, Audio pro Sprache verifizieren.
-// Schritte: loadCurriculum -> loadItem (JSON/Bild/Audio) -> hasAudioForAllLangs für Seeds.
-// Tücken: Einige Worker liefern auf HEAD 404, deshalb Range-GET; Zeitouts beachten.
-// ------------------------------------------------------------
-import 'dart:convert';
-import 'dart:math';
-import 'package:flutter/foundation.dart';
+// lib/data/api_client.dart
+//
+// Basierend auf der älteren ApiClient-Version (alte Schnittstellen bleiben erhalten)
+// + ergänzt um die "neue" Funktionalität (start-curriculum/text/file), sodass die
+// bisherigen Aufrufer (robulingo_app.dart, pick_manifest_service.dart) wieder kompilieren.
 
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
-import '../constants.dart';
 import 'models.dart';
 
-/// API-Client: holt Curriculum, Items und prüft/verarbeitet Assets.
 class ApiClient {
-  ApiClient({required this.workerHost, required this.apiPrefix});
+  final String workerHost; // z.B. robulingo-api.knechtipad-aec.workers.dev
+  final String apiPrefix; // z.B. /api
+  final http.Client _http;
 
-  final String workerHost;
-  final String apiPrefix;
-  final http.Client _http = http.Client();
-  static const Duration _getTimeout = Duration(seconds: 12);
-  static const Duration _headTimeout = Duration(seconds: 8);
-  static const List<String> _imageSuffixes = [
-    '_01',
-    '_02',
-    '_03',
-    '_04',
-    '_05',
-    '_06',
-    '_07',
-    '_08',
-    '_09',
-    '_10',
-    '_1',
-    '_2'
-  ]; // Fallback: nummerierte Varianten
-  static const List<String> _audioVariantSuffixes = ['_1', '_2'];
-  // Prefer WebP (smaller/faster), fall back to legacy formats if missing.
-  static const List<String> _imageExts = ['webp', 'png', 'gif', 'jpg', 'jpeg'];
-  static const int _maxImageVariantsToFetch =
-      11; // Basis + bis zu 10 Varianten (start_curriculum_l has more)
-  static const int _missingAudioLength = 11015;
-  static const int _missingAudioSampleSize = 256;
-  static const int _missingAudioSampleHash = 1993370479;
-  static const Set<String> _knownVideoOnlyUuids = {
-    '2lt5i7g3',
-    '5t8m2x9q',
-    '7n2k5x8m',
-  };
+  ApiClient({
+    required this.workerHost,
+    this.apiPrefix = '/api',
+    http.Client? httpClient,
+  }) : _http = httpClient ?? http.Client();
 
-  // Hilfsfunktion: baut eine HTTPS-URL zum Worker inkl. Query-Parametern
-  Uri _path(String path, [Map<String, String>? query]) {
-    return Uri.https(workerHost, '$apiPrefix$path', query);
+  Uri _uri(String path, [Map<String, String>? query]) {
+    // apiPrefix kann "/api" oder "api" sein
+    final pfx = apiPrefix.startsWith('/') ? apiPrefix : '/$apiPrefix';
+    final p = path.startsWith('/') ? path : '/$path';
+    return Uri.https(workerHost, '$pfx$p', query);
   }
 
-  Future<http.Response> _get(Uri uri) {
-    return _http.get(uri).timeout(_getTimeout);
-  }
-
-  Future<http.Response> _head(Uri uri) {
-    return _http.head(uri).timeout(_headTimeout);
-  }
-
-  int? _parsePosition(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value);
-    return null;
-  }
-
-  List<CurriculumEntry> _sortEntriesByPosition(List<CurriculumEntry> entries) {
-    if (entries.length < 2) return entries;
-    final indexed = entries.asMap().entries.toList();
-    indexed.sort((a, b) {
-      final posA = a.value.position ?? a.key;
-      final posB = b.value.position ?? b.key;
-      final cmp = posA.compareTo(posB);
-      if (cmp != 0) return cmp;
-      return a.key.compareTo(b.key);
-    });
-    return indexed.map((e) => e.value).toList();
-  }
-
-  Future<List<CurriculumEntry>> loadCurriculum(String lang) async {
-    final uri = _path('/curriculum', {'lang': lang});
-    try {
-      final res = await _get(uri);
-      if (res.statusCode != 200) {
-        debugPrint(
-            '[api] curriculum $lang failed status=${res.statusCode} uri=$uri');
-        return [];
-      }
-      final data = jsonDecode(utf8.decode(res.bodyBytes));
-      final items = (data['items'] as List?) ?? [];
-      final entries = items
-          .map((e) => CurriculumEntry(
-                uuid: e['uuid'] as String,
-                index: (e['index'] ?? '') as String,
-                position: _parsePosition(e['position']),
-              ))
-          .toList();
-      return _sortEntriesByPosition(entries);
-    } catch (e) {
-      debugPrint('[api][error] curriculum $lang $e');
-      return [];
+  /// (alte Schnittstelle) beliebige Textdatei laden
+  Future<String> loadTextFile(String key) async {
+    final res = await _http.get(_uri('/file', {'key': key}));
+    if (res.statusCode != 200) {
+      throw ApiException('loadTextFile failed',
+          statusCode: res.statusCode, body: res.body);
     }
+    return res.body;
   }
 
-  List<Uri> _startCurriculumCandidates(
-      String fileName, bool allowDefaultFallback) {
-    final List<Uri> candidates = [
-      ..._bucketUris(fileName),
-      _path('/file', {'key': fileName}),
-    ];
-    if (allowDefaultFallback && fileName != defaultStartCurriculum) {
-      candidates.addAll(_bucketUris(defaultStartCurriculum));
-      candidates.add(_path('/file', {'key': defaultStartCurriculum}));
-    }
-    return candidates;
+  /// (alte Schnittstelle) JSON laden
+  Future<dynamic> loadJsonFile(String key) async {
+    final raw = await loadTextFile(key);
+    return jsonDecode(raw);
   }
 
-  bool _shouldSkipCompleteCheckForLStart(String fileName) {
-    final normalized = fileName.toLowerCase();
-    return normalized.startsWith('start_curriculum_l_');
-  }
-
-  Future<List<CurriculumEntry>> loadStartCurriculum(String fileName,
-      {bool allowDefaultFallback = false,
-      String? requireCompleteForLang}) async {
-    // Reihenfolge: R2-Bucket (beide URL-Varianten, gewünschte Datei),
-    // dann Worker (gewünschte Datei). Optional (allowDefaultFallback):
-    // erst, wenn explizit erlaubt, probieren wir das Default-Curriculum.
-    // So verhindert: Start-Button "Travel" fällt stillschweigend auf A zurück.
-    final data = await _fetchCurriculumJson(
-        _startCurriculumCandidates(fileName, allowDefaultFallback));
-    if (data == null) {
-      throw Exception('Start-Curriculum fehlgeschlagen ($fileName)');
-    }
-    List items = (data['items'] as List?) ?? [];
-    if (items.isEmpty && data['item_order'] is List) {
-      items = data['item_order'] as List;
-    }
-    var entries = items
-        .map((e) => CurriculumEntry(
-              uuid: e['uuid'] as String,
-              index: (e['index'] ?? '') as String,
-              position: _parsePosition(e['position']),
-            ))
-        .where((e) => !_knownVideoOnlyUuids.contains(e.uuid))
-        .toList();
-    entries = _sortEntriesByPosition(entries);
-    final shouldValidateForLang = requireCompleteForLang != null &&
-        requireCompleteForLang.isNotEmpty &&
-        !_shouldSkipCompleteCheckForLStart(fileName);
-    if (shouldValidateForLang) {
-      const limit =
-          startCurriculumWindowSize > 0 ? startCurriculumWindowSize : null;
-      entries = await _pickCompleteEntries(entries, requireCompleteForLang!,
-          limit: limit);
-    }
-    if (startCurriculumWindowSize > 0 &&
-        entries.length > startCurriculumWindowSize) {
-      entries = entries.take(startCurriculumWindowSize).toList();
-    }
-    return entries;
-  }
-
-  Future<Map<String, dynamic>?> loadStartCurriculumJson(String fileName,
-      {bool allowDefaultFallback = false}) async {
-    return _fetchCurriculumJson(
-        _startCurriculumCandidates(fileName, allowDefaultFallback));
-  }
-
-  Future<Map<String, dynamic>?> _fetchCurriculumJson(
-      List<Uri> candidates) async {
-    for (final uri in candidates) {
-      try {
-        final res = await _get(uri);
-        if (res.statusCode == 200) {
-          return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
-        }
-      } catch (_) {
-        // nächste Quelle probieren
-      }
-    }
-    return null;
-  }
-
-  List<Uri> _bucketUris(String fileName) {
-    return [
-      Uri.parse('$curriculumBucketVirtualHost/$fileName'),
-      Uri.parse('$curriculumBucketPathBase/$fileName'),
-    ];
-  }
-
-  Future<(bool ok, int status)> _urlOk(Uri url) async {
-    try {
-      final r = await _head(url);
-      if (r.statusCode == 200) return (true, r.statusCode);
-      if (kIsWeb) return (false, r.statusCode);
-    } catch (_) {
-      if (kIsWeb) return (false, -1);
-      // ignore and fall back to GET
-    }
-    try {
-      // Einige Worker liefern auf HEAD 404. Range-GET testet Audio minimal.
-      final req = http.Request('GET', url)..headers['range'] = 'bytes=0-0';
-      final res = await _http.send(req).timeout(_headTimeout);
-      await res.stream.drain();
-      final status = res.statusCode;
-      return (status == 200 || status == 206, status);
-    } catch (_) {
-      return (false, -1);
-    }
-  }
-
-  Future<bool> urlOk(Uri url) async {
-    final (ok, _) = await _urlOk(url);
-    return ok;
-  }
-
-  bool _looksLikeMp3(List<int> bytes) {
-    if (bytes.length >= 3 &&
-        bytes[0] == 0x49 &&
-        bytes[1] == 0x44 &&
-        bytes[2] == 0x33) {
-      return true; // "ID3"
-    }
-    if (bytes.length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) {
-      return true; // frame sync
-    }
-    return false;
-  }
-
-  int _byteSampleHash(List<int> bytes, int maxBytes) {
-    final sampleLen = bytes.length < maxBytes ? bytes.length : maxBytes;
-    int hash = 0;
-    for (int i = 0; i < sampleLen; i++) {
-      hash = (hash * 31 + bytes[i]) & 0x7fffffff;
-    }
-    return hash;
-  }
-
-  int? _parseTotalLength(Map<String, String> headers) {
-    final contentRange = headers['content-range'];
-    if (contentRange != null) {
-      final parts = contentRange.split('/');
-      if (parts.length == 2) {
-        final total = int.tryParse(parts[1].trim());
-        if (total != null) return total;
-      }
-    }
-    final contentLength = headers['content-length'];
-    if (contentLength != null) {
-      return int.tryParse(contentLength);
-    }
-    return null;
-  }
-
-  bool _isMissingAudioPlaceholder(List<int> bytes, int? totalLength) {
-    if (bytes.length < _missingAudioSampleSize) return false;
-    if (totalLength != null && totalLength != _missingAudioLength) return false;
-    final hash = _byteSampleHash(bytes, _missingAudioSampleSize);
-    return hash == _missingAudioSampleHash;
-  }
-
-  Future<List<int>> _readPrefix(Stream<List<int>> stream, int maxBytes) async {
-    final buffer = <int>[];
-    await for (final chunk in stream) {
-      buffer.addAll(chunk);
-      if (buffer.length >= maxBytes) break;
-    }
-    if (buffer.length > maxBytes) {
-      buffer.removeRange(maxBytes, buffer.length);
-    }
-    return buffer;
-  }
-
-  Future<(bool ok, int status)> _audioUrlOk(Uri url) async {
-    if (kIsWeb) {
-      try {
-        final res = await _head(url);
-        return (res.statusCode == 200, res.statusCode);
-      } catch (_) {
-        return (false, -1);
-      }
-    }
-    try {
-      final req = http.Request('GET', url)
-        ..headers['range'] = 'bytes=0-${_missingAudioSampleSize - 1}';
-      final res = await _http.send(req).timeout(_headTimeout);
-      final status = res.statusCode;
-      if (status != 200 && status != 206) {
-        await res.stream.drain();
-        return (false, status);
-      }
-      final bytes = await _readPrefix(res.stream, _missingAudioSampleSize);
-      final totalLength = _parseTotalLength(res.headers);
-      final ok = _looksLikeMp3(bytes) &&
-          !_isMissingAudioPlaceholder(bytes, totalLength);
-      return (ok, status);
-    } catch (_) {
-      return (false, -1);
-    }
-  }
-
-  Future<bool> audioUrlOk(Uri url) async {
-    final (ok, _) = await _audioUrlOk(url);
-    return ok;
-  }
-
-  Future<bool> _jsonExists(String uuid) async {
-    final (ok, _) = await _urlOk(_path('/file', {'key': '$uuid.json'}));
-    return ok;
-  }
-
-  Future<bool> _imageExists(String uuid) async {
-    for (final ext in _imageExts) {
-      final baseUri = _path('/file', {'key': '$uuid.$ext'});
-      final (ok, _) = await _urlOk(baseUri);
-      if (ok) return true;
-      for (final suffix in _imageSuffixes) {
-        final uri = _path('/file', {'key': '$uuid$suffix.$ext'});
-        final (ok, _) = await _urlOk(uri);
-        if (ok) return true;
-      }
-    }
-    return false;
-  }
-
-  Future<bool> _isCompleteStartItem(String uuid, String lang) async {
-    if (!await _jsonExists(uuid)) return false;
-    if (!await hasAudioForLang(uuid, lang)) return false;
-    return _imageExists(uuid);
-  }
-
-  Future<List<CurriculumEntry>> _pickCompleteEntries(
-    List<CurriculumEntry> entries,
-    String lang, {
-    int? limit,
+  /// (alte Schnittstelle) Start-Curriculum laden (Liste von CurriculumEntry)
+  ///
+  /// allowDefaultFallback bleibt absichtlich als Named-Param erhalten, weil
+  /// robulingo_app.dart / pick_manifest_service.dart das so aufrufen.
+  Future<List<CurriculumEntry>> loadStartCurriculum(
+    String fileName, {
+    bool allowDefaultFallback = true,
+    String? requireCompleteForLang, // kept for backward compatibility
   }) async {
-    final List<CurriculumEntry> picked = [];
-    for (final entry in entries) {
-      if (!await _isCompleteStartItem(entry.uuid, lang)) continue;
-      picked.add(entry);
-      if (limit != null && picked.length >= limit) break;
+    final data = await loadStartCurriculumJson(
+      fileName,
+      allowDefaultFallback: allowDefaultFallback,
+    );
+
+    final entriesDyn = _resolveEntryList(data);
+
+    if (entriesDyn is List) {
+      return _parseCurriculumEntries(entriesDyn);
     }
-    return picked;
+
+    // Fallback: leere Liste statt hard-crash (aber nur wenn allowDefaultFallback)
+    if (allowDefaultFallback) return <CurriculumEntry>[];
+    throw ApiException(
+        'Unexpected start curriculum format: ${entriesDyn.runtimeType}');
   }
 
-  Future<ItemData> loadItem(CurriculumEntry entry, String lang,
-      {String? nativeLang}) async {
-    // JSON
-    final metaUri = _path('/file', {'key': '${entry.uuid}.json'});
-    final metaRes = await _get(metaUri);
-    if (metaRes.statusCode != 200) {
-      throw Exception(
-          'Meta missing ${entry.uuid} url=$metaUri status=${metaRes.statusCode}');
+  /// (neu/alt kompatibel) Start-Curriculum-JSON (roh) laden
+  Future<Map<String, dynamic>> loadStartCurriculumJson(
+    String key, {
+    bool allowDefaultFallback = true,
+  }) async {
+    try {
+      final dyn = await loadJsonFile(key);
+      if (dyn is Map<String, dynamic>) return dyn;
+      // wenn es direkt eine Liste ist, packen wir sie in {entries: ...} damit obiger Code sauber läuft
+      if (dyn is List) return <String, dynamic>{'entries': dyn};
+      if (allowDefaultFallback) return <String, dynamic>{'entries': []};
+      throw ApiException('Unexpected JSON type: ${dyn.runtimeType}');
+    } catch (e) {
+      if (allowDefaultFallback) return <String, dynamic>{'entries': []};
+      rethrow;
     }
-    final meta =
-        jsonDecode(utf8.decode(metaRes.bodyBytes)) as Map<String, dynamic>;
-    final text =
-        (meta['display_$lang'] ?? meta['text_$lang'] ?? meta['text'] ?? '')
-            .toString();
+  }
+
+  /// (alte Schnittstelle) Curriculum nach "lang" laden.
+  ///
+  /// In deinem Log gibt es ein /start-curriculum Endpoint, der offensichtlich
+  /// "pick_*.json" materialisiert. Diese Methode nutzt das und bleibt kompatibel
+  /// zu den Aufrufern, die `loadCurriculum(lang)` erwarten.
+  Future<List<CurriculumEntry>> loadCurriculum(
+    String lang, {
+    bool requireCompleteForLang = false,
+  }) async {
+    final key = lang.endsWith('.json') ? lang : 'pick_${lang}.json';
+
+    final res = await _http.get(_uri('/start-curriculum', {'key': key}));
+    if (res.statusCode != 200) {
+      throw ApiException('loadCurriculum failed',
+          statusCode: res.statusCode, body: res.body);
+    }
+
+    final dyn = jsonDecode(res.body);
+    final listDyn =
+        (dyn is Map && dyn['entries'] != null) ? dyn['entries'] : dyn;
+
+    if (listDyn is! List) {
+      throw ApiException(
+          'Unexpected curriculum format: ${listDyn.runtimeType}');
+    }
+
+    final out = _parseCurriculumEntries(listDyn);
+
+    if (requireCompleteForLang) {
+      return out;
+    }
+
+    return out;
+  }
+
+  /// Download binary file (image/audio).
+  Future<Uint8List> loadBinaryFile(String key) async {
+    final res = await _http.get(_uri('/file', {'key': key}));
+    if (res.statusCode != 200) {
+      throw ApiException('loadBinaryFile failed', statusCode: res.statusCode);
+    }
+    return res.bodyBytes;
+  }
+
+  Future<Map<String, dynamic>> _fetchItemMeta(String uuid) async {
+    final dyn = await loadJsonFile('$uuid.json');
+    if (dyn is! Map<String, dynamic>) {
+      throw ApiException('Unexpected item JSON');
+    }
+    return dyn;
+  }
+
+  Future<ItemData> loadItem(
+    CurriculumEntry entry,
+    String lang, {
+    String? nativeLang,
+  }) async {
+    final meta = await _fetchItemMeta(entry.uuid);
+    final manifest = _buildManifest(entry.uuid, meta);
+
+    final imageKey =
+        _pickImageKeyForLang(manifest, lang, nativeLang: nativeLang);
+    if (imageKey == null) {
+      throw ApiException('Image key missing for ${entry.uuid}');
+    }
+    final imageBytes = await loadBinaryFile(imageKey);
+
+    final imageVariants = <Uint8List>[imageBytes];
+
+    final audioKey = _requiredL2AudioKey(manifest, lang);
+    if (audioKey == null || audioKey.isEmpty) {
+      throw ApiException('Audio missing ${entry.uuid} lang=$lang');
+    }
+    final audioUri = _uri('/file', {'key': audioKey});
+    final audioVariants = <Uri>[audioUri];
+
     final String? phonetic = meta['phonetic_$lang']?.toString();
+    final String text = _textForLang(meta, lang);
     String? nativeText;
     if (nativeLang != null && nativeLang != lang) {
-      nativeText =
-          (meta['display_$nativeLang'] ?? meta['text_$nativeLang'])?.toString();
+      nativeText = _textForLang(meta, nativeLang);
     }
+
     int? position = entry.position;
     position ??= _parsePosition(meta['position']);
+
     final Map<String, List<String>> hintRefsByLang = {};
     final rawHintRefs = meta['hint_refs_by_lang'];
     if (rawHintRefs is Map) {
@@ -389,13 +191,6 @@ class ApiClient {
       });
     }
 
-    // Bildvarianten (PNG/GIF) laden; falls mehrere vorhanden, später zufällig wählen
-    final variants = await _loadImageVariants(entry.uuid);
-
-    // MP3 (muss existieren)
-    final audioVariants = await _loadAudioVariants(entry.uuid, lang);
-    final audioUri = audioVariants.first;
-
     return ItemData(
       uuid: entry.uuid,
       index: entry.index,
@@ -404,15 +199,166 @@ class ApiClient {
       nativeText: nativeText,
       phonetic: phonetic,
       hintRefsByLang: hintRefsByLang,
-      imageBytes: variants.first,
-      imageVariants: variants,
+      imageBytes: imageBytes,
+      imageVariants: imageVariants,
       audioUri: audioUri,
       audioVariants: audioVariants,
-      imageSignature: _imageSignature(variants.first),
+      imageSignature: _imageSignature(imageBytes),
     );
   }
 
-  // einfache, schnelle Signatur aus Länge und ersten Bytes
+  Future<ItemTexts> loadItemTexts(
+    String uuid,
+    String lang, {
+    String? nativeLang,
+  }) async {
+    final meta = await _fetchItemMeta(uuid);
+    final text = _textForLang(meta, lang);
+    final native = nativeLang != null ? _textForLang(meta, nativeLang) : null;
+    return ItemTexts(text: text, nativeText: native);
+  }
+
+  Future<bool> hasAudioForLang(String uuid, String lang) async {
+    final dyn = await _fetchItemMeta(uuid);
+    final filenames = dyn['filenames'];
+    if (filenames is! Map) return false;
+    final audio = filenames['audio'];
+    if (audio is Map) {
+      return (audio[lang] is String) && (audio[lang] as String).isNotEmpty;
+    }
+    return false;
+  }
+
+  Future<bool> audioUrlOk(Uri uri) async {
+    try {
+      final res = await _http.head(uri);
+      if (res.statusCode == 405) {
+        final res2 = await _http.get(uri, headers: {'Range': 'bytes=0-0'});
+        return res2.statusCode == 200 || res2.statusCode == 206;
+      }
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  List<CurriculumEntry> _parseCurriculumEntries(List listDyn) {
+    final out = <CurriculumEntry>[];
+
+    for (var i = 0; i < listDyn.length; i++) {
+      final it = listDyn[i];
+
+      if (it is String) {
+        // Modelle verlangen index -> i nehmen (deterministisch)
+        out.add(CurriculumEntry(uuid: it, index: i.toString()));
+        continue;
+      }
+
+      if (it is Map) {
+        // bevorzugt: uuid / index / position
+        final map = Map<String, dynamic>.from(it as Map);
+        out.add(CurriculumEntry.fromJson(map, fallbackIndex: i));
+        continue;
+      }
+
+      // Unbekanntes Element: ignorieren statt Crash
+    }
+
+    return out;
+  }
+
+  dynamic _resolveEntryList(dynamic data) {
+    if (data is List) return data;
+    if (data is Map<String, dynamic>) {
+      if (data['entries'] is List) return data['entries'];
+      if (data['item_order'] is List) return data['item_order'];
+      if (data['items'] is List) return data['items'];
+      if (data['manifest'] is Map && data['manifest']['items'] is List) {
+        return data['manifest']['items'];
+      }
+      if (data['curriculum'] is Map && data['curriculum']['items'] is List) {
+        return data['curriculum']['items'];
+      }
+    }
+    return data;
+  }
+
+  int? _parsePosition(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  String _textForLang(Map<String, dynamic> meta, String lang) {
+    final lower = lang.trim().toLowerCase();
+    final display = meta['display_$lower'] ?? meta['text_$lower'];
+    if (display is String && display.isNotEmpty) return display;
+    final fallback = meta['text'];
+    if (fallback is String && fallback.isNotEmpty) return fallback;
+    return '';
+  }
+
+  _ItemManifest _buildManifest(String uuid, Map<String, dynamic> meta) {
+    final filenames = meta['filenames'];
+    final images = <String>{};
+    String? defaultImageKey;
+    final audio = <String, String>{};
+
+    if (filenames is Map) {
+      if (filenames['images'] is List) {
+        for (final entry in filenames['images']) {
+          if (entry is String && entry.isNotEmpty) {
+            images.add(entry);
+          }
+        }
+      }
+      if (filenames['image'] is String) {
+        defaultImageKey = filenames['image'] as String?;
+      }
+      final audioRaw = filenames['audio'];
+      if (audioRaw is Map) {
+        audioRaw.forEach((key, value) {
+          if (value is String && value.isNotEmpty) {
+            audio[key.toString().trim().toLowerCase()] = value;
+          }
+        });
+      } else if (audioRaw is String && audioRaw.isNotEmpty) {
+        audio['default'] = audioRaw;
+      }
+    }
+    if (images.isEmpty && defaultImageKey != null) {
+      images.add(defaultImageKey);
+    }
+    return _ItemManifest(
+      uuid: uuid,
+      images: images.toList(),
+      defaultImageKey: defaultImageKey,
+      audio: audio,
+    );
+  }
+
+  String? _pickImageKeyForLang(
+    _ItemManifest mf,
+    String lang, {
+    String? nativeLang,
+  }) {
+    final targetLang = nativeLang ?? lang;
+    final normalized = targetLang.trim().toLowerCase();
+    final caption = '${mf.uuid}_$normalized.webp';
+    if (mf.images.contains(caption)) return caption;
+    for (final image in mf.images) {
+      if (image.toLowerCase().endsWith('_$normalized.webp')) return image;
+    }
+    return mf.defaultImageKey ??
+        (mf.images.isNotEmpty ? mf.images.first : null);
+  }
+
+  String? _requiredL2AudioKey(_ItemManifest mf, String lang) {
+    final normalized = lang.trim().toLowerCase();
+    return mf.audio[normalized] ?? mf.audio['default'];
+  }
+
   String _imageSignature(Uint8List bytes) {
     final len = bytes.length;
     final sample = bytes.length >= 12 ? bytes.sublist(0, 12) : bytes;
@@ -422,64 +368,29 @@ class ApiClient {
     }
     return '$len-$hash';
   }
+}
 
-  Future<List<Uint8List>> _loadImageVariants(String uuid) async {
-    final Random rand = Random();
-    final List<Uint8List> found = [];
-    // zuerst Basis ohne Suffix, dann durchnummerierte Varianten
-    for (final ext in _imageExts) {
-      final uriBase = _path('/file', {'key': '$uuid.$ext'});
-      try {
-        final res = await _get(uriBase);
-        if (res.statusCode == 200) {
-          found.add(res.bodyBytes);
-        }
-      } catch (_) {}
+class ApiException implements Exception {
+  final String message;
+  final int? statusCode;
+  final String? body;
 
-      for (final suffix in _imageSuffixes) {
-        if (found.length >= _maxImageVariantsToFetch) break;
-        final uri = _path('/file', {'key': '$uuid$suffix.$ext'});
-        http.Response? res;
-        try {
-          res = await _get(uri);
-        } catch (_) {
-          continue;
-        }
-        if (res.statusCode == 200) {
-          found.add(res.bodyBytes);
-        }
-      }
-      if (found.isNotEmpty || found.length >= _maxImageVariantsToFetch) break;
-    }
-    if (found.isEmpty) {
-      throw Exception(
-          'Image missing $uuid (checked webp/png/gif/jpg variants)');
-    }
-    // Zufällig durchmischen, damit first schon variiert
-    found.shuffle(rand);
-    return found;
-  }
+  ApiException(this.message, {this.statusCode, this.body});
 
-  Future<List<Uri>> _loadAudioVariants(String uuid, String lang) async {
-    final baseUri = _path('/file', {'key': '${uuid}_$lang.mp3'});
-    final (ok, status) = await _audioUrlOk(baseUri);
-    if (!ok) {
-      throw Exception(
-          'Audio missing $uuid lang=$lang url=$baseUri status=$status');
-    }
-    final List<Uri> variants = [baseUri];
-    for (final suffix in _audioVariantSuffixes) {
-      final uri = _path('/file', {'key': '${uuid}_$lang$suffix.mp3'});
-      final (okVariant, _) = await _audioUrlOk(uri);
-      if (!okVariant) break;
-      variants.add(uri);
-    }
-    return variants;
-  }
+  @override
+  String toString() => 'ApiException($message, status=$statusCode)';
+}
 
-  Future<bool> hasAudioForLang(String uuid, String lang) async {
-    final audioUri = _path('/file', {'key': '${uuid}_$lang.mp3'});
-    final (ok, _) = await _audioUrlOk(audioUri);
-    return ok;
-  }
+class _ItemManifest {
+  final String uuid;
+  final List<String> images;
+  final String? defaultImageKey;
+  final Map<String, String> audio;
+
+  const _ItemManifest({
+    required this.uuid,
+    required this.images,
+    required this.defaultImageKey,
+    required this.audio,
+  });
 }
