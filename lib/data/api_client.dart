@@ -11,6 +11,26 @@ import 'package:http/http.dart' as http;
 import 'models.dart';
 
 class ApiClient {
+  static const int _missingMp3PlaceholderLength = 11015;
+  static const List<int> _missingMp3PlaceholderHead16 = <int>[
+    0x49,
+    0x44,
+    0x33,
+    0x04,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x22,
+    0x54,
+    0x53,
+    0x53,
+    0x45,
+    0x00,
+    0x00,
+  ];
+
   final String workerHost; // z.B. robulingo-api.knechtipad-aec.workers.dev
   final String apiPrefix; // z.B. /api
   final http.Client _http;
@@ -157,12 +177,13 @@ class ApiClient {
 
     final imageVariants = <Uint8List>[imageBytes];
 
-    final audioKey = _requiredL2AudioKey(manifest, lang);
-    if (audioKey == null || audioKey.isEmpty) {
+    final audioKeys = _audioKeysForLang(manifest, lang);
+    if (audioKeys.isEmpty) {
       throw ApiException('Audio missing ${entry.uuid} lang=$lang');
     }
-    final audioUri = _uri('/file', {'key': audioKey});
-    final audioVariants = <Uri>[audioUri];
+    final audioVariants =
+        audioKeys.map((k) => _uri('/file', {'key': k})).toList(growable: false);
+    final audioUri = audioVariants.first;
 
     final String? phonetic = meta['phonetic_$lang']?.toString();
     final String text = _textForLang(meta, lang);
@@ -231,10 +252,26 @@ class ApiClient {
     final filenames = dyn['filenames'];
     if (filenames is! Map<String, dynamic>) return false;
     final manifest = _buildManifest(uuid, dyn);
-    return _audioKeyForLang(manifest, lang) != null;
+    final keys = _audioKeysForLang(manifest, lang);
+    if (keys.isEmpty) return false;
+    for (final key in keys) {
+      if (await audioUrlOk(_uri('/file', {'key': key}))) return true;
+    }
+    return false;
   }
 
   Future<bool> audioUrlOk(Uri uri) async {
+    final key = uri.queryParameters['key'] ?? '';
+    if (key.toLowerCase().endsWith('.mp3')) {
+      try {
+        final res = await _http.get(uri, headers: {'Range': 'bytes=0-1023'});
+        if (res.statusCode != 200 && res.statusCode != 206) return false;
+        if (_looksLikeMissingMp3Placeholder(res)) return false;
+        return res.bodyBytes.isNotEmpty;
+      } catch (_) {
+        return false;
+      }
+    }
     try {
       final res = await _http.head(uri);
       if (res.statusCode == 405) {
@@ -338,6 +375,17 @@ class ApiClient {
             audio[key.toString().trim().toLowerCase()] = value;
           }
         });
+      } else if (audioRaw is List) {
+        for (final entry in audioRaw) {
+          if (entry is! String) continue;
+          final name = entry.trim();
+          if (name.isEmpty) continue;
+          final langKey = _audioLangKeyFromFilename(name);
+          if (langKey != null) {
+            audio[langKey] = name;
+          }
+          audio.putIfAbsent('default', () => name);
+        }
       } else if (audioRaw is String && audioRaw.isNotEmpty) {
         audio['default'] = audioRaw;
       }
@@ -369,24 +417,80 @@ class ApiClient {
         (mf.images.isNotEmpty ? mf.images.first : null);
   }
 
-  String? _requiredL2AudioKey(_ItemManifest mf, String lang) {
-    return _audioKeyForLang(mf, lang);
+  List<String> _audioKeysForLang(_ItemManifest mf, String lang) {
+    final normalized = lang.trim().toLowerCase();
+    final candidates = <String>[];
+
+    if (normalized.isNotEmpty) {
+      final exact = mf.audio[normalized];
+      if (exact?.isNotEmpty == true) candidates.add(exact!);
+
+      final variants = mf.audio.entries
+          .where(
+              (e) => e.key.startsWith('${normalized}_') && e.value.isNotEmpty)
+          .map((e) => MapEntry(e.key, e.value))
+          .toList()
+        ..sort((a, b) {
+          final aMatch = RegExp(r'_(\d+)$').firstMatch(a.key);
+          final bMatch = RegExp(r'_(\d+)$').firstMatch(b.key);
+          final aNum =
+              aMatch != null ? int.tryParse(aMatch.group(1) ?? '') : null;
+          final bNum =
+              bMatch != null ? int.tryParse(bMatch.group(1) ?? '') : null;
+          if (aNum != null && bNum != null) return aNum.compareTo(bNum);
+          return a.key.compareTo(b.key);
+        });
+      candidates.addAll(variants.map((e) => e.value));
+
+      candidates.add('${mf.uuid}_$normalized.mp3');
+    }
+
+    final defaultKey = mf.audio['default'];
+    if (defaultKey?.isNotEmpty == true) candidates.add(defaultKey!);
+
+    candidates.add('${mf.uuid}.mp3');
+
+    final seen = <String>{};
+    return candidates
+        .where((k) => k.isNotEmpty && seen.add(k))
+        .toList(growable: false);
   }
 
-  String? _audioKeyForLang(_ItemManifest mf, String lang) {
-    final normalized = lang.trim().toLowerCase();
-    if (normalized.isNotEmpty) {
-      final specific = mf.audio[normalized];
-      if (specific?.isNotEmpty == true) {
-        return specific;
+  bool _looksLikeMissingMp3Placeholder(http.Response res) {
+    int? expectedLength;
+    final contentRange = res.headers['content-range'];
+    if (contentRange != null) {
+      final match = RegExp(r'/(\d+)$').firstMatch(contentRange);
+      if (match != null) expectedLength = int.tryParse(match.group(1) ?? '');
+    }
+    expectedLength ??= int.tryParse(res.headers['content-length'] ?? '');
+    expectedLength ??= res.bodyBytes.length;
+    if (expectedLength != _missingMp3PlaceholderLength) return false;
+
+    final bytes = res.bodyBytes;
+    if (bytes.length < _missingMp3PlaceholderHead16.length) return false;
+    for (int i = 0; i < _missingMp3PlaceholderHead16.length; i++) {
+      if (bytes[i] != _missingMp3PlaceholderHead16[i]) return false;
+    }
+
+    if (bytes.length >= 16 && bytes.length == expectedLength) {
+      for (int i = bytes.length - 16; i < bytes.length; i++) {
+        if (bytes[i] != 0xAA) return false;
       }
-      return '${mf.uuid}_$normalized.mp3';
     }
-    final defaultKey = mf.audio['default'];
-    if (defaultKey?.isNotEmpty == true) {
-      return defaultKey;
-    }
-    return null;
+    return true;
+  }
+
+  String? _audioLangKeyFromFilename(String filename) {
+    final match =
+        RegExp(r'_([a-z]{2,3})(?:_(\d+))?\.mp3$', caseSensitive: false)
+            .firstMatch(filename.trim());
+    if (match == null) return null;
+    final lang = match.group(1);
+    if (lang == null || lang.isEmpty) return null;
+    final variant = match.group(2);
+    if (variant == null || variant.isEmpty) return lang.toLowerCase();
+    return '${lang.toLowerCase()}_$variant';
   }
 
   String _imageSignature(Uint8List bytes) {

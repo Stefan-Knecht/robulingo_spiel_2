@@ -195,6 +195,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   final Map<String, int> correctCounts = {};
   final Map<String, int> audioPlayCounts = {};
   final Map<String, int> audioMaxSequenceIndex = {};
+  final Map<String, int> audioMinSequenceIndex = {};
   final Map<String, bool> audioUrlOkCache = {};
   int currentTrialAudioToken = -1;
   String? currentTrialAudioUuid;
@@ -1095,6 +1096,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       correctCounts.clear();
       audioPlayCounts.clear();
       audioMaxSequenceIndex.clear();
+      audioMinSequenceIndex.clear();
       audioUrlOkCache.clear();
       currentTrialAudioToken = -1;
       currentTrialAudioUuid = null;
@@ -1469,15 +1471,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   List<Uri> _audioSequenceForItem(ItemData item) {
     final variants =
         item.audioVariants.isNotEmpty ? item.audioVariants : [item.audioUri];
-    final base = variants.first;
-    final sequence = <Uri>[base, base];
-    if (variants.length > 1) {
+    if (variants.isEmpty) return [item.audioUri, item.audioUri];
+    final sequence = <Uri>[];
+    for (final uri in variants) {
       sequence
-        ..add(variants[1])
-        ..add(variants[1]);
-    }
-    if (variants.length > 2) {
-      sequence.add(variants[2]);
+        ..add(uri)
+        ..add(uri);
     }
     return sequence;
   }
@@ -1487,6 +1486,29 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final current = sequence[index];
     for (int i = index - 1; i >= 0; i--) {
       if (sequence[i] != current) return i;
+    }
+    return null;
+  }
+
+  int? _nextVariantIndex(List<Uri> sequence, int index) {
+    if (sequence.isEmpty || index < 0) return null;
+    final current = sequence[index];
+    for (int i = index + 1; i < sequence.length; i++) {
+      if (sequence[i] != current) return i;
+    }
+    return null;
+  }
+
+  Future<int?> _nextPlayableIndex(List<Uri> sequence, int startIndex) async {
+    var index = _nextVariantIndex(sequence, startIndex);
+    while (index != null) {
+      if (await _audioUrlOkCached(sequence[index])) return index;
+      index = _nextVariantIndex(sequence, index);
+    }
+    index = _previousVariantIndex(sequence, startIndex);
+    while (index != null) {
+      if (await _audioUrlOkCached(sequence[index])) return index;
+      index = _previousVariantIndex(sequence, index);
     }
     return null;
   }
@@ -1507,8 +1529,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (alreadyAssigned) return currentTrialAudioUri!;
     final sequence = _audioSequenceForItem(item);
     final count = audioPlayCounts[item.uuid] ?? 0;
+    final minIndex = audioMinSequenceIndex[item.uuid];
     final maxIndex = audioMaxSequenceIndex[item.uuid];
     int index = count < sequence.length ? count : sequence.length - 1;
+    if (minIndex != null && minIndex > index) {
+      index = minIndex;
+    }
     if (maxIndex != null && maxIndex < index) {
       index = maxIndex;
     }
@@ -1540,11 +1566,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (initialIndex >= 0) {
       final ok = await _audioUrlOkCached(uri);
       if (!ok) {
-        final fallbackIndex =
-            await _previousPlayableIndex(sequence, initialIndex);
+        final fallbackIndex = await _nextPlayableIndex(sequence, initialIndex);
         if (fallbackIndex != null) {
           final fallbackUri = sequence[fallbackIndex];
-          audioMaxSequenceIndex[item.uuid] = fallbackIndex;
+          if (fallbackIndex < initialIndex) {
+            audioMaxSequenceIndex[item.uuid] = fallbackIndex;
+          } else if (fallbackIndex > initialIndex) {
+            audioMinSequenceIndex[item.uuid] = fallbackIndex;
+          }
           final bool updateCache = advance ||
               (currentTrialAudioToken == currentTrialToken &&
                   currentTrialAudioUuid == item.uuid);
@@ -1584,17 +1613,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     debugPrint('[audio][fallback] uuid=${item.uuid} from=$uri to=$fallbackUri');
     await _playAudioUri(fallbackUri);
-  }
-
-  Future<int?> _previousPlayableIndex(
-      List<Uri> sequence, int startIndex) async {
-    var index = _previousVariantIndex(sequence, startIndex);
-    while (index != null) {
-      final candidate = sequence[index];
-      if (await _audioUrlOkCached(candidate)) return index;
-      index = _previousVariantIndex(sequence, index);
-    }
-    return null;
   }
 
   Future<void> _playHintAudioForItem(ItemData item) async {
@@ -2703,8 +2721,8 @@ class _PickMappingScreenState extends State<PickMappingScreen>
                     final text = rowSnapshot.data;
                     final l1 = text?.l1 ?? '…';
                     final l2 = text?.l2 ?? '…';
-                  final disabled =
-                      rowSnapshot.connectionState != ConnectionState.done;
+                    final disabled =
+                        rowSnapshot.connectionState != ConnectionState.done;
                     return Opacity(
                       opacity: disabled ? 0.6 : 1.0,
                       child: Row(
@@ -2735,11 +2753,11 @@ class _PickMappingScreenState extends State<PickMappingScreen>
                         ],
                       ),
                     );
-                },
-              );
-            },
-          ),
-        );
+                  },
+                );
+              },
+            ),
+          );
         },
       ),
     );
