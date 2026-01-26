@@ -45,7 +45,7 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   audioplayers_darwin: 4f9ca89d92d3d21cec7ec580e78ca888e5fb68bd
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
+  path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   speech_to_text: ae2abc312e619ff1c53e675a9fc4d785a15c03bb
   sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0

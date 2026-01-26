@@ -25,6 +25,9 @@ DEFAULT_START_FILE = "start_curriculum_a.json"
 DEFAULT_LANGS = ["de", "en", "ar", "fr", "es", "it", "ru", "sv", "el", "zh"]
 IMAGE_SUFFIXES = [""] + [f"_{i:02d}" for i in range(1, 7)] + ["_1", "_2"]
 IMAGE_EXTS = ["webp", "png", "gif", "jpg", "jpeg"]
+MISSING_MP3_PLACEHOLDER_LEN = 11015
+MISSING_MP3_PLACEHOLDER_HEAD16 = bytes.fromhex("49443304000000000022545353450000")
+MISSING_MP3_PLACEHOLDER_TAIL16 = b"\xAA" * 16
 
 
 @dataclass
@@ -71,6 +74,37 @@ def _check_url(url: str, timeout: float) -> Tuple[bool, int, Optional[str]]:
     return False, -1, f"HEAD:{head_err}; GET:{e}"
 
 
+def _check_mp3_url(url: str, timeout: float) -> Tuple[bool, int, Optional[str]]:
+  try:
+    req = urllib.request.Request(url, headers={"range": "bytes=0-1023"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+      status = resp.status
+      if status not in (200, 206):
+        return False, status, None
+      data = resp.read()
+      expected_len = None
+      content_range = resp.headers.get("Content-Range")
+      if content_range and "/" in content_range:
+        try:
+          expected_len = int(content_range.split("/")[-1])
+        except Exception:
+          expected_len = None
+      if expected_len is None:
+        try:
+          expected_len = int(resp.headers.get("Content-Length") or "0") or None
+        except Exception:
+          expected_len = None
+      expected_len = expected_len or len(data)
+
+      if expected_len == MISSING_MP3_PLACEHOLDER_LEN and data.startswith(MISSING_MP3_PLACEHOLDER_HEAD16):
+        # If we got the whole body, verify the distinctive 0xAA tail.
+        if len(data) == expected_len and data.endswith(MISSING_MP3_PLACEHOLDER_TAIL16):
+          return False, status, "placeholder"
+      return True, status, None
+  except Exception as e:
+    return False, -1, str(e)
+
+
 def _check_images(host: str, api_prefix: str, uuid: str, timeout: float) -> Tuple[bool, int]:
   found = 0
   for ext in IMAGE_EXTS:
@@ -94,7 +128,7 @@ def _check_audios(host: str, api_prefix: str, uuid: str, langs: Sequence[str], t
   missing = []
   for lang in langs:
     url = _url(host, api_prefix, "/file", {"key": f"{uuid}_{lang}.mp3"})
-    ok, status, err = _check_url(url, timeout)
+    ok, status, err = _check_mp3_url(url, timeout)
     if not ok:
       suffix = f"status={status}" if status != -1 else "no response"
       detail = f"{suffix}{'' if not err else f' ({err})'}"

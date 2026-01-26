@@ -26,7 +26,7 @@ import 'track_painter.dart';
 // ------------------------------------------------------------
 const String defaultWorkerHost = 'robulingo-worker.knechtipad-aec.workers.dev';
 const String defaultApiPrefix = '/api';
-const List<String> langChoices = ['de', 'en', 'ar', 'fr', 'es', 'it', 'ru', 'sv', 'el', 'zh'];
+const List<String> langChoices = ['de', 'en', 'ar', 'fr', 'es', 'it', 'ru', 'hi', 'el', 'zh'];
 const int batchSize = 12; // Wie viele Items wir in einem Rutsch vom Worker holen
 const double advanceThreshold = 0.4; // ab 40% Nutzung laden wir vorsorglich nach
 const int minTrials = 10; // Mindestens so viele Übungsrunden wollen wir initial haben

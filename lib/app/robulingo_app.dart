@@ -10,6 +10,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:robulingo_flutter/constants.dart';
 import 'package:robulingo_flutter/data/api_client.dart';
+import 'package:robulingo_flutter/data/pick_manifest_service.dart';
 import 'package:robulingo_flutter/data/hint_models.dart';
 import 'package:robulingo_flutter/data/hints_service.dart';
 import 'package:robulingo_flutter/data/models.dart';
@@ -38,7 +39,7 @@ import 'package:robulingo_flutter/ui/training_calendar_panel.dart';
 import 'package:robulingo_flutter/utils/platform_info.dart';
 import 'package:robulingo_flutter/utils/text_utils.dart';
 
-const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh'};
+const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi'};
 
 // ------------------------------------------------------------
 // RobuLingo Viewer – Überblick für Laien
@@ -91,6 +92,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingMinCompCorrect = 2;
   static const int namingMinUniqueItems = 2;
   late ApiClient api;
+  late PickManifestService pickManifestService;
   late UserCurriculumService userCurriculumService;
   late HintsService hintsService;
   String workerHost = defaultWorkerHost;
@@ -112,6 +114,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool awaitingNative = false;
   String? activeStartCurriculumKey;
   String? nativeLang; // Muttersprache; null = keine zweite Anzeige
+  bool pickFlowActive = false;
+  bool awaitingPickNative = false;
+  bool pickListLoading = false;
+  String? pickListError;
+  List<String> pickManifestKeys = [];
+  final Map<String, Future<List<CurriculumEntry>>> pickMappingFutures = {};
+  final Map<String, Future<String>> pickManifestLabelFutures = {};
   final stt.SpeechToText speech = stt.SpeechToText();
   late NamingController namingController;
   final VoiceState voiceState = VoiceState();
@@ -186,6 +195,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   final Map<String, int> correctCounts = {};
   final Map<String, int> audioPlayCounts = {};
   final Map<String, int> audioMaxSequenceIndex = {};
+  final Map<String, int> audioMinSequenceIndex = {};
   final Map<String, bool> audioUrlOkCache = {};
   int currentTrialAudioToken = -1;
   String? currentTrialAudioUuid;
@@ -269,6 +279,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       accuracyProvider: () => lastTenResults,
     );
     api = ApiClient(workerHost: workerHost, apiPrefix: apiPrefix);
+    pickManifestService = PickManifestService(api: api);
     userCurriculumService =
         UserCurriculumService(workerHost: workerHost, apiPrefix: apiPrefix);
     hintsService = HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
@@ -427,9 +438,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (hintPack != null) {
       final l1 = HintsService.normalizeLangCode(nativeLang);
       final l2 = HintsService.normalizeLangCode(lang);
-      final hintIds = trials[trialIndex].target.hintRefsByLang[l2] ?? const <String>[];
+      final hintIds =
+          trials[trialIndex].target.hintRefsByLang[l2] ?? const <String>[];
       final resolved = hintPack!.hintsForIds(hintIds).length;
-      debugPrint('[hints][item] uuid=$uuid l1=$l1 l2=$l2 ids=${hintIds.length} resolved=$resolved');
+      debugPrint(
+          '[hints][item] uuid=$uuid l1=$l1 l2=$l2 ids=${hintIds.length} resolved=$resolved');
     }
   }
 
@@ -768,9 +781,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         workerHost = newHost;
         apiPrefix = normalizedPrefix;
         api = ApiClient(workerHost: workerHost, apiPrefix: apiPrefix);
+        pickManifestService = PickManifestService(api: api);
         userCurriculumService =
             UserCurriculumService(workerHost: workerHost, apiPrefix: apiPrefix);
-        hintsService = HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
+        hintsService =
+            HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
       });
       _configureLoggerRemote();
       unawaited(_loadHintPack(forceRefresh: true));
@@ -815,6 +830,221 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       awaitingNative = true;
       activeStartCurriculumKey = fileName;
     });
+  }
+
+  void _enterPickFlow() {
+    setState(() {
+      pickFlowActive = true;
+      awaitingStart = false;
+      awaitingNative = false;
+      awaitingPickNative = true;
+      pickListLoading = false;
+      pickListError = null;
+      pickManifestKeys = [];
+      pickMappingFutures.clear();
+      nativeLang = null;
+      pickManifestLabelFutures.clear();
+    });
+  }
+
+  void _cancelPickFlow() {
+    _resetPickSelection(showStart: true);
+  }
+
+  void _onSelectPickNative(String? motherLang) {
+    setState(() {
+      nativeLang = motherLang;
+      awaitingPickNative = false;
+      pickListError = null;
+      pickManifestKeys = [];
+      pickMappingFutures.clear();
+      pickListLoading = true;
+    });
+    _loadPickManifestKeys();
+  }
+
+  Future<void> _loadPickManifestKeys() async {
+    try {
+      final keys = await pickManifestService.fetchManifestKeys();
+      if (!mounted) return;
+      final labelFutures = <String, Future<String>>{};
+      for (final key in keys) {
+        labelFutures[key] = pickManifestService.previewLabel(
+          key,
+          l1Lang: nativeLang ?? lang,
+          l2Lang: lang,
+        );
+      }
+      setState(() {
+        pickManifestKeys = keys;
+        pickListLoading = false;
+        pickManifestLabelFutures
+          ..clear()
+          ..addAll(labelFutures);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        pickListLoading = false;
+        pickListError = e.toString();
+      });
+    }
+  }
+
+  void _openPickMapping(String key) {
+    final future = pickMappingFutures[key] ??
+        pickManifestService.loadFullManifestEntries(key);
+    pickMappingFutures[key] = future;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => PickMappingScreen(
+          manifestName: _friendlyPickTitle(key),
+          entriesFuture: future,
+          manifestService: pickManifestService,
+          l1Lang: nativeLang ?? lang,
+          l2Lang: lang,
+          onBack: () => Navigator.of(context).pop(),
+          onStart: () async {
+            await _startPickGame(key);
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _startPickGame(String key) async {
+    _resetPickSelection();
+    await _loadInitial(startKey: key);
+  }
+
+  void _resetPickSelection({bool showStart = false}) {
+    if (!mounted) return;
+    setState(() {
+      pickFlowActive = false;
+      awaitingPickNative = false;
+      pickListLoading = false;
+      pickListError = null;
+      pickManifestKeys = [];
+      pickMappingFutures.clear();
+      pickManifestLabelFutures.clear();
+      if (showStart) {
+        awaitingStart = true;
+        nativeLang = null;
+      }
+    });
+  }
+
+  String _friendlyPickTitle(String key) {
+    final base = key.toLowerCase().startsWith('pick_') ? key.substring(5) : key;
+    final slug = base.split('.').first;
+    final parts = slug.split('_').where((part) => part.isNotEmpty).toList();
+    if (parts.isEmpty) return key;
+    final formattedParts = parts
+        .map((part) =>
+            '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}')
+        .toList();
+    return formattedParts.join(' ');
+  }
+
+  Widget _buildPickMenu() {
+    if (pickListLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (pickListError != null) {
+      return Center(child: Text('Fehler: $pickListError'));
+    }
+    if (pickManifestKeys.isEmpty) {
+      return const Center(child: Text('Keine Pick-Module gefunden.'));
+    }
+    final flavourText =
+        'L1: ${nativeLang ?? '–'}  ·  L2: ${lang.toUpperCase()}';
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                iconSize: 44,
+                onPressed: _cancelPickFlow,
+                icon: Image.asset(
+                  'assets/icons/pick.webp',
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.contain,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Pick-Module',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            flavourText,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView.separated(
+              itemBuilder: (context, index) =>
+                  _buildPickMenuEntry(pickManifestKeys[index]),
+              separatorBuilder: (context, index) =>
+                  const Divider(height: 8, thickness: 1),
+              itemCount: pickManifestKeys.length,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPickMenuEntry(String key) {
+    final labelFuture =
+        pickManifestLabelFutures[key] ?? Future.value(_friendlyPickTitle(key));
+    return FutureBuilder<String>(
+      future: labelFuture,
+      builder: (context, snapshot) {
+        final label = snapshot.data ?? _friendlyPickTitle(key);
+        final subtitleText = snapshot.connectionState != ConnectionState.done
+            ? 'Titel lädt…'
+            : null;
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+            tooltip: 'Pick-Modul starten',
+            icon: const Icon(
+              Icons.check_circle,
+              color: Colors.green,
+              size: 32,
+            ),
+            onPressed: () => _startPickGame(key),
+          ),
+          title: Text(label),
+          subtitle: subtitleText != null ? Text(subtitleText) : null,
+          trailing: IconButton(
+            padding: EdgeInsets.zero,
+            tooltip: 'Mapping anzeigen',
+            icon: Image.asset(
+              'assets/icons/Magnifying_glass.webp',
+              width: 32,
+              height: 32,
+              fit: BoxFit.contain,
+            ),
+            onPressed: () => _openPickMapping(key),
+          ),
+          onTap: () => _startPickGame(key),
+        );
+      },
+    );
   }
 
   Future<void> _onSelectNative(String? motherLang, String startKey) async {
@@ -866,6 +1096,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       correctCounts.clear();
       audioPlayCounts.clear();
       audioMaxSequenceIndex.clear();
+      audioMinSequenceIndex.clear();
       audioUrlOkCache.clear();
       currentTrialAudioToken = -1;
       currentTrialAudioUuid = null;
@@ -961,13 +1192,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       // Seed: erste Items mit Audio für alle Sprachen vorziehen
       await _loadSeeds();
 
-      // Mehrere Batches vorladen, bis mindestens minTrials Trials erzeugt oder Curriculum erschöpft
+      // Lade nur initialItemDownloadLimit Items, der Rest folgt über die Refresh-/Prefetch-Logik.
       var offset = _nextCurriculumOffset();
       var attempts = 0;
-      while (trials.length < minTrials &&
+      while (items.length < initialItemDownloadLimit &&
           attempts < curriculum.length + 1 &&
           curriculum.isNotEmpty) {
-        await _loadBatch(offset);
+        final remaining = initialItemDownloadLimit - items.length;
+        final batchLimit =
+            remaining > 0 ? min(remaining, batchSize) : batchSize;
+        await _loadBatch(offset, maxEntries: batchLimit);
         attempts++;
         offset = _nextCurriculumOffset();
       }
@@ -999,6 +1233,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<String> _startCurriculumKeyForLanguage(String startKey) async {
+    if (startKey.toLowerCase().startsWith('pick_')) {
+      return startKey;
+    }
     final candidate = _startCurriculumKeyWithLangSuffix(startKey, lang);
     return candidate == startKey ? startKey : candidate;
   }
@@ -1128,12 +1365,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         userId: userId!, startKey: startKey, delta: nextDelta));
   }
 
-  Future<bool> _loadBatch(int offset) async {
+  Future<bool> _loadBatch(int offset, {int? maxEntries}) async {
     if (batchLoading) return false;
     batchLoading = true;
     // Lade einen Teilbereich des Curriculums, wrap-around wenn wir am Ende sind.
     final List<CurriculumEntry> slice = [];
-    for (int i = 0; i < batchSize; i++) {
+    final int limit =
+        (maxEntries != null && maxEntries > 0) ? maxEntries : batchSize;
+    for (int i = 0; i < limit; i++) {
       if (curriculum.isEmpty) break;
       slice.add(curriculum[(offset + i) % curriculum.length]);
     }
@@ -1232,15 +1471,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   List<Uri> _audioSequenceForItem(ItemData item) {
     final variants =
         item.audioVariants.isNotEmpty ? item.audioVariants : [item.audioUri];
-    final base = variants.first;
-    final sequence = <Uri>[base, base];
-    if (variants.length > 1) {
+    if (variants.isEmpty) return [item.audioUri, item.audioUri];
+    final sequence = <Uri>[];
+    for (final uri in variants) {
       sequence
-        ..add(variants[1])
-        ..add(variants[1]);
-    }
-    if (variants.length > 2) {
-      sequence.add(variants[2]);
+        ..add(uri)
+        ..add(uri);
     }
     return sequence;
   }
@@ -1250,6 +1486,29 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final current = sequence[index];
     for (int i = index - 1; i >= 0; i--) {
       if (sequence[i] != current) return i;
+    }
+    return null;
+  }
+
+  int? _nextVariantIndex(List<Uri> sequence, int index) {
+    if (sequence.isEmpty || index < 0) return null;
+    final current = sequence[index];
+    for (int i = index + 1; i < sequence.length; i++) {
+      if (sequence[i] != current) return i;
+    }
+    return null;
+  }
+
+  Future<int?> _nextPlayableIndex(List<Uri> sequence, int startIndex) async {
+    var index = _nextVariantIndex(sequence, startIndex);
+    while (index != null) {
+      if (await _audioUrlOkCached(sequence[index])) return index;
+      index = _nextVariantIndex(sequence, index);
+    }
+    index = _previousVariantIndex(sequence, startIndex);
+    while (index != null) {
+      if (await _audioUrlOkCached(sequence[index])) return index;
+      index = _previousVariantIndex(sequence, index);
     }
     return null;
   }
@@ -1270,8 +1529,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (alreadyAssigned) return currentTrialAudioUri!;
     final sequence = _audioSequenceForItem(item);
     final count = audioPlayCounts[item.uuid] ?? 0;
+    final minIndex = audioMinSequenceIndex[item.uuid];
     final maxIndex = audioMaxSequenceIndex[item.uuid];
     int index = count < sequence.length ? count : sequence.length - 1;
+    if (minIndex != null && minIndex > index) {
+      index = minIndex;
+    }
     if (maxIndex != null && maxIndex < index) {
       index = maxIndex;
     }
@@ -1303,11 +1566,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (initialIndex >= 0) {
       final ok = await _audioUrlOkCached(uri);
       if (!ok) {
-        final fallbackIndex =
-            await _previousPlayableIndex(sequence, initialIndex);
+        final fallbackIndex = await _nextPlayableIndex(sequence, initialIndex);
         if (fallbackIndex != null) {
           final fallbackUri = sequence[fallbackIndex];
-          audioMaxSequenceIndex[item.uuid] = fallbackIndex;
+          if (fallbackIndex < initialIndex) {
+            audioMaxSequenceIndex[item.uuid] = fallbackIndex;
+          } else if (fallbackIndex > initialIndex) {
+            audioMinSequenceIndex[item.uuid] = fallbackIndex;
+          }
           final bool updateCache = advance ||
               (currentTrialAudioToken == currentTrialToken &&
                   currentTrialAudioUuid == item.uuid);
@@ -1349,17 +1615,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await _playAudioUri(fallbackUri);
   }
 
-  Future<int?> _previousPlayableIndex(
-      List<Uri> sequence, int startIndex) async {
-    var index = _previousVariantIndex(sequence, startIndex);
-    while (index != null) {
-      final candidate = sequence[index];
-      if (await _audioUrlOkCached(candidate)) return index;
-      index = _previousVariantIndex(sequence, index);
-    }
-    return null;
-  }
-
   Future<void> _playHintAudioForItem(ItemData item) async {
     final base = item.audioVariants.isNotEmpty
         ? item.audioVariants.first
@@ -1390,8 +1645,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (namingBlockRemaining > 0) return false;
     // Keep 2AFC feedback visible even if the item just became "ready to name".
     if (hasAnswered && !namingInProgress && namingOutcome == null) return false;
-    final int uniqueNeeded =
-        min(namingMinUniqueItems, max(1, items.length));
+    final int uniqueNeeded = min(namingMinUniqueItems, max(1, items.length));
     if (comprehensionSeen.length < uniqueNeeded) return false;
     return readyToName.contains(trials[trialIndex].target.uuid);
   }
@@ -1921,11 +2175,30 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       );
     }
 
+    if (pickFlowActive) {
+      if (awaitingPickNative) {
+        return Scaffold(
+          body: SafeArea(
+            child: NativeLangSelector(
+              targetLang: lang,
+              onSelect: _onSelectPickNative,
+            ),
+          ),
+        );
+      }
+      return Scaffold(
+        body: SafeArea(
+          child: _buildPickMenu(),
+        ),
+      );
+    }
+
     if (awaitingStart) {
       return Scaffold(
         body: SafeArea(
           child: StartCurriculumSelector(
             onSelect: _onSelectStart,
+            onPickSelected: _enterPickFlow,
           ),
         ),
       );
@@ -2081,9 +2354,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final String normL1 =
           hintsEnabled ? HintsService.normalizeLangCode(nativeLang) : '';
       final String normL2 = HintsService.normalizeLangCode(lang);
-      final bool hintPackMatches = hintPack != null &&
-          hintPack!.l1 == normL1 &&
-          hintPack!.l2 == normL2;
+      final bool hintPackMatches =
+          hintPack != null && hintPack!.l1 == normL1 && hintPack!.l2 == normL2;
       final List<String> hintIds = hintPackMatches
           ? (trial.target.hintRefsByLang[normL2] ?? const <String>[])
           : const <String>[];
@@ -2096,11 +2368,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           : const <HintContent>[];
       final String hintLabel =
           hintsEnabled ? HintsService.hintLabelFor(nativeLang!) : 'Hint';
-      final String? hintMissingText = showHintsInline &&
-              hintIds.isNotEmpty &&
-              hintEntries.isEmpty
-          ? 'No hint text found for ids: ${hintIds.join(', ')}'
-          : null;
+      final String? hintMissingText =
+          showHintsInline && hintIds.isNotEmpty && hintEntries.isEmpty
+              ? 'No hint text found for ids: ${hintIds.join(', ')}'
+              : null;
       body = SessionBody(
         ladder: ladder,
         isNaming: isNamingView,
@@ -2240,4 +2511,255 @@ class _SessionWinSnapshot {
   int you = 0;
   int rival = 0;
   DateTime? lastTs;
+}
+
+typedef AsyncVoidCallback = Future<void> Function();
+
+class PickMappingScreen extends StatefulWidget {
+  const PickMappingScreen({
+    super.key,
+    required this.manifestName,
+    required this.entriesFuture,
+    required this.manifestService,
+    required this.l1Lang,
+    required this.l2Lang,
+    required this.onStart,
+    required this.onBack,
+  });
+
+  final String manifestName;
+  final Future<List<CurriculumEntry>> entriesFuture;
+  final PickManifestService manifestService;
+  final String l1Lang;
+  final String l2Lang;
+  final AsyncVoidCallback onStart;
+  final VoidCallback onBack;
+
+  @override
+  State<PickMappingScreen> createState() => _PickMappingScreenState();
+}
+
+class _PickMappingScreenState extends State<PickMappingScreen>
+    with SingleTickerProviderStateMixin {
+  final Map<String, Future<PickManifestRowTexts>> _texts = {};
+  bool _isDownloading = false;
+  late final AnimationController _wiggleController;
+  late final Animation<double> _wiggleAnimation;
+
+  Future<void> _handleStartPressed() async {
+    if (_isDownloading) return;
+    _setDownloading(true);
+    try {
+      await widget.onStart();
+    } finally {
+      if (!mounted) return;
+      _setDownloading(false);
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  void _setDownloading(bool downloading) {
+    setState(() {
+      _isDownloading = downloading;
+      if (_isDownloading) {
+        _wiggleController.repeat(reverse: true);
+      } else {
+        _wiggleController.stop();
+        _wiggleController.reset();
+      }
+    });
+  }
+
+  Widget _buildAnimatedDownloadIcon() {
+    return AnimatedBuilder(
+      animation: _wiggleAnimation,
+      builder: (context, child) {
+        return Transform.rotate(
+          angle: _wiggleAnimation.value,
+          child: child,
+        );
+      },
+      child: SizedBox(
+        width: 72,
+        height: 72,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            Image.asset(
+              'assets/icons/download.webp',
+              width: 60,
+              height: 60,
+              fit: BoxFit.contain,
+            ),
+            Positioned(
+              right: -4,
+              bottom: -4,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(4),
+                child: const Icon(
+                  Icons.loop,
+                  size: 24,
+                  color: Colors.green,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPickTextBlock({required String text, String? phonetic}) {
+    final trimmedPhonetic = phonetic?.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          text,
+          style: const TextStyle(fontSize: 16),
+        ),
+        if (trimmedPhonetic?.isNotEmpty == true)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              trimmedPhonetic!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<PickManifestRowTexts> _textForEntry(CurriculumEntry entry) {
+    return _texts.putIfAbsent(
+      entry.uuid,
+      () => widget.manifestService.fetchRowTexts(
+        entry,
+        lang: widget.l2Lang,
+        nativeLang: widget.l1Lang == widget.l2Lang ? null : widget.l1Lang,
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _wiggleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _wiggleAnimation = Tween<double>(begin: -0.08, end: 0.08).animate(
+      CurvedAnimation(
+        parent: _wiggleController,
+        curve: Curves.easeInOut,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _wiggleController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: Image.asset(
+            'assets/icons/pick.webp',
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
+          ),
+          onPressed: widget.onBack,
+        ),
+        title: Text(widget.manifestName),
+        actions: [
+          IconButton(
+            icon: _isDownloading
+                ? _buildAnimatedDownloadIcon()
+                : const Icon(Icons.check_circle, color: Colors.green, size: 28),
+            onPressed: _isDownloading ? null : _handleStartPressed,
+          ),
+        ],
+      ),
+      body: FutureBuilder<List<CurriculumEntry>>(
+        future: widget.entriesFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('Fehler: ${snapshot.error}'));
+          }
+          final entries = snapshot.data ?? [];
+          if (entries.isEmpty) {
+            return const Center(child: Text('Keine Einträge gefunden.'));
+          }
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: ListView.separated(
+              itemCount: entries.length,
+              separatorBuilder: (_, __) => const Divider(),
+              itemBuilder: (context, index) {
+                final entry = entries[index];
+                return FutureBuilder<PickManifestRowTexts>(
+                  future: _textForEntry(entry),
+                  builder: (ctx, rowSnapshot) {
+                    final text = rowSnapshot.data;
+                    final l1 = text?.l1 ?? '…';
+                    final l2 = text?.l2 ?? '…';
+                    final disabled =
+                        rowSnapshot.connectionState != ConnectionState.done;
+                    return Opacity(
+                      opacity: disabled ? 0.6 : 1.0,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 48,
+                            child: Text(
+                              entry.index.toString(),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                          ),
+                          Expanded(
+                            child: _buildPickTextBlock(text: l1),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Icon(Icons.arrow_forward_ios,
+                                size: 16, color: Colors.grey[600]),
+                          ),
+                          Expanded(
+                            child: _buildPickTextBlock(
+                              text: l2,
+                              phonetic: text?.l2Phonetic,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
 }

@@ -9,12 +9,19 @@ import 'package:flutter/material.dart';
 import 'package:robulingo_flutter/constants.dart';
 
 String _iconForStartKey(String key) =>
-    startCurriculumIcons[key] ?? startCurriculumIcons[defaultStartCurriculum] ?? 'assets/icons/cross.webp';
+    startCurriculumIcons[key] ??
+    startCurriculumIcons[defaultStartCurriculum] ??
+    'assets/icons/cross.webp';
 
 class StartCurriculumSelector extends StatelessWidget {
-  const StartCurriculumSelector({super.key, required this.onSelect});
+  const StartCurriculumSelector({
+    super.key,
+    required this.onSelect,
+    this.onPickSelected,
+  });
 
   final void Function(String fileName) onSelect;
+  final VoidCallback? onPickSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -22,10 +29,11 @@ class StartCurriculumSelector extends StatelessWidget {
     final bool isLandscape = size.width > size.height;
     final double logoHeight = size.height * (isLandscape ? 0.16 : 0.2);
     final double logoWidth = size.width * (isLandscape ? 0.4 : 0.85);
-    final double tileSize =
-        isLandscape ? min(96.0, size.height * 0.22) : 120.0;
-    final double iconSize = tileSize * 0.55;
-    final double rowSpacing = isLandscape ? 12.0 : 16.0;
+    final double tileSize = isLandscape
+        ? min(90.0, size.height * 0.22)
+        : min(110.0, size.width * 0.28);
+    final double iconSize = tileSize * 0.5;
+    final double rowSpacing = isLandscape ? 12.0 : 12.0;
     final double verticalPadding = isLandscape ? 16.0 : 32.0;
 
     final optionRows = [
@@ -49,6 +57,11 @@ class StartCurriculumSelector extends StatelessWidget {
         _StartOption(
             asset: _iconForStartKey('start_curriculum_l.json'),
             fileName: 'start_curriculum_l.json'),
+        if (onPickSelected != null)
+          _StartOption(
+            asset: 'assets/icons/pick.webp',
+            onTap: onPickSelected,
+          ),
       ],
     ];
 
@@ -110,8 +123,9 @@ class StartCurriculumSelector extends StatelessWidget {
 
 class _StartOption {
   final String asset;
-  final String fileName;
-  const _StartOption({required this.asset, required this.fileName});
+  final String? fileName;
+  final VoidCallback? onTap;
+  const _StartOption({required this.asset, this.fileName, this.onTap});
 }
 
 class _OptionsRow extends StatelessWidget {
@@ -144,17 +158,23 @@ class _OptionsRow extends StatelessWidget {
                 ),
                 backgroundColor: Colors.white,
               ),
-              onPressed: () => onSelect(opt.fileName),
-              child:
-                  Image.asset(opt.asset, width: iconSize, height: iconSize, fit: BoxFit.contain),
+              onPressed: opt.onTap ??
+                  () {
+                    if (opt.fileName != null) {
+                      onSelect(opt.fileName!);
+                    }
+                  },
+              child: Image.asset(opt.asset,
+                  width: iconSize, height: iconSize, fit: BoxFit.contain),
             ),
           ),
         )
         .toList();
 
     return Row(
-      mainAxisAlignment:
-          options.length == 1 ? MainAxisAlignment.center : MainAxisAlignment.spaceEvenly,
+      mainAxisAlignment: options.length == 1
+          ? MainAxisAlignment.center
+          : MainAxisAlignment.spaceEvenly,
       children: rowChildren,
     );
   }
