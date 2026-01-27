@@ -8,8 +8,20 @@ import 'dart:math';
 
 String normalizeText(String input) {
   final lowered = input.toLowerCase();
-  final cleaned = lowered.replaceAll(RegExp(r'[^a-zà-ÿ\u0400-\u04ff0-9 ]'), ' ');
-  return cleaned.replaceAll(RegExp(r'\\s+'), ' ').trim();
+  // Remove common Arabic diacritics (harakat) + tatweel, so ASR output that
+  // omits them can still match stored target text.
+  final withoutArabicDiacritics = lowered.replaceAll(
+    RegExp(r'[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]'),
+    '',
+  );
+
+  // Keep letters and digits across scripts (Arabic, Japanese, CJK, Cyrillic, …),
+  // plus spaces. Replace everything else with space, then collapse whitespace.
+  final cleaned = withoutArabicDiacritics.replaceAll(
+    RegExp(r'[^\p{L}\p{N} ]', unicode: true),
+    ' ',
+  );
+  return cleaned.replaceAll(RegExp(r'\s+', unicode: true), ' ').trim();
 }
 
 int levenshtein(String s, String t) {

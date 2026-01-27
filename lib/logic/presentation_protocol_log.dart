@@ -5,14 +5,21 @@ import 'package:robulingo_flutter/util/download_text.dart';
 import 'package:robulingo_flutter/util/write_text_file.dart';
 
 class _CompEntry {
-  _CompEntry({required this.label, required this.correct});
+  _CompEntry({required this.label, this.phonetic, required this.correct});
   final String label;
+  final String? phonetic;
   final bool correct;
 }
 
 class _NamingEntry {
-  _NamingEntry({required this.label, required this.heard, required this.correct});
+  _NamingEntry({
+    required this.label,
+    this.phonetic,
+    required this.heard,
+    required this.correct,
+  });
   final String label;
+  final String? phonetic;
   final String heard;
   final bool correct;
 }
@@ -55,17 +62,27 @@ class PresentationProtocolLog {
     _dirty = true;
   }
 
-  void addComprehension({required String label, required bool correct}) {
-    _comprehension.add(_CompEntry(label: label, correct: correct));
+  void addComprehension({
+    required String label,
+    String? phonetic,
+    required bool correct,
+  }) {
+    _comprehension.add(_CompEntry(label: label, phonetic: phonetic, correct: correct));
     _dirty = true;
   }
 
   void addNaming({
     required String label,
+    String? phonetic,
     required String heard,
     required bool correct,
   }) {
-    _naming.add(_NamingEntry(label: label, heard: heard, correct: correct));
+    _naming.add(_NamingEntry(
+      label: label,
+      phonetic: phonetic,
+      heard: heard,
+      correct: correct,
+    ));
     _dirty = true;
   }
 
@@ -83,6 +100,52 @@ class PresentationProtocolLog {
     return 'Datum: $d; Uhrzeit: $t';
   }
 
+  bool _containsNonLatinScript(String s) {
+    for (final rune in s.runes) {
+      // Allow common ASCII control/punctuation/digits/spaces.
+      if (rune <= 0x0040) continue;
+
+      // Treat Latin letters (including common diacritics) as "Latin".
+      if (rune >= 0x0041 && rune <= 0x024F) continue; // Latin + Extended
+      if (rune >= 0x1E00 && rune <= 0x1EFF) continue; // Latin Extended Additional
+      if (rune >= 0x0300 && rune <= 0x036F) continue; // Combining Diacritics
+
+      // General punctuation etc. shouldn't trigger "non-latin script" labeling.
+      if (rune >= 0x2000 && rune <= 0x206F) continue;
+
+      // Non-Latin scripts we explicitly want to treat as such.
+      final bool isNonLatinBlock =
+          (rune >= 0x0370 && rune <= 0x03FF) || // Greek
+              (rune >= 0x0400 && rune <= 0x052F) || // Cyrillic
+              (rune >= 0x0590 && rune <= 0x05FF) || // Hebrew
+              (rune >= 0x0600 && rune <= 0x06FF) || // Arabic
+              (rune >= 0x0750 && rune <= 0x077F) || // Arabic Supplement
+              (rune >= 0x08A0 && rune <= 0x08FF) || // Arabic Extended-A
+              (rune >= 0x0900 && rune <= 0x097F) || // Devanagari
+              (rune >= 0x3040 && rune <= 0x30FF) || // Hiragana + Katakana
+              (rune >= 0x31F0 && rune <= 0x31FF) || // Katakana Phonetic Extensions
+              (rune >= 0x3400 && rune <= 0x4DBF) || // CJK Extension A
+              (rune >= 0x4E00 && rune <= 0x9FFF) || // CJK Unified Ideographs
+              (rune >= 0xAC00 && rune <= 0xD7AF) || // Hangul Syllables
+              (rune >= 0x0E00 && rune <= 0x0E7F); // Thai (common for L2 too)
+      if (isNonLatinBlock) return true;
+
+      // Fallback: if it's outside the Latin blocks above, assume "non-latin".
+      return true;
+    }
+    return false;
+  }
+
+  String _formatLabel(String label, String? phonetic) {
+    final cleaned = label.trim().isNotEmpty ? label.trim() : '—';
+    final p = phonetic?.trim();
+    if (p == null || p.isEmpty) return cleaned;
+    if (_containsNonLatinScript(cleaned)) {
+      return '$cleaned ($p)';
+    }
+    return cleaned;
+  }
+
   String buildText() {
     final start = _sessionStartLocal ?? DateTime.now();
     final buf = StringBuffer();
@@ -90,13 +153,13 @@ class PresentationProtocolLog {
     buf.writeln();
     buf.writeln('Comprehension targets:');
     for (final e in _comprehension) {
-      final label = e.label.trim().isNotEmpty ? e.label.trim() : '—';
+      final label = _formatLabel(e.label, e.phonetic);
       buf.writeln('- $label: ${e.correct ? 'r' : 'f'}');
     }
     buf.writeln();
     buf.writeln('Naming targets:');
     for (final e in _naming) {
-      final label = e.label.trim().isNotEmpty ? e.label.trim() : '—';
+      final label = _formatLabel(e.label, e.phonetic);
       final heard = e.heard.replaceAll('\n', ' ').trim();
       buf.writeln('- $label: "$heard" - $label: ${e.correct ? 'r' : 'f'}');
     }
@@ -134,4 +197,3 @@ class PresentationProtocolLog {
     return 'Gespeichert: ${dir.path}/$fileName';
   }
 }
-

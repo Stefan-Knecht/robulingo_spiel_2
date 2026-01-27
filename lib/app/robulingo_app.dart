@@ -44,7 +44,9 @@ import 'package:robulingo_flutter/ui/training_calendar_panel.dart';
 import 'package:robulingo_flutter/utils/platform_info.dart';
 import 'package:robulingo_flutter/utils/text_utils.dart';
 
-const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi'};
+// Languages where we *expect* a separate phonetic/reading aid to be useful.
+// Note: compare against normalized base codes (e.g. "ja-JP" -> "ja").
+const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
 
 // ------------------------------------------------------------
 // RobuLingo Viewer – Überblick für Laien
@@ -2075,6 +2077,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       playHint: () async {
         if (!isCurrent()) return;
         await _playHintAudioForItem(trial.target);
+        if (!isCurrent()) return;
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (!isCurrent()) return;
+        await _playHintAudioForItem(trial.target);
       },
       onTranscript: (text) {
         if (!isCurrent()) return;
@@ -2088,6 +2094,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         if (!isCurrent()) return;
         protocolLog.addNaming(
           label: trial.target.text,
+          phonetic: trial.target.phonetic,
           heard: heard,
           correct: correct,
         );
@@ -2196,7 +2203,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     final trial = currentTrial!;
     final correct = choseLeft == trial.targetOnLeft;
-    protocolLog.addComprehension(label: trial.target.text, correct: correct);
+    protocolLog.addComprehension(
+      label: trial.target.text,
+      phonetic: trial.target.phonetic,
+      correct: correct,
+    );
     debugPrint(
         '[select] idx=$trialIndex token=$currentTrialToken naming=${_isNamingTrial()} choseLeft=$choseLeft targetOnLeft=${trial.targetOnLeft} correct=$correct');
     // Ergebnis für Gleitfenster speichern (max 10)
@@ -2639,9 +2650,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         }
       }
 
+      final String phoneticLang = HintsService.normalizeLangCode(lang);
       final bool hasPhoneticData = trial.target.phonetic != null &&
           trial.target.phonetic!.isNotEmpty &&
-          _phoneticEligibleLangs.contains(lang);
+          _phoneticEligibleLangs.contains(phoneticLang);
       final int phoneticSeen = phoneticSeenCounts[trial.target.uuid] ?? 0;
       final int phoneticOverrideCount =
           phoneticOverrideRemaining[trial.target.uuid] ?? 0;

@@ -197,7 +197,7 @@ class ApiClient {
         audioKeys.map((k) => _uri('/file', {'key': k})).toList(growable: false);
     final audioUri = audioVariants.first;
 
-    final String? phonetic = meta['phonetic_$lang']?.toString();
+    final String? phonetic = _phoneticForLang(meta, lang);
     final String text = _textForLang(meta, lang);
     String? nativeText;
     if (nativeLang != null && nativeLang != lang) {
@@ -346,8 +346,15 @@ class ApiClient {
 
   String _textForLang(Map<String, dynamic> meta, String lang) {
     final lower = lang.trim().toLowerCase();
-    final display = meta['display_$lower'] ?? meta['text_$lower'];
-    if (display is String && display.isNotEmpty) return display;
+    if (lower.isNotEmpty) {
+      final display = meta['display_$lower'] ?? meta['text_$lower'];
+      if (display is String && display.isNotEmpty) return display;
+      final base = lower.split(RegExp(r'[-_]')).first;
+      if (base.isNotEmpty && base != lower) {
+        final displayBase = meta['display_$base'] ?? meta['text_$base'];
+        if (displayBase is String && displayBase.isNotEmpty) return displayBase;
+      }
+    }
     final fallback = meta['text'];
     if (fallback is String && fallback.isNotEmpty) return fallback;
     return '';
@@ -356,9 +363,13 @@ class ApiClient {
   String? _phoneticForLang(Map<String, dynamic> meta, String lang) {
     final lower = lang.trim().toLowerCase();
     if (lower.isEmpty) return null;
-    final value = meta['phonetic_$lower'];
-    if (value is String && value.isNotEmpty) {
-      return value;
+    for (final keyLang in <String>{
+      lower,
+      lower.split(RegExp(r'[-_]')).first,
+    }) {
+      if (keyLang.isEmpty) continue;
+      final value = meta['phonetic_$keyLang'];
+      if (value is String && value.isNotEmpty) return value;
     }
     return null;
   }
