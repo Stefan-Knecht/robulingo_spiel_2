@@ -6,6 +6,7 @@ void main() {
     expect(normalizeText('فم فم'), 'فم فم');
     expect(normalizeText('水'), '水');
     expect(normalizeText('みず'), 'みず');
+    expect(normalizeText('νερό'), 'νερο');
   });
 
   test('normalizeText strips punctuation and collapses whitespace', () {
@@ -17,5 +18,9 @@ void main() {
     // بَابَا -> بابا
     expect(normalizeText('بَابَا'), 'بابا');
   });
-}
 
+  test('normalizeText strips common Latin diacritics', () {
+    expect(normalizeText('città'), 'citta');
+    expect(normalizeText('perché'), 'perche');
+  });
+}

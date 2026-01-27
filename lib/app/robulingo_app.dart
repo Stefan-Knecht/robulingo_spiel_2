@@ -25,6 +25,7 @@ import 'package:robulingo_flutter/logic/ladder_controller.dart'
     show MoveEvent, MoveKind;
 import 'package:robulingo_flutter/logic/naming_controller.dart';
 import 'package:robulingo_flutter/logic/onboarding_store.dart';
+import 'package:robulingo_flutter/logic/asr_locale_resolver.dart';
 import 'package:robulingo_flutter/logic/presentation_protocol_log.dart';
 import 'package:robulingo_flutter/logic/session_cache.dart';
 import 'package:robulingo_flutter/logic/trial_buffer.dart';
@@ -2058,11 +2059,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       hasAnswered = true; // block Selektionen/Advances während Naming
     });
-    const int windowFirst = 5; // mehr Zeit für erste Aufnahme
-    const int windowRepeat = 5;
-    // Temporär ohne Locale, um iOS-Speech-Engines nicht zu blockieren.
-    final String? localeId =
-        (isIOS || isMacOS) ? null : await _resolveLocaleId();
+    const int windowFirst = 4; // mehr Zeit für erste Aufnahme
+    const int windowRepeat = 6;
+    // Force the best-matching ASR locale for the current L2 (with fallback).
+    final String? localeId = await _resolveLocaleId();
     bool isCurrent() => mounted && token == currentTrialToken;
     final trial = currentTrial;
     if (trial == null) return;
@@ -2147,35 +2147,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     try {
       final locales = await speech.locales();
-      final target = lang.toLowerCase();
-      final override = speechLocaleOverrides[lang]?.toLowerCase();
-      String normalize(String value) => value.replaceAll('_', '-');
-      if (locales.isEmpty) {
-        if (override != null) {
-          _cachedLocaleId = override;
-          _cachedLocaleLang = lang;
-          return _cachedLocaleId;
-        }
-        _cachedLocaleId = target;
-        _cachedLocaleLang = lang;
-        return _cachedLocaleId;
-      }
-      final exact = locales.firstWhere(
-        (l) {
-          final id = l.localeId.toLowerCase();
-          final normalized = normalize(id);
-          if (override != null) {
-            final overrideNorm = normalize(override);
-            return normalized == overrideNorm ||
-                normalized.startsWith('$overrideNorm-');
-          }
-          return id == target ||
-              id.startsWith('$target-') ||
-              id.startsWith('${target}_');
-        },
-        orElse: () => locales.first,
+      final override = speechLocaleOverrides[lang];
+      final resolved = const AsrLocaleResolver().resolveFromLocales(
+        locales,
+        lang: lang,
+        overrideLocaleId: override,
       );
-      _cachedLocaleId = exact.localeId;
+      _cachedLocaleId =
+          resolved ?? (override?.isNotEmpty == true ? override : lang);
       _cachedLocaleLang = lang;
       return _cachedLocaleId;
     } catch (_) {

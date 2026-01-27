@@ -319,7 +319,7 @@ class NamingController {
     double maxSoundLevel = -120;
     _log(
         '[naming][listen] locale=${localeId ?? "-"} dur=${duration.inSeconds}s flow=$flowToken session=$sessionId');
-    try {
+    Future<void> startListen(String? useLocale) async {
       const listenMode =
           kIsWeb ? stt.ListenMode.confirmation : stt.ListenMode.dictation;
       final Duration? listenFor = kIsWeb ? null : duration;
@@ -333,7 +333,7 @@ class NamingController {
           partialResults: true,
           cancelOnError: !kIsWeb,
         ),
-        localeId: localeId,
+        localeId: useLocale,
         onSoundLevelChange: (level) {
           gotSoundLevel = true;
           if (level > maxSoundLevel) maxSoundLevel = level;
@@ -353,9 +353,26 @@ class NamingController {
           }
         },
       );
-    } catch (_) {
-      onError?.call('listen-ex');
-      return '';
+    }
+
+    try {
+      await startListen(localeId);
+    } catch (e) {
+      // If the localeId is unsupported on this platform/engine, retry without it.
+      if (localeId != null && localeId.trim().isNotEmpty) {
+        _log('[naming][listen-retry] locale="$localeId" err=$e -> retry with locale="-"');
+        try {
+          await startListen(null);
+        } catch (e2) {
+          _log('[naming][listen-error] err=$e2');
+          onError?.call('listen-ex');
+          return '';
+        }
+      } else {
+        _log('[naming][listen-error] err=$e');
+        onError?.call('listen-ex');
+        return '';
+      }
     }
     final timeout = Future.delayed(duration + const Duration(seconds: 1));
     await Future.any([completer.future, timeout]);
