@@ -23,6 +23,8 @@ class DashboardScreen extends StatefulWidget {
   final Map<String, int> comprehensionCorrect;
   final Map<String, int> namingAttempts;
   final Map<String, int> namingCorrect;
+  final VoidCallback? onExitToOpeningPanel;
+  final Future<String> Function()? onExportProtocol;
 
   const DashboardScreen({
     super.key,
@@ -38,6 +40,8 @@ class DashboardScreen extends StatefulWidget {
     required this.comprehensionCorrect,
     required this.namingAttempts,
     required this.namingCorrect,
+    this.onExitToOpeningPanel,
+    this.onExportProtocol,
   });
 
   @override
@@ -135,21 +139,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Positioned(
                   top: 8,
                   right: 8,
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.refresh,
-                      size: 40,
-                      color: Colors.green.shade700,
-                      weight: 800,
-                    ),
-                    onPressed: () => Navigator.of(context).pop(),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.onExportProtocol != null)
+                        IconButton(
+                          icon: Icon(
+                            Icons.download,
+                            size: 38,
+                            color: Colors.green.shade700,
+                            weight: 800,
+                          ),
+                          onPressed: () async {
+                            try {
+                              final msg = await widget.onExportProtocol!.call();
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(msg)),
+                              );
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Export fehlgeschlagen: $e')),
+                              );
+                            }
+                          },
+                        ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.refresh,
+                          size: 40,
+                          color: Colors.green.shade700,
+                          weight: 800,
+                        ),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
                   ),
                 ),
                 Positioned(
                   bottom: 16,
                   right: 16,
                   child: GestureDetector(
-                    onTap: () => _exitApp(context),
+                    onTap: () {
+                      Navigator.of(context).popUntil((route) => route.isFirst);
+                      widget.onExitToOpeningPanel?.call();
+                    },
                     child: Image.asset(
                       'assets/icons/exit.webp',
                       width: 54,
@@ -955,9 +990,5 @@ class _SuccessPainter extends CustomPainter {
   }
 }
 
-void _exitApp(BuildContext context) {
-  Navigator.of(context).popUntil((route) => route.isFirst);
-  try {
-    exit(0);
-  } catch (_) {}
-}
+// Intentionally no hard `exit(0)`: iOS/macOS/web will ignore it and it feels like "Return to game".
+// Exiting to the opening panel is handled by the host (RobuLingoApp) via `onExitToOpeningPanel`.

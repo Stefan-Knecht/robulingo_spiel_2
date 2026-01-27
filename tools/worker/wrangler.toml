@@ -1,0 +1,10 @@
+name = "robulingo-api"
+main = "../cloudflare_worker_log.js"
+compatibility_date = "2026-01-27"
+
+# R2 bindings (must exist in your Cloudflare account)
+r2_buckets = [
+  { binding = "USERDATA", bucket_name = "userdata" },
+  { binding = "HINTS", bucket_name = "hints" },
+]
+

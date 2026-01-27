@@ -74,8 +74,14 @@ class NamingController {
   int _flowToken = 0;
   int _sessionId = 0;
   String _liveTranscript = '';
+  String _lastRecognizedWords = '';
+  double _lastConfidence = -1;
+  bool _lastFinalResult = false;
 
   String get liveTranscript => _liveTranscript;
+  String get lastRecognizedWords => _lastRecognizedWords;
+  double get lastConfidence => _lastConfidence;
+  bool get lastFinalResult => _lastFinalResult;
 
   /// Increment the flow token to invalidate any pending async work.
   void cancel() {
@@ -190,6 +196,7 @@ class NamingController {
     required Future<void> Function() playHint,
     required void Function(NamingPhase phase) onPhase,
     required void Function(String transcript) onTranscript,
+    void Function(String transcript, bool correct, bool isRepeat)? onAttemptScored,
     Duration firstWindow = const Duration(seconds: 5),
     Duration repeatWindow = const Duration(seconds: 5),
     bool allowRepeat = true,
@@ -212,6 +219,9 @@ class NamingController {
       isCurrent: isCurrent,
       scorer: scorer,
       onTranscript: onTranscript,
+      onScored: (transcript, correct) {
+        onAttemptScored?.call(transcript, correct, false);
+      },
       localeId: localeId,
     );
     if (!_isValid(localFlow, sessionId, isCurrent)) {
@@ -221,7 +231,8 @@ class NamingController {
       onPhase(NamingPhase.finished);
       return NamingFlowOutcome(
         correct: firstCorrect,
-        moves: firstCorrect ? 1 : 0,
+        // Game rule: correct naming (first attempt) advances 2 steps.
+        moves: firstCorrect ? 2 : 0,
         transcript: _liveTranscript,
       );
     }
@@ -241,6 +252,9 @@ class NamingController {
       isCurrent: isCurrent,
       scorer: scorer,
       onTranscript: onTranscript,
+      onScored: (transcript, correct) {
+        onAttemptScored?.call(transcript, correct, true);
+      },
       localeId: localeId,
     );
     if (!_isValid(localFlow, sessionId, isCurrent)) {
@@ -250,6 +264,7 @@ class NamingController {
     onPhase(NamingPhase.finished);
     return NamingFlowOutcome(
       correct: repeatCorrect,
+      // Game rule: correct repetition (after hint) advances 1 step.
       moves: repeatCorrect ? 1 : 0,
       transcript: _liveTranscript,
     );
@@ -263,6 +278,7 @@ class NamingController {
     required bool Function() isCurrent,
     required bool Function(String transcript, String targetText) scorer,
     required void Function(String transcript) onTranscript,
+    void Function(String transcript, bool correct)? onScored,
     String? localeId,
   }) async {
     final transcript = await _listenForDuration(
@@ -277,7 +293,9 @@ class NamingController {
     if (!_isValid(flowToken, sessionId, isCurrent)) {
       return false;
     }
-    return scorer(transcript, targetText);
+    final correct = scorer(transcript, targetText);
+    onScored?.call(transcript, correct);
+    return correct;
   }
 
   Future<String> _listenForDuration(
@@ -289,6 +307,9 @@ class NamingController {
     String? localeId,
   ) async {
     _liveTranscript = '';
+    _lastRecognizedWords = '';
+    _lastConfidence = -1;
+    _lastFinalResult = false;
     try {
       await speech.stop();
     } catch (_) {}
@@ -321,6 +342,9 @@ class NamingController {
           if (!_isValid(flowToken, sessionId, isCurrent)) return;
           gotResultEvent = true;
           _liveTranscript = res.recognizedWords;
+          _lastRecognizedWords = res.recognizedWords;
+          _lastConfidence = res.confidence;
+          _lastFinalResult = res.finalResult;
           _log(
               '[naming][listen-result] final=${res.finalResult} words="${res.recognizedWords}" conf=${res.confidence}');
           onTranscript(_liveTranscript);

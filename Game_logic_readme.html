@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RobuLingo – Game Logic (Item Presentation)</title>
+  <style>
+    :root{
+      --text:#111; --muted:#555; --bg:#fff; --card:#f8f9fa; --border:#e5e7eb;
+      --code:#f3f4f6; --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    }
+    body{font-family:var(--sans);line-height:1.55;color:var(--text);margin:24px;background:var(--bg)}
+    h1{margin:0 0 6px 0} h2{margin:22px 0 6px 0} h3{margin:16px 0 6px 0}
+    p{margin:8px 0} ul,ol{margin:8px 0;padding-left:20px}
+    code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:.95em}
+    pre{background:var(--card);padding:12px;border-radius:8px;overflow-x:auto;border:1px solid var(--border);
+        font-family:var(--mono);font-size:12px;line-height:1.35;margin:10px 0;white-space:pre}
+    table{border-collapse:collapse;width:100%;margin:10px 0}
+    th,td{border:1px solid var(--border);padding:10px;vertical-align:top;text-align:left}
+    th{background:#fafafa}
+    .muted{color:var(--muted)}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;border:1px solid #e0e7ff;font-size:12px;margin-right:6px}
+    .note{background:#fff7ed;border:1px solid #fed7aa;padding:10px 12px;border-radius:8px}
+  </style>
+</head>
+<body>
+  <h1>RobuLingo – Game Logic (Item Presentation)</h1>
+  <p class="muted">
+    Scope: how items are selected, repeated, and switched between comprehension (2AFC) and naming (speech/ASR),
+    including postponing/reactivating naming blocks and re-insertion via a FIFO refiller queue.
+  </p>
+
+  <h2>Intent</h2>
+  <ul>
+    <li><span class="pill">Learning</span> Teach vocabulary by alternating <b>recognition</b> (2AFC) and <b>production</b> (naming).</li>
+    <li><span class="pill">Control</span> Use a predictable schedule (fixed block size, explicit promotion/removal rules, FIFO refill).</li>
+    <li><span class="pill">Resilience</span> Prefer local persistence (logs + refiller) and prefetch neighborhoods to reduce stalls.</li>
+  </ul>
+
+  <h2>Source of truth (code)</h2>
+  <ul>
+    <li><b>Policy / scheduler</b>: <code>lib/logic/item_presentation_policy.dart</code></li>
+    <li><b>Session orchestration + UI wiring</b>: <code>lib/app/robulingo_app.dart</code></li>
+    <li><b>Refiller persistence</b>: <code>lib/logic/refiller_store.dart</code></li>
+    <li><b>Logs</b>: <code>lib/event_logger.dart</code> writes <code>events.ndjson</code></li>
+    <li><b>Curriculum + assets</b>: <code>lib/data/api_client.dart</code></li>
+  </ul>
+
+  <h2>Core concepts</h2>
+  <ul>
+    <li><b>CurriculumEntry</b> = curriculum slot (<code>uuid</code> + <code>index</code>).</li>
+    <li><b>ItemData</b> = resolved item (L2 text, optional L1/native text, optional phonetic, image/audio).</li>
+    <li><b>PresentationSlot</b> = (<code>mode</code>, <code>targetUuid</code>) from the policy.</li>
+    <li><b>Trial</b> = 2AFC “render object” built on-demand for the current slot (target vs distractor).</li>
+    <li><b>readyToName</b> = UUIDs that qualified for naming (rolling 5/5 comprehension).</li>
+    <li><b>trialIndex</b> (current meaning) = slot position in the 10-item comprehension cycle (0..9), or <code>-1</code> while naming.</li>
+  </ul>
+
+  <h2>High-level flow</h2>
+  <pre>
++------------------+
+| Load curriculum  |
+| (L2 module + L1) |
+| + apply delta    |
++------------------+
+        v
++----------------------------------------------+
+| Resolve cursor                               |
+| - primary: log-derived (events.ndjson)       |
+| - fallback: UserCurriculumDelta.cursor       |
++----------------------------------------------+
+        v
++----------------------------------------------+
+| Init presentation policy                     |
+| - comprehension block of 10                  |
+|   - slots 1..9: serial curriculum items      |
+|   - slot 10: refiller FIFO (else curriculum) |
+| - prefetch block + distractor neighborhoods  |
++----------------------------------------------+
+        v
++------------------------------+
+| Loop: slot -> trial -> input |
++------------------------------+
+        |
+        v
+ +----------------------------+
+ | If slot.mode = comprehension|
+ | - show 2AFC                |
+ | - answered attempt updates |
+ |   - qualify 5/5 -> naming  |
+ |   - >20 attempts -> refill |
+ +----------------------------+
+        |
+        v
+ +--------------------------+
+ | If slot.mode = naming    |
+ | - mic gate / mic prime   |
+ | - listen(+hint+repeat)   |
+ | - remove->refiller if    |
+ |   correct>2 or attempts>8|
+ +--------------------------+
+        |
+        v
+ +---------------------------+
+ | Next slot                 |
+ | - naming blocks preempt   |
+ | - postpone/reactivate FIFO|
+ +---------------------------+
+  </pre>
+
+  <h2>Item presentation policy (current rules)</h2>
+  <ol>
+    <li><b>Comprehension block of 10</b>:
+      slots 1..9 are serial curriculum items; slot 10 is filled from refiller FIFO (fallback to curriculum if empty).
+      The block wraps after slot 10 back to slot 1.</li>
+    <li><b>Distractors</b>:
+      chosen randomly from the <b>previous 10 curriculum items</b>;
+      if there are fewer than 10 previous items, chosen from the next 10.
+      Neighborhoods are prefetched.</li>
+    <li><b>Up-from-comprehension</b>:
+      when an item reaches <b>5/5 correct</b> in a rolling window (answered attempts only),
+      it qualifies for naming and is removed from the comprehension block.</li>
+    <li><b>Down-from-comprehension</b>:
+      if an item is answered in comprehension more than 20 times, it is removed from the comprehension block and enqueued into refiller.</li>
+    <li><b>Naming blocks (Option A)</b>:
+      naming preempts comprehension when a naming block is available (block size = 5 items).</li>
+    <li><b>Postpone naming</b>:
+      in naming view, a toggle (<code>assets/icons/postpone.webp</code>) postpones the current naming block.
+      Remaining items are enqueued FIFO as a postponed block. Only the last 3 postponed blocks are kept.</li>
+    <li><b>Reactivate naming</b>:
+      in comprehension view, when postponed blocks exist, a toggle (<code>assets/icons/antepone.webp</code>) reactivates postponed blocks FIFO.</li>
+    <li><b>Up/down-from-naming</b>:
+      if naming correct &gt; 2 (mastery) or naming attempts &gt; 8 (down-from-naming), the item is removed from naming and enqueued into refiller
+      (so it can reappear later for forgetting/re-exposure).</li>
+  </ol>
+
+  <h2>Cursor and persistence</h2>
+  <ul>
+    <li><b>Log-derived cursor (primary)</b>: scanning backward in <code>events.ndjson</code> for the last matching <code>trial_result</code> of the active <code>start_key</code> and <code>lang</code> (and user if available).</li>
+    <li><b>Delta cursor (fallback)</b>: <code>UserCurriculumDelta.cursor</code> is persisted as a safety net if logs are missing/ambiguous.</li>
+    <li><b>Refiller FIFO</b>: stored locally via <code>RefillerStore</code> (one JSON file per user+curriculum+lang in the app documents directory).</li>
+  </ul>
+
+  <h2>Display rules (L1 + phonetics)</h2>
+  <ul>
+    <li><b>L1/native text</b>: shown on the 1st and 3rd presentation of an item (0-based exposure count: 0 and 2) when L1 is enabled.</li>
+    <li><b>Phonetics</b>: shown for the first 4 presentations (plus an optional per-item “show again” override).</li>
+  </ul>
+
+  <h2>What you can modulate (training parameters)</h2>
+  <p class="muted">Most knobs are code-level today. Primary knobs live in <code>ItemPresentationConfig</code>.</p>
+  <table>
+    <thead>
+      <tr><th>Parameter</th><th>Where</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>comprehensionBlockSize</code> (10), <code>comprehensionCoreSize</code> (9)</td>
+        <td><code>lib/logic/item_presentation_policy.dart</code></td>
+        <td>Size/shape of the repeating comprehension block; last slot is refiller-driven.</td>
+      </tr>
+      <tr>
+        <td><code>distractorWindow</code> (10)</td>
+        <td><code>lib/logic/item_presentation_policy.dart</code></td>
+        <td>Neighborhood size for distractor sampling and prefetch.</td>
+      </tr>
+      <tr>
+        <td><code>compWindowSize</code> (5), <code>compWindowCorrectNeeded</code> (5)</td>
+        <td><code>lib/logic/item_presentation_policy.dart</code></td>
+        <td>How strict naming qualification is (rolling window and required correct answers).</td>
+      </tr>
+      <tr>
+        <td><code>minQualifiedItemsToStart</code> (5), <code>namingBlockSize</code> (5)</td>
+        <td><code>lib/logic/item_presentation_policy.dart</code></td>
+        <td>When naming begins and how many items each naming block contains.</td>
+      </tr>
+      <tr>
+        <td><code>comprehensionDownMaxAttempts</code> (20)</td>
+        <td><code>lib/logic/item_presentation_policy.dart</code></td>
+        <td>Down-from-comprehension removal threshold (answered attempts only).</td>
+      </tr>
+      <tr>
+        <td><code>namingMasteryCorrectThreshold</code> (2), <code>namingDownFromNamingMaxAttempts</code> (8)</td>
+        <td><code>lib/logic/item_presentation_policy.dart</code></td>
+        <td>When items leave naming and go back to refiller for later re-exposure.</td>
+      </tr>
+      <tr>
+        <td><code>maxPostponedBlocks</code> (3)</td>
+        <td><code>lib/logic/item_presentation_policy.dart</code></td>
+        <td>How many postponed naming blocks are retained (FIFO; older dropped).</td>
+      </tr>
+      <tr>
+        <td>L1 schedule (<code>_shouldShowNative</code>)</td>
+        <td><code>lib/app/robulingo_app.dart</code></td>
+        <td>Which exposures show L1/native text (currently counts 0 and 2).</td>
+      </tr>
+      <tr>
+        <td>Phonetic schedule</td>
+        <td><code>lib/app/robulingo_app.dart</code></td>
+        <td>Which languages show phonetics and for how long (first 4 exposures + override).</td>
+      </tr>
+      <tr>
+        <td>Naming mic gate cooldown</td>
+        <td><code>lib/app/robulingo_app.dart</code></td>
+        <td>How long naming is suppressed after deny/timeout (currently 20 trials).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="muted">
+    Related docs in this repo: <code>Parameter_readme.html</code> (parameter inventory),
+    <code>Arbeitsauftrag_Lernlogik.html</code> (broader multi-queue ideas).
+  </p>
+</body>
+</html>
+
