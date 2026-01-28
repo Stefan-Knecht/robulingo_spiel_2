@@ -237,6 +237,7 @@ class NamingView extends StatelessWidget {
     required this.onStartNaming,
     required this.onOpenSettings,
     required this.onSkip,
+    this.onPostpone,
   });
 
   final Uint8List leftImageBytes;
@@ -256,6 +257,7 @@ class NamingView extends StatelessWidget {
   final VoidCallback onStartNaming;
   final VoidCallback onOpenSettings;
   final void Function(String reason) onSkip;
+  final VoidCallback? onPostpone;
 
   @override
   Widget build(BuildContext context) {
@@ -331,6 +333,18 @@ class NamingView extends StatelessWidget {
 
     return Column(
       children: [
+        if (onPostpone != null)
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              tooltip: 'Benennen verschieben',
+              onPressed: namingInProgress ? null : onPostpone,
+              icon: const ImageIcon(
+                AssetImage('assets/icons/postpone.webp'),
+                size: 28,
+              ),
+            ),
+          ),
         AnimatedContainer(
           duration: const Duration(milliseconds: 250),
           margin: const EdgeInsets.all(8),
@@ -694,6 +708,9 @@ class SessionBody extends StatelessWidget {
     required this.onSkipNaming,
     required this.onSelect,
     required this.onOpenDashboard,
+    required this.hasPostponedNamingBlocks,
+    required this.onReactivateNamingBlocks,
+    required this.onPostponeNamingBlocks,
   });
 
   final HexagonState ladder;
@@ -739,6 +756,9 @@ class SessionBody extends StatelessWidget {
   final void Function(String reason) onSkipNaming;
   final void Function(bool choseLeft) onSelect;
   final VoidCallback onOpenDashboard;
+  final bool hasPostponedNamingBlocks;
+  final VoidCallback? onReactivateNamingBlocks;
+  final VoidCallback? onPostponeNamingBlocks;
 
   @override
   Widget build(BuildContext context) {
@@ -784,6 +804,7 @@ class SessionBody extends StatelessWidget {
             onStartNaming: onPrimeMic,
             onOpenSettings: onOpenMicSettings,
             onSkip: onSkipNaming,
+            onPostpone: onPostponeNamingBlocks,
           )
         : TrialOptionsRow(
             leftImageBytes: leftImageBytes,
@@ -797,7 +818,7 @@ class SessionBody extends StatelessWidget {
             onSelect: onSelect,
           );
 
-    final contentColumn = Column(
+      final contentColumn = Column(
       mainAxisAlignment: MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -856,75 +877,109 @@ class SessionBody extends StatelessWidget {
               ],
               if (phoneticButtonVisible ||
                   audioHintEnabled ||
-                  hintButtonVisible) ...[
+                  hintButtonVisible ||
+                  hasPostponedNamingBlocks) ...[
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 10,
                   runSpacing: 8,
                   alignment: WrapAlignment.center,
                   children: [
-                    if (phoneticButtonVisible)
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: phoneticOverrideActive
-                              ? const Color(0xFFE7F0FF)
-                              : Colors.white,
-                          foregroundColor: Colors.black87,
-                          side: BorderSide(
-                            color: phoneticOverrideActive
-                                ? const Color(0xFF8AB4F8)
-                                : Colors.black12,
+                    if (hasPostponedNamingBlocks && !isNaming)
+                      Tooltip(
+                        message: 'Benennen',
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: const Color(0xFFEFF6FF),
+                            foregroundColor: Colors.black87,
+                            side: const BorderSide(color: Colors.black12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
                           ),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
+                          onPressed: onReactivateNamingBlocks,
+                          child: const ImageIcon(
+                            AssetImage('assets/icons/antepone.webp'),
+                            size: 20,
+                            color: Colors.blue,
+                          ),
                         ),
-                        onPressed: onTogglePhonetic,
-                        icon: ImageIcon(
-                          const AssetImage('assets/icons/phonetic.webp'),
-                          color: phoneticOverrideActive
-                              ? Colors.blue
-                              : Colors.grey[700],
-                          size: 20,
+                      ),
+                    if (phoneticButtonVisible)
+                      Tooltip(
+                        message: 'Phonetic',
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: phoneticOverrideActive
+                                ? const Color(0xFFE7F0FF)
+                                : Colors.white,
+                            foregroundColor: Colors.black87,
+                            side: BorderSide(
+                              color: phoneticOverrideActive
+                                  ? const Color(0xFF8AB4F8)
+                                  : Colors.black12,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          onPressed: onTogglePhonetic,
+                          child: ImageIcon(
+                            const AssetImage('assets/icons/phonetic.webp'),
+                            color: phoneticOverrideActive
+                                ? Colors.blue
+                                : Colors.grey[700],
+                            size: 20,
+                          ),
                         ),
-                        label: const Text('Phonetic'),
                       ),
                     if (audioHintEnabled)
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black87,
-                          side: const BorderSide(color: Colors.black12),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
+                      Tooltip(
+                        message: 'Audio hint',
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.black87,
+                            side: const BorderSide(color: Colors.black12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          onPressed: onPlayAudioHint,
+                          child: const Icon(Icons.volume_up, size: 20),
                         ),
-                        onPressed: onPlayAudioHint,
-                        icon: const Icon(Icons.volume_up, size: 20),
-                        label: const Text('Audio hint'),
                       ),
                     if (hintButtonVisible)
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: hintButtonActive
-                              ? const Color(0xFFFFF2C0)
-                              : Colors.white,
-                          foregroundColor: Colors.black87,
-                          side: BorderSide(
-                            color: hintButtonActive
-                                ? const Color(0xFFE7C36A)
-                                : Colors.black12,
+                      Tooltip(
+                        message: hintLabel,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: hintButtonActive
+                                ? const Color(0xFFFFF2C0)
+                                : Colors.white,
+                            foregroundColor: Colors.black87,
+                            side: BorderSide(
+                              color: hintButtonActive
+                                  ? const Color(0xFFE7C36A)
+                                  : Colors.black12,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
                           ),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
+                          onPressed: onToggleHints,
+                          child: ImageIcon(
+                            const AssetImage('assets/icons/Magnifying_glass.webp'),
+                            size: 20,
+                            color: hintButtonActive
+                                ? const Color(0xFF8A6B12)
+                                : Colors.grey[800],
+                          ),
                         ),
-                        onPressed: onToggleHints,
-                        icon: const Icon(Icons.search, size: 20),
-                        label: Text(hintLabel),
                       ),
                   ],
                 ),

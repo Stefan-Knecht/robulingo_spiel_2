@@ -11,11 +11,16 @@ import 'package:http/http.dart' as http;
 
 /// Schickt NDJSON-Batches (komprimiert) an den Worker, der nach R2 schreibt.
 class LogUploader {
-  LogUploader({required this.workerHost, required this.apiPrefix, http.Client? client})
-      : _http = client ?? http.Client();
+  LogUploader({
+    required this.workerHost,
+    required this.apiPrefix,
+    this.endpointPath = '/log',
+    http.Client? client,
+  }) : _http = client ?? http.Client();
 
   final String workerHost;
   final String apiPrefix;
+  final String endpointPath;
   final http.Client _http;
 
   static const Duration _timeout = Duration(seconds: 12);
@@ -32,7 +37,7 @@ class LogUploader {
     try {
       final res = await _http
           .post(
-            _path('/log'),
+            _path(endpointPath),
             headers: {
               'content-type': 'application/x-ndjson',
               'content-encoding': 'gzip',

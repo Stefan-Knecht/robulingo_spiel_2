@@ -16,6 +16,9 @@ export default {
       if (path.endsWith('/log')) {
         return await handleLog(request, env);
       }
+      if (path.endsWith('/audio-target-matches')) {
+        return await handleAudioTargetMatches(request, env);
+      }
       if (path.endsWith('/user-curriculum')) {
         return await handleCurriculum(request, env);
       }
@@ -30,8 +33,8 @@ export default {
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET,HEAD,OPTIONS',
-  'access-control-allow-headers': 'content-type,if-none-match',
+  'access-control-allow-methods': 'GET,HEAD,POST,OPTIONS',
+  'access-control-allow-headers': 'content-type,if-none-match,x-user-id,content-encoding',
 };
 
 // ---------- /hints ----------
@@ -118,6 +121,44 @@ async function handleLog(request, env) {
   }
 
   // Append by re-uploading concatenated bytes (gzip supports multiple members)
+  const merged = new Uint8Array(total);
+  merged.set(new Uint8Array(oldBytes), 0);
+  merged.set(new Uint8Array(chunk), oldBytes.byteLength);
+  await bucket.put(key, merged.buffer, { httpMetadata: { contentType: 'application/gzip' } });
+  return new Response('ok', { status: 200 });
+}
+
+// ---------- /audio-target-matches ----------
+const AUDIO_MATCH_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
+
+async function handleAudioTargetMatches(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('method not allowed', { status: 405 });
+  }
+  const uid = request.headers.get('x-user-id');
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400 });
+  }
+  const chunk = await request.arrayBuffer();
+  const key = `${uid}/audio_target_matches.ndjson.gz`;
+  const bucket = env.USERDATA;
+
+  const existing = await bucket.get(key);
+  if (!existing) {
+    await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
+    return new Response('ok', { status: 200 });
+  }
+
+  const oldBytes = await existing.arrayBuffer();
+  const total = oldBytes.byteLength + chunk.byteLength;
+  if (total > AUDIO_MATCH_MAX_BYTES) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').replace('Z', '');
+    const rotatedKey = `${uid}/audio_target_matches-${stamp}.ndjson.gz`;
+    await bucket.copy(key, rotatedKey);
+    await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
+    return new Response('ok-rotated', { status: 200 });
+  }
+
   const merged = new Uint8Array(total);
   merged.set(new Uint8Array(oldBytes), 0);
   merged.set(new Uint8Array(chunk), oldBytes.byteLength);

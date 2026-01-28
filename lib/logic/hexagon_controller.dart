@@ -176,6 +176,32 @@ class HexagonController {
     }
   }
 
+  /// Advances both player and rival forward by the same number of steps,
+  /// without using the probabilistic rival scheduler.
+  void applyCoupledForwardSteps(
+    int steps, {
+    bool emitPlayerMoveEvents = true,
+    bool emitRivalMoveEvents = false,
+  }) {
+    if (steps <= 0) return;
+    // Cancel any pending scheduled rival moves so we don't get extra drift.
+    _rivalMoveToken++;
+    _pendingRivalMoves = 0;
+    _rivalMoveScheduled = false;
+
+    for (int i = 0; i < steps; i++) {
+      final kindYou = _applyMove(true, isYou: true);
+      if (emitPlayerMoveEvents) {
+        onMove?.call(MoveEvent(isYou: true, kind: kindYou, isCorrect: true));
+      }
+      final kindRival = _applyMove(true, isYou: false);
+      if (emitRivalMoveEvents) {
+        onMove?.call(MoveEvent(isYou: false, kind: kindRival, isCorrect: true));
+      }
+    }
+    onChanged();
+  }
+
   MoveKind _applyMove(bool isCorrect, {required bool isYou}) {
     final int currentIndex = isYou ? state.youIndex : state.rivalIndex;
     final Offset currentPos = _grid.nodes[currentIndex];

@@ -12,6 +12,7 @@ import 'models.dart';
 
 class ApiClient {
   static const int _missingMp3PlaceholderLength = 11015;
+  static const int _maxImageVariantsPerItem = 5; // base + 01..04
   static const List<int> _missingMp3PlaceholderHead16 = <int>[
     0x49,
     0x44,
@@ -168,14 +169,25 @@ class ApiClient {
     final meta = await _fetchItemMeta(entry.uuid);
     final manifest = _buildManifest(entry.uuid, meta);
 
-    final imageKey =
-        _pickImageKeyForLang(manifest, lang, nativeLang: nativeLang);
+    // Prefer canonical base image (UUID.webp) when present, so variants can be
+    // cycled deterministically: UUID.webp, UUID_01.webp, UUID_02.webp, ...
+    final canonicalBase = '${manifest.uuid}.webp';
+    final imageKey = manifest.images.contains(canonicalBase)
+        ? canonicalBase
+        : _pickImageKeyForLang(manifest, lang, nativeLang: nativeLang);
     if (imageKey == null) {
       throw ApiException('Image key missing for ${entry.uuid}');
     }
-    final imageBytes = await loadBinaryFile(imageKey);
-
+    final orderedImageKeys = _orderedImageKeysForBase(manifest, imageKey);
+    final imageBytes = await loadBinaryFile(orderedImageKeys.first);
     final imageVariants = <Uint8List>[imageBytes];
+    for (final k in orderedImageKeys.skip(1)) {
+      try {
+        imageVariants.add(await loadBinaryFile(k));
+      } catch (_) {
+        // Optional variant missing/broken -> ignore.
+      }
+    }
 
     final audioKeys = _audioKeysForLang(manifest, lang);
     if (audioKeys.isEmpty) {
@@ -185,7 +197,7 @@ class ApiClient {
         audioKeys.map((k) => _uri('/file', {'key': k})).toList(growable: false);
     final audioUri = audioVariants.first;
 
-    final String? phonetic = meta['phonetic_$lang']?.toString();
+    final String? phonetic = _phoneticForLang(meta, lang);
     final String text = _textForLang(meta, lang);
     String? nativeText;
     if (nativeLang != null && nativeLang != lang) {
@@ -334,8 +346,15 @@ class ApiClient {
 
   String _textForLang(Map<String, dynamic> meta, String lang) {
     final lower = lang.trim().toLowerCase();
-    final display = meta['display_$lower'] ?? meta['text_$lower'];
-    if (display is String && display.isNotEmpty) return display;
+    if (lower.isNotEmpty) {
+      final display = meta['display_$lower'] ?? meta['text_$lower'];
+      if (display is String && display.isNotEmpty) return display;
+      final base = lower.split(RegExp(r'[-_]')).first;
+      if (base.isNotEmpty && base != lower) {
+        final displayBase = meta['display_$base'] ?? meta['text_$base'];
+        if (displayBase is String && displayBase.isNotEmpty) return displayBase;
+      }
+    }
     final fallback = meta['text'];
     if (fallback is String && fallback.isNotEmpty) return fallback;
     return '';
@@ -344,9 +363,13 @@ class ApiClient {
   String? _phoneticForLang(Map<String, dynamic> meta, String lang) {
     final lower = lang.trim().toLowerCase();
     if (lower.isEmpty) return null;
-    final value = meta['phonetic_$lower'];
-    if (value is String && value.isNotEmpty) {
-      return value;
+    for (final keyLang in <String>{
+      lower,
+      lower.split(RegExp(r'[-_]')).first,
+    }) {
+      if (keyLang.isEmpty) continue;
+      final value = meta['phonetic_$keyLang'];
+      if (value is String && value.isNotEmpty) return value;
     }
     return null;
   }
@@ -415,6 +438,40 @@ class ApiClient {
     }
     return mf.defaultImageKey ??
         (mf.images.isNotEmpty ? mf.images.first : null);
+  }
+
+  List<String> _orderedImageKeysForBase(_ItemManifest mf, String baseKey) {
+    final keys = <String>[];
+    final seen = <String>{};
+    void add(String k) {
+      final trimmed = k.trim();
+      if (trimmed.isEmpty) return;
+      if (seen.add(trimmed)) keys.add(trimmed);
+    }
+
+    add(baseKey);
+
+    final baseStem = baseKey.toLowerCase().endsWith('.webp')
+        ? baseKey.substring(0, baseKey.length - 5)
+        : baseKey;
+
+    final variants = <MapEntry<int, String>>[];
+    for (final img in mf.images) {
+      if (!img.toLowerCase().endsWith('.webp')) continue;
+      if (!img.startsWith('${baseStem}_')) continue;
+      final suffix = img.substring(baseStem.length + 1, img.length - 5);
+      final n = int.tryParse(suffix);
+      if (n == null) continue;
+      variants.add(MapEntry(n, img));
+    }
+    variants.sort((a, b) => a.key.compareTo(b.key));
+
+    for (final v in variants) {
+      add(v.value);
+      if (keys.length >= _maxImageVariantsPerItem) break;
+    }
+
+    return keys;
   }
 
   List<String> _audioKeysForLang(_ItemManifest mf, String lang) {

@@ -30,9 +30,13 @@ class EventLogger {
   String? storyId;
   String? mode;
   LogUploader? _uploader;
+  LogUploader? _audioMatchUploader;
   final List<String> _pendingUpload = []; // Zeilen, die noch hochgeladen werden.
+  final List<String> _pendingAudioMatchUpload = [];
   bool _uploading = false;
   bool _uploadScheduled = false;
+  bool _uploadingAudioMatches = false;
+  bool _uploadScheduledAudioMatches = false;
 
   bool get isReady => _ready;
 
@@ -55,7 +59,13 @@ class EventLogger {
     this.workerHost = workerHost;
     this.apiPrefix = apiPrefix;
     _uploader = LogUploader(workerHost: workerHost, apiPrefix: apiPrefix);
+    _audioMatchUploader = LogUploader(
+      workerHost: workerHost,
+      apiPrefix: apiPrefix,
+      endpointPath: '/audio-target-matches',
+    );
     _scheduleUpload();
+    _scheduleAudioMatchUpload();
   }
 
   void setSessionContext({
@@ -110,6 +120,10 @@ class EventLogger {
       await _file!.writeAsString(line, mode: FileMode.append, flush: false);
       _pendingUpload.add(line.trimRight());
       _scheduleUpload();
+      if (type == 'audio_target_match') {
+        _pendingAudioMatchUpload.add(line.trimRight());
+        _scheduleAudioMatchUpload();
+      }
     } catch (_) {
       // swallow logging errors
     }
@@ -121,6 +135,14 @@ class EventLogger {
     if (_uploader == null || userId.isEmpty) return;
     _uploadScheduled = true;
     Future.microtask(_flushUploads);
+  }
+
+  void _scheduleAudioMatchUpload() {
+    if (_uploadScheduledAudioMatches) return;
+    if (_audioMatchUploader == null || userId.isEmpty) return;
+    if (_pendingAudioMatchUpload.isEmpty) return;
+    _uploadScheduledAudioMatches = true;
+    Future.microtask(_flushAudioMatchUploads);
   }
 
   Future<void> _flushUploads() async {
@@ -138,6 +160,23 @@ class EventLogger {
     _uploading = false;
     if (_pendingUpload.isNotEmpty) {
       _scheduleUpload();
+    }
+  }
+
+  Future<void> _flushAudioMatchUploads() async {
+    _uploadScheduledAudioMatches = false;
+    if (_uploadingAudioMatches) return;
+    if (_audioMatchUploader == null || userId.isEmpty) return;
+    if (_pendingAudioMatchUpload.isEmpty) return;
+    _uploadingAudioMatches = true;
+    final batch = List<String>.from(_pendingAudioMatchUpload);
+    final ok = await _audioMatchUploader!.upload(userId: userId, lines: batch);
+    if (ok) {
+      _pendingAudioMatchUpload.removeRange(0, batch.length);
+    }
+    _uploadingAudioMatches = false;
+    if (_pendingAudioMatchUpload.isNotEmpty) {
+      _scheduleAudioMatchUpload();
     }
   }
 }

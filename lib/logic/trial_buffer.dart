@@ -20,12 +20,14 @@ class TrialBuffer {
   final List<Trial> trials = [];
   final Set<String> loadedUuids = {};
   final List<ItemData> _presentedTargets = [];
+  final Map<String, int> _imageVariantCursorByUuid = {};
 
   void reset() {
     items.clear();
     trials.clear();
     loadedUuids.clear();
     _presentedTargets.clear();
+    _imageVariantCursorByUuid.clear();
   }
 
   /// Replaces the full item list (e.g. when restoring a cache) and rebuilds
@@ -165,7 +167,11 @@ class TrialBuffer {
   }
 
   Uint8List _pickVariantBytes(ItemData item) {
-    if (item.imageVariants.isEmpty) return item.imageBytes;
-    return item.imageVariants[_rand.nextInt(item.imageVariants.length)];
+    final variants =
+        item.imageVariants.isNotEmpty ? item.imageVariants : [item.imageBytes];
+    final cursor = _imageVariantCursorByUuid[item.uuid] ?? 0;
+    final idx = cursor % variants.length;
+    _imageVariantCursorByUuid[item.uuid] = (cursor + 1) % variants.length;
+    return variants[idx];
   }
 }
