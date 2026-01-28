@@ -15,12 +15,12 @@ class ItemPresentationConfig {
     this.distractorWindow = 10,
 
     // Naming qualification + blocks
-    this.compWindowSize = 5,
-    this.compWindowCorrectNeeded = 5, // 5/5
+    this.compWindowSize = 4,
+    this.compWindowCorrectNeeded = 4, // 4/4
     this.namingBlockSize = 5,
     this.minQualifiedItemsToStart = 5, // >4
     this.namingMasteryCorrectThreshold = 1, // remove if correct > 1
-    this.namingDownFromNamingMaxAttempts = 8, // remove if attempts > 8
+    this.namingDownFromNamingMaxAttempts = 5, // remove if attempts > 5
 
     // Postpone/reactivate
     this.maxPostponedBlocks = 3,
@@ -76,7 +76,7 @@ class NamingAdvanceDecision {
 /// Item presentation policy:
 /// - fixed repeating comprehension block of 10 (slots 1..9 curriculum, slot 10 from refiller FIFO or curriculum)
 /// - distractors from previous 10 curriculum items (else next 10)
-/// - up-from-comprehension: 5/5 correct comprehension qualifies for naming and removes from comprehension
+/// - up-from-comprehension: 4/4 correct comprehension qualifies for naming and removes from comprehension
 /// - down-from-comprehension: remove after >20 answered comprehension attempts
 /// - naming blocks of 5 (priority when available), postpone/reactivate FIFO blocks (max 3)
 /// - up/down-from-naming removal returns items to refiller FIFO
@@ -444,7 +444,7 @@ class ItemPresentationPolicy {
     _namingPool.remove(uuid);
     // Important: reset the comprehension qualification window. Otherwise, once the item
     // reappears via refiller/comprehension, it can immediately re-qualify for naming
-    // based on stale 5/5 history, causing "more than 3 correct namings" within a session.
+    // based on stale 4/4 history, causing "more than 3 correct namings" within a session.
     _compLast.remove(uuid);
     if (isNamingActive && _activeNamingBlock != null) {
       _activeNamingBlock = _activeNamingBlock!.where((u) => u != uuid).toList();
