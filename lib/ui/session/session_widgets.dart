@@ -844,26 +844,28 @@ class SessionBody extends StatelessWidget {
           ),
           child: Column(
             children: [
-              Text.rich(
-                TextSpan(
-                  text: targetText,
-                  children: [
-                    if (targetPhonetic != null && targetPhonetic!.isNotEmpty)
-                      TextSpan(
-                        text: '  ${targetPhonetic!}',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontStyle: FontStyle.italic,
-                          color: Colors.blue,
-                          fontWeight: FontWeight.w500,
+              if (targetText.trim().isNotEmpty ||
+                  (targetPhonetic != null && targetPhonetic!.trim().isNotEmpty))
+                Text.rich(
+                  TextSpan(
+                    text: targetText,
+                    children: [
+                      if (targetPhonetic != null && targetPhonetic!.isNotEmpty)
+                        TextSpan(
+                          text: '  ${targetPhonetic!}',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontStyle: FontStyle.italic,
+                            color: Colors.blue,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 26, fontWeight: FontWeight.bold),
                 ),
-                textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-              ),
               if (showNative && nativeText != null && nativeText!.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Text(

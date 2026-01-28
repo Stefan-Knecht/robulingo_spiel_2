@@ -2689,6 +2689,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           hintRevealedForItem && hintIds.isNotEmpty && hintEntries.isEmpty
               ? 'No hint text found for ids: ${hintIds.join(', ')}'
               : null;
+
+      // Naming UX: don't show L2 text before the audio hint phase starts.
+      // micStage: 0=first recording, 1=hint, 2=repeat, -1=idle/finished.
+      final bool showL2Text = !isNamingView || namingOutcome != null || micStage >= 1;
       body = SessionBody(
         ladder: ladder,
         isNaming: isNamingView,
@@ -2708,9 +2712,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         showHourglass: showHourglass,
         namingInProgress: namingInProgress,
         liveTranscript: _liveTranscript,
-        targetText: trial.target.text,
-        targetPhonetic: showPhonetic ? trial.target.phonetic : null,
-        phoneticButtonVisible: hasPhoneticData,
+        targetText: showL2Text ? trial.target.text : '',
+        targetPhonetic:
+            showL2Text && showPhonetic ? trial.target.phonetic : null,
+        phoneticButtonVisible: showL2Text && hasPhoneticData,
         phoneticOverrideActive: phoneticOverrideActive,
         phoneticOverrideRemaining: phoneticOverrideCount,
         onTogglePhonetic:

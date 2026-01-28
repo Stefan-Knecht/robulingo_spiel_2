@@ -227,6 +227,13 @@ class NamingController {
     if (!_isValid(localFlow, sessionId, isCurrent)) {
       return null;
     }
+    // Always play the (double) audio hint after the first attempt, regardless of correctness.
+    // If the first attempt was correct, we still play the two hints back-to-back, but skip the
+    // second recording window.
+    onPhase(NamingPhase.playingHint);
+    await playHint();
+    if (!_isValid(localFlow, sessionId, isCurrent)) return null;
+
     if (firstCorrect || !allowRepeat) {
       onPhase(NamingPhase.finished);
       return NamingFlowOutcome(
@@ -235,12 +242,6 @@ class NamingController {
         moves: firstCorrect ? 2 : 0,
         transcript: _liveTranscript,
       );
-    }
-
-    onPhase(NamingPhase.playingHint);
-    await playHint();
-    if (!_isValid(localFlow, sessionId, isCurrent)) {
-      return null;
     }
 
     onPhase(NamingPhase.listeningRepeat);
