@@ -117,6 +117,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           rivalWins: widget.rivalWins,
                           rivalAssetPath: rivalAssetPath,
                           therapistAssetPath: therapistAssetPath,
+                          onExportProtocol: widget.onExportProtocol,
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -573,6 +574,7 @@ class VictoryPanel extends StatelessWidget {
   final String rivalAssetPath;
   final String therapistAssetPath;
   final Color? backgroundColor;
+  final Future<String> Function()? onExportProtocol;
 
   const VictoryPanel({
     super.key,
@@ -581,6 +583,7 @@ class VictoryPanel extends StatelessWidget {
     required this.rivalAssetPath,
     required this.therapistAssetPath,
     this.backgroundColor,
+    this.onExportProtocol,
   });
 
   @override
@@ -594,6 +597,34 @@ class VictoryPanel extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
+          if (onExportProtocol != null)
+            Positioned(
+              top: 8,
+              left: 8,
+              child: IconButton(
+                tooltip: 'Protokoll exportieren',
+                icon: Icon(
+                  Icons.download,
+                  size: 32,
+                  color: Colors.green.shade700,
+                  weight: 800,
+                ),
+                onPressed: () async {
+                  try {
+                    final msg = await onExportProtocol!.call();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(msg)),
+                    );
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Export fehlgeschlagen: $e')),
+                    );
+                  }
+                },
+              ),
+            ),
           Positioned.fill(
             child: Align(
               alignment: _trophyAlignment(),

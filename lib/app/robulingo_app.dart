@@ -68,7 +68,7 @@ const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
 // Willkürliche Parameter (Stand jetzt):
 //   1) Muttersprache: Anzeige nur beim ersten Durchlauf pro Item (nativeSeenCounts < 1).
 //   2) Rival-Startprognose: erste 10 Züge maxProb=0.9, danach skaliert mit letzter Accuracy.
-//   3) Benennen: Item qualifiziert nach 5/5 korrekten Comprehension-Antworten; Naming startet erst, wenn >=5 Items qualifiziert sind.
+//   3) Benennen: Item qualifiziert nach 4/4 korrekten Comprehension-Antworten; Naming startet erst, wenn >=5 Items qualifiziert sind.
 //   4) Naming-Zeitfenster: 5s erste Aufnahme, 5s Wiederholung.
 //   5) Naming-Block: 20 Trials Pause nach Ablehnung/Timeout im Gate.
 // ------------------------------------------------------------
@@ -1902,8 +1902,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (nativeLang == null) return false;
     if (item.nativeText == null || item.nativeText!.isEmpty) return false;
     final seen = nativeSeenCounts[item.uuid] ?? 0;
-    // Spec: show on 1st and 3rd presentation; with a 0-based counter that's 0 and 2.
-    return seen == 0 || seen == 2;
+    // Spec: show on 1st and 5th presentation; with a 0-based counter that's 0 and 4.
+    return seen == 0 || seen == 4;
   }
 
   Future<void> _startTrial(int token) async {
@@ -2063,6 +2063,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     const int windowRepeat = 6;
     // Force the best-matching ASR locale for the current L2 (with fallback).
     final String? localeId = await _resolveLocaleId();
+    try {
+      final locales = await speech.locales();
+      final system = await speech.systemLocale();
+      final used = localeId ?? 'system-default';
+      final method = (localeId == null)
+          ? 'system-default'
+          : (locales.isEmpty ? 'fallback-no-locales' : 'resolved');
+      protocolLog.addNote(
+          'ASR locale (naming): l2=$lang used=$used system=${system?.localeId ?? "-"} locales=${locales.length} method=$method');
+    } catch (_) {
+      final used = localeId ?? 'system-default';
+      protocolLog.addNote('ASR locale (naming): l2=$lang used=$used');
+    }
     bool isCurrent() => mounted && token == currentTrialToken;
     final trial = currentTrial;
     if (trial == null) return;
@@ -2133,6 +2146,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       namingAttempts: stats.namingAttempts,
       namingCorrect: stats.namingCorrect,
     );
+    if (removedFromNaming) {
+      final byCorrect =
+          stats.namingCorrect > presentationPolicy.config.namingMasteryCorrectThreshold;
+      final byAttempts =
+          stats.namingAttempts > presentationPolicy.config.namingDownFromNamingMaxAttempts;
+      final reason = byCorrect && byAttempts
+          ? 'mastery+max_attempts'
+          : (byCorrect ? 'mastery' : 'max_attempts');
+      protocolLog.addNote(
+          'Naming removal: uuid=$uuid reason=$reason attempts=${stats.namingAttempts} correct=${stats.namingCorrect} threshold_correct>${presentationPolicy.config.namingMasteryCorrectThreshold} threshold_attempts>${presentationPolicy.config.namingDownFromNamingMaxAttempts}');
+    }
     if (removedFromNaming && presentationPolicy.consumeRefillerDirtyFlag()) {
       unawaited(_persistRefillerQueue());
     }
@@ -2665,6 +2689,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           hintRevealedForItem && hintIds.isNotEmpty && hintEntries.isEmpty
               ? 'No hint text found for ids: ${hintIds.join(', ')}'
               : null;
+
+      // Naming UX: don't show L2 text before the audio hint phase starts.
+      // micStage: 0=first recording, 1=hint, 2=repeat, -1=idle/finished.
+      final bool showL2Text = !isNamingView || namingOutcome != null || micStage >= 1;
       body = SessionBody(
         ladder: ladder,
         isNaming: isNamingView,
@@ -2684,9 +2712,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         showHourglass: showHourglass,
         namingInProgress: namingInProgress,
         liveTranscript: _liveTranscript,
-        targetText: trial.target.text,
-        targetPhonetic: showPhonetic ? trial.target.phonetic : null,
-        phoneticButtonVisible: hasPhoneticData,
+        targetText: showL2Text ? trial.target.text : '',
+        targetPhonetic:
+            showL2Text && showPhonetic ? trial.target.phonetic : null,
+        phoneticButtonVisible: showL2Text && hasPhoneticData,
         phoneticOverrideActive: phoneticOverrideActive,
         phoneticOverrideRemaining: phoneticOverrideCount,
         onTogglePhonetic:

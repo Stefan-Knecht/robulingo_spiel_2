@@ -13,10 +13,10 @@ void main() {
 
     final text = log.buildText();
 
-    expect(text, contains('- 水 (mizu): r'));
-    expect(text, contains('- Wasser: f'));
-    expect(text, isNot(contains('- Wasser (vaser): f')));
-    expect(text, contains('- 水 (mizu): "mizu" - 水 (mizu): f'));
+    expect(text, contains('Timeline:'));
+    expect(text, contains('C 水 (mizu): r'));
+    expect(text, contains('C Wasser: f'));
+    expect(text, isNot(contains('Wasser (vaser)')));
+    expect(text, contains('N 水 (mizu): "mizu" - 水 (mizu): f'));
   });
 }
-
