@@ -53,13 +53,19 @@ class _TimelineEntry {
 class PresentationProtocolLog {
   DateTime? _sessionStartLocal;
   String _userId = 'unknown';
+  String _nativeLang = '';
 
   final List<_TimelineEntry> _timeline = <_TimelineEntry>[];
   bool _dirty = false;
 
-  Future<void> startSession(DateTime sessionStartUtc, {String? userId}) async {
+  Future<void> startSession(
+    DateTime sessionStartUtc, {
+    String? userId,
+    String? nativeLang,
+  }) async {
     _sessionStartLocal = sessionStartUtc.toLocal();
     _userId = _sanitizeUserId(userId ?? _userId);
+    _nativeLang = _sanitizeLang(nativeLang ?? _nativeLang);
     _timeline.clear();
     _dirty = true;
   }
@@ -68,6 +74,13 @@ class PresentationProtocolLog {
     final next = _sanitizeUserId(userId ?? 'unknown');
     if (next == _userId) return;
     _userId = next;
+    _dirty = true;
+  }
+
+  void setSessionContext({String? nativeLang}) {
+    final nextNative = _sanitizeLang(nativeLang ?? _nativeLang);
+    if (nextNative == _nativeLang) return;
+    _nativeLang = nextNative;
     _dirty = true;
   }
 
@@ -114,12 +127,19 @@ class PresentationProtocolLog {
     return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
   }
 
+  String _sanitizeLang(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+  }
+
   String _fmt2(int v) => v < 10 ? '0$v' : '$v';
 
-  String _formatHeader(DateTime ts) {
+  String _formatDateLine(DateTime ts) {
     final d = '${_fmt2(ts.day)}.${_fmt2(ts.month)}.${ts.year}';
     final t = '${_fmt2(ts.hour)}:${_fmt2(ts.minute)}:${_fmt2(ts.second)}';
-    return 'Datum: $d; Uhrzeit: $t';
+    final l1 = _nativeLang.isNotEmpty ? _nativeLang : '-';
+    return 'Datum: $d; Uhrzeit: $t; L1: $l1';
   }
 
   String _formatTime(DateTime ts) {
@@ -176,7 +196,9 @@ class PresentationProtocolLog {
   String buildText() {
     final start = _sessionStartLocal ?? DateTime.now();
     final buf = StringBuffer();
-    buf.writeln(_formatHeader(start));
+    final l1 = _nativeLang.isNotEmpty ? _nativeLang : '-';
+    buf.writeln('User ID: $_userId; L1: $l1');
+    buf.writeln(_formatDateLine(start));
     buf.writeln();
     buf.writeln('Timeline:');
     for (final e in _timeline) {
@@ -201,7 +223,10 @@ class PresentationProtocolLog {
       return 'Protokoll ist leer.';
     }
     final content = buildText();
-    final fileName = 'audio_target_matches_json_by_user__$_userId.txt';
+    final start = _sessionStartLocal ?? DateTime.now();
+    final dateStamp =
+        '${start.year}${_fmt2(start.month)}${_fmt2(start.day)}_${_fmt2(start.hour)}${_fmt2(start.minute)}${_fmt2(start.second)}';
+    final fileName = 'protocol_${dateStamp}_$_userId.txt';
 
     if (kIsWeb) {
       await downloadTextFile(filename: fileName, contents: content);
@@ -227,4 +252,3 @@ class PresentationProtocolLog {
     return 'Gespeichert: ${dir.path}/$fileName';
   }
 }
-

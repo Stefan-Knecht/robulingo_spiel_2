@@ -5,7 +5,9 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -776,7 +778,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         _imageVariantCursorByUuid.clear();
       });
       sessionStart = DateTime.now().toUtc();
-      unawaited(protocolLog.startSession(sessionStart!, userId: userId));
+      unawaited(protocolLog.startSession(sessionStart!,
+          userId: userId, nativeLang: nativeLang));
       logger.setSessionContext(
           startKey: activeStartCurriculumKey,
           lang: lang,
@@ -1261,7 +1264,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _liveTranscript = '';
       currentTrialToken = 0;
       sessionStart = DateTime.now().toUtc();
-      unawaited(protocolLog.startSession(sessionStart!, userId: userId));
+      unawaited(protocolLog.startSession(sessionStart!,
+          userId: userId, nativeLang: nativeLang));
       sessionEnded = false;
       nativeSeenCounts.clear();
       curriculumStartOffset = 0;
@@ -1269,6 +1273,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     logger.setSessionContext(
         startKey: resolvedStart, lang: lang, nativeLang: nativeLang);
+    protocolLog.setSessionContext(nativeLang: nativeLang);
     _configureLoggerRemote();
     if (loggerReady) {
       unawaited(logger.startSession(lang: lang));
@@ -2817,6 +2822,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           namingAttempts: itemStats.namingAttempts(),
           namingCorrect: itemStats.namingCorrect(),
           onExitToOpeningPanel: _exitToOpeningPanel,
+          onExitApp: _exitAndClose,
           onExportProtocol: () => protocolLog.export(),
         ),
       ),
@@ -2852,6 +2858,33 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           mode: PresentationMode.comprehension, targetUuid: '');
       pendingNextSlot = null;
     });
+  }
+
+  Future<void> _exitAndClose() async {
+    unawaited(_persistUserCursor());
+    voiceController.cancelActive();
+    unawaited(player.stop());
+    unawaited(hintPlayer.stop());
+    unawaited(fanfarePlayer.stop());
+    unawaited(moveYouPlayer.stop());
+    unawaited(moveRivalPlayer.stop());
+    unawaited(namingBeepPlayer.stop());
+    unawaited(namingBeepPlayer2.stop());
+    if (loggerReady && sessionStart != null && !sessionEnded) {
+      unawaited(logger.endSession());
+    }
+    if (kIsWeb) {
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+        _exitToOpeningPanel();
+      }
+      return;
+    }
+    if (Platform.isAndroid || Platform.isIOS) {
+      SystemNavigator.pop();
+      return;
+    }
+    exit(0);
   }
 
   void _finishSession() {
