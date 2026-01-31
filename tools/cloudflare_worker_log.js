@@ -13,6 +13,12 @@ export default {
       if (path.endsWith('/hints')) {
         return await handleHints(request, env);
       }
+      if (path.endsWith('/start-curriculum')) {
+        return await handleStartCurriculum(request, env);
+      }
+      if (path.endsWith('/file')) {
+        return await handleCurriculumFile(request, env);
+      }
       if (path.endsWith('/log')) {
         return await handleLog(request, env);
       }
@@ -77,6 +83,80 @@ async function handleHints(request, env) {
     'content-type': obj.httpMetadata?.contentType || 'application/json',
   };
   if (etag) headers.etag = etag;
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(obj.body, { status: 200, headers });
+}
+
+// ---------- /start-curriculum ----------
+async function handleStartCurriculum(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  if (!env.CURRICULUM) {
+    return new Response('missing CURRICULUM binding', {
+      status: 500,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key');
+  if (!key) {
+    return new Response('missing key', {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const obj = await env.CURRICULUM.get(key);
+  if (!obj) {
+    return new Response('not found', {
+      status: 404,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const headers = {
+    ...CORS_HEADERS,
+    'cache-control': 'public, max-age=300',
+    'content-type': obj.httpMetadata?.contentType || 'application/json',
+  };
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(obj.body, { status: 200, headers });
+}
+
+// ---------- /file (curriculum bucket) ----------
+async function handleCurriculumFile(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  if (!env.CURRICULUM) {
+    return new Response('missing CURRICULUM binding', {
+      status: 500,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key');
+  if (!key) {
+    return new Response('missing key', {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const obj = await env.CURRICULUM.get(key);
+  if (!obj) {
+    return new Response('not found', {
+      status: 404,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const headers = {
+    ...CORS_HEADERS,
+    'cache-control': 'public, max-age=300',
+    'content-type': obj.httpMetadata?.contentType || 'application/octet-stream',
+  };
   if (request.method === 'HEAD') {
     return new Response(null, { status: 200, headers });
   }

@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
+import '../constants.dart';
 
 class ApiClient {
   static const int _missingMp3PlaceholderLength = 11015;
@@ -119,7 +120,7 @@ class ApiClient {
     bool allowDefaultFallback = true,
   }) async {
     try {
-      final dyn = await loadJsonFile(key);
+      final dyn = await _loadStartCurriculumJsonWithFallback(key);
       if (dyn is Map<String, dynamic>) return dyn;
       // wenn es direkt eine Liste ist, packen wir sie in {entries: ...} damit obiger Code sauber läuft
       if (dyn is List) return <String, dynamic>{'entries': dyn};
@@ -129,6 +130,33 @@ class ApiClient {
       if (allowDefaultFallback) return <String, dynamic>{'entries': []};
       rethrow;
     }
+  }
+
+  Future<dynamic> _loadStartCurriculumJsonWithFallback(String key) async {
+    try {
+      final res = await _http.get(_uri('/start-curriculum', {'key': key}));
+      if (res.statusCode == 200) {
+        return jsonDecode(res.body);
+      }
+    } catch (_) {
+      // ignore and fall back
+    }
+    // Try direct R2 bucket URLs before falling back to /file.
+    final candidates = [
+      Uri.parse('$curriculumBucketVirtualHost/$key'),
+      Uri.parse('$curriculumBucketPathBase/$key'),
+    ];
+    for (final uri in candidates) {
+      try {
+        final res = await _http.get(uri);
+        if (res.statusCode == 200) {
+          return jsonDecode(utf8.decode(res.bodyBytes));
+        }
+      } catch (_) {
+        // ignore and continue
+      }
+    }
+    return await loadJsonFile(key);
   }
 
   /// (alte Schnittstelle) Curriculum nach "lang" laden.

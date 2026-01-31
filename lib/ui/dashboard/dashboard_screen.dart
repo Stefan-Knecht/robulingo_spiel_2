@@ -26,6 +26,7 @@ class DashboardScreen extends StatefulWidget {
   final VoidCallback? onExitToOpeningPanel;
   final VoidCallback? onExitApp;
   final Future<String> Function()? onExportProtocol;
+  final VoidCallback? onReturnToGame;
 
   const DashboardScreen({
     super.key,
@@ -44,6 +45,7 @@ class DashboardScreen extends StatefulWidget {
     this.onExitToOpeningPanel,
     this.onExitApp,
     this.onExportProtocol,
+    this.onReturnToGame,
   });
 
   @override
@@ -180,7 +182,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       color: Colors.green.shade700,
                       weight: 800,
                     ),
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () {
+                      widget.onReturnToGame?.call();
+                      Navigator.of(context).pop();
+                    },
                   ),
                 ),
                 Positioned(

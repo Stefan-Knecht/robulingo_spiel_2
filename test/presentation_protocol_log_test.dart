@@ -6,17 +6,33 @@ void main() {
     final log = PresentationProtocolLog();
     await log.startSession(DateTime.utc(2026, 1, 27, 12, 0, 0), userId: 'u1');
 
-    log.addComprehension(label: '水', phonetic: 'mizu', correct: true);
-    log.addComprehension(label: 'Wasser', phonetic: 'vaser', correct: false);
+    log.addComprehension(
+      label: '水',
+      nativeLabel: 'Water',
+      phonetic: 'mizu',
+      correct: true,
+    );
+    log.addComprehension(
+      label: 'Wasser',
+      nativeLabel: 'Water',
+      phonetic: 'vaser',
+      correct: false,
+    );
 
-    log.addNaming(label: '水', phonetic: 'mizu', heard: 'mizu', correct: false);
+    log.addNaming(
+      label: '水',
+      nativeLabel: 'Water',
+      phonetic: 'mizu',
+      heard: 'mizu',
+      correct: false,
+    );
 
     final text = log.buildText();
 
     expect(text, contains('Timeline:'));
-    expect(text, contains('C 水 (mizu): r'));
-    expect(text, contains('C Wasser: f'));
+    expect(text, contains('C Water / 水 (mizu): r'));
+    expect(text, contains('C Water / Wasser: f'));
     expect(text, isNot(contains('Wasser (vaser)')));
-    expect(text, contains('N 水 (mizu): "mizu" - 水 (mizu): f'));
+    expect(text, contains('N Water / 水 (mizu): "mizu" - Water / 水 (mizu): f'));
   });
 }
