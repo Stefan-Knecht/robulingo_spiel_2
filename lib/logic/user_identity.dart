@@ -46,6 +46,17 @@ class UserIdentity {
     await file.writeAsString(cleaned);
   }
 
+  Future<void> clear() async {
+    if (kIsWeb) {
+      setCookieValue(_cookieName, '', maxAgeDays: 0);
+      return;
+    }
+    final file = await _file();
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+
   Future<File> _file() async {
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/$_fileName');

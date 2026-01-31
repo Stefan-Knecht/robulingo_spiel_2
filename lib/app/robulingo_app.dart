@@ -8,6 +8,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -127,6 +128,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   String? userId;
   ResumeState? resumeState;
   bool resumeStateFallbackEnabled = false;
+  String? _historyHintCache;
   bool awaitingLang = true;
   bool awaitingStart = false;
   bool awaitingNative = false;
@@ -413,6 +415,298 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(protocolLog.setUserId(cleaned));
     _configureLoggerRemote();
     unawaited(_loadResumeStateFallback());
+  }
+
+  String _labelFor(String key, String l1) {
+    const labels = <String, Map<String, String>>{
+      'reload': {
+        'en': 'reload',
+        'de': 'neu laden',
+      },
+      'remove': {
+        'en': 'remove',
+        'de': 'entfernen',
+      },
+    };
+    final normalized = l1.trim().toLowerCase();
+    final map = labels[key];
+    if (map == null) return key;
+    return map[normalized] ?? map['en'] ?? key;
+  }
+
+  Future<String> _loadHistoryHintText(String l1) async {
+    if (_historyHintCache != null) return _historyHintCache!;
+    const fallback =
+        'Copy and store the number of your user history so that you can reload it and do not have to start from the very beginning again if your electronic device loses the history.';
+    final norm = l1.trim().toLowerCase();
+    if (norm.isEmpty) return fallback;
+    final keyTxt = 'history_hint_$norm.txt';
+    final keyJson = 'history_hint_$norm.json';
+    final urls = [
+      '$hintsBucketVirtualHost/$keyTxt',
+      '$hintsBucketPathBase/$keyTxt',
+      '$hintsBucketVirtualHost/$keyJson',
+      '$hintsBucketPathBase/$keyJson',
+    ];
+    for (final url in urls) {
+      try {
+        final res = await http.get(Uri.parse(url));
+        if (res.statusCode != 200 || res.bodyBytes.isEmpty) continue;
+        final body = utf8.decode(res.bodyBytes);
+        if (url.endsWith('.json')) {
+          final data = jsonDecode(body);
+          if (data is Map) {
+            final text =
+                (data['text'] ?? data['hint'] ?? data['message'])?.toString();
+            if (text != null && text.trim().isNotEmpty) {
+              _historyHintCache = text.trim();
+              return _historyHintCache!;
+            }
+          }
+        } else if (body.trim().isNotEmpty) {
+          _historyHintCache = body.trim();
+          return _historyHintCache!;
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+    return fallback;
+  }
+
+  Future<void> _openHistoryPanel() async {
+    final controller = TextEditingController(text: userId ?? '');
+    String status = '';
+    bool loading = false;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final l1 = (nativeLang ??
+                    resumeState?.mostRecentEntry()?.nativeLang ??
+                    'en')
+                .trim()
+                .toLowerCase();
+            final reloadLabel = _labelFor('reload', l1);
+            final removeLabel = _labelFor('remove', l1);
+            final Widget cell2 = IconButton(
+              icon: Icon(
+                Icons.refresh,
+                size: 30,
+                color: Colors.green.shade700,
+                weight: 800,
+              ),
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+            );
+            final Widget cell3 = GestureDetector(
+              onTap: loading
+                  ? null
+                  : () async {
+                      final id = controller.text.trim();
+                      if (id.isEmpty) return;
+                      setDialogState(() {
+                        loading = true;
+                        status = '';
+                      });
+                      final state =
+                          await resumeStateService.fetch(userId: id);
+                      if (!mounted) return;
+                      await userIdentity.save(id);
+                      if (state == null || state.entries.isEmpty) {
+                        setState(() {
+                          userId = id;
+                          resumeState = null;
+                          resumeStateFallbackEnabled = false;
+                        });
+                        unawaited(protocolLog.setUserId(id));
+                        _configureLoggerRemote();
+                        setDialogState(() {
+                          loading = false;
+                          status =
+                              'User ID übernommen (kein Verlauf gefunden).';
+                        });
+                        return;
+                      }
+                      setState(() {
+                        userId = id;
+                        resumeState = state;
+                        resumeStateFallbackEnabled = true;
+                      });
+                      unawaited(protocolLog.setUserId(id));
+                      _configureLoggerRemote();
+                      setDialogState(() {
+                        loading = false;
+                        status = 'User ID aktualisiert.';
+                      });
+                    },
+              child: Column(
+                children: [
+                  Image.asset(
+                    'assets/icons/reload.webp',
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.contain,
+                  ),
+                ],
+              ),
+            );
+            final Widget cell4 = GestureDetector(
+              onTap: loading
+                  ? null
+                  : () async {
+                      final confirmed = await showDialog<bool>(
+                        context: ctx,
+                        builder: (confirmCtx) {
+                          return AlertDialog(
+                            title: const Text('Are you sure?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(confirmCtx).pop(false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(confirmCtx).pop(true),
+                                child: const Text('Remove'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                      if (confirmed != true) return;
+                      await userIdentity.clear();
+                      if (!mounted) return;
+                      setState(() {
+                        userId = null;
+                        resumeState = null;
+                        resumeStateFallbackEnabled = false;
+                      });
+                      unawaited(protocolLog.setUserId(null));
+                      await onboardingStore.clear();
+                      await sessionCacheStore.clear();
+                      if (!mounted) return;
+                      setDialogState(() {
+                        status = 'User ID entfernt.';
+                      });
+                      _exitToOpeningPanel();
+                      Navigator.of(dialogCtx).pop();
+                    },
+              child: Column(
+                children: [
+                  Image.asset(
+                    'assets/icons/remove.webp',
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.contain,
+                  ),
+                ],
+              ),
+            );
+            final Widget cell5 = GestureDetector(
+              onTap: loading
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        loading = true;
+                        status = '';
+                      });
+                      final text = await _loadHistoryHintText(l1);
+                      if (!mounted) return;
+                      setDialogState(() {
+                        loading = false;
+                      });
+                      if (!ctx.mounted) return;
+                      showDialog<void>(
+                        context: ctx,
+                        builder: (hintCtx) => AlertDialog(
+                          content: Text(text),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(hintCtx).pop(),
+                              child: const Text('OK'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+              child: Image.asset(
+                'assets/icons/Magnifying_glass.webp',
+                width: 36,
+                height: 36,
+                fit: BoxFit.contain,
+              ),
+            );
+            final Widget cell6 = Center(child: Text(reloadLabel));
+            final Widget cell7 = Center(child: Text(removeLabel));
+            final Widget cell8 = const SizedBox.shrink();
+            return Dialog(
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 4,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'User History',
+                                style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: controller,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(flex: 1, child: Center(child: cell2)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(flex: 2, child: Center(child: cell3)),
+                        Expanded(flex: 2, child: Center(child: cell4)),
+                        Expanded(flex: 1, child: Center(child: cell5)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(flex: 2, child: cell6),
+                        Expanded(flex: 2, child: cell7),
+                        Expanded(flex: 1, child: Center(child: cell8)),
+                      ],
+                    ),
+                    if (status.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(status, style: const TextStyle(fontSize: 12)),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _loadSavedOnboarding() async {
@@ -2620,8 +2914,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       body: SafeArea(
         child: LangSelector(
           onSelect: _onSelectLang,
-          showUserIdRecovery: kIsWeb,
-          onRecoverUserId: kIsWeb ? _applyRecoveredUserId : null,
+          showHistoryButton: true,
+          onOpenHistory: _openHistoryPanel,
         ),
       ),
     );
