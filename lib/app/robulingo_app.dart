@@ -105,6 +105,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   late UserCurriculumService userCurriculumService;
   late HintsService hintsService;
   String workerHost = defaultWorkerHost;
+  String fileHost = defaultFileHost;
   String apiPrefix = defaultApiPrefix;
   final AudioPlayer player = AudioPlayer();
   final AudioPlayer hintPlayer = AudioPlayer();
@@ -301,7 +302,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       onMove: _handleLadderMove,
       accuracyProvider: () => lastTenResults,
     );
-    api = ApiClient(workerHost: workerHost, apiPrefix: apiPrefix);
+    api = ApiClient(
+      workerHost: workerHost,
+      fileHost: fileHost,
+      apiPrefix: apiPrefix,
+    );
     pickManifestService = PickManifestService(api: api);
     userCurriculumService =
         UserCurriculumService(workerHost: workerHost, apiPrefix: apiPrefix);
@@ -914,7 +919,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       setState(() {
         workerHost = newHost;
         apiPrefix = normalizedPrefix;
-        api = ApiClient(workerHost: workerHost, apiPrefix: apiPrefix);
+        api = ApiClient(
+          workerHost: workerHost,
+          fileHost: fileHost,
+          apiPrefix: apiPrefix,
+        );
         pickManifestService = PickManifestService(api: api);
         userCurriculumService =
             UserCurriculumService(workerHost: workerHost, apiPrefix: apiPrefix);

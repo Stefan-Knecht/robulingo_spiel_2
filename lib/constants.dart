@@ -5,6 +5,8 @@
 // Tücken: Änderungen hier wirken überall – bei Worker-Umzug oder Track-Länge auch Logik prüfen.
 // ------------------------------------------------------------
 const String defaultWorkerHost = 'robulingo-api.knechtipad-aec.workers.dev';
+// Item-/Asset-Worker (JSON/WEBP/MP3).
+const String defaultFileHost = 'robulingo-worker.knechtipad-aec.workers.dev';
 const String defaultApiPrefix = '/api';
 // R2-Bucket (Cloudflare) – virtueller Host und Pfadvariante, beide probieren
 const String curriculumBucketVirtualHost =

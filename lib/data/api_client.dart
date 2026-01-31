@@ -33,21 +33,29 @@ class ApiClient {
   ];
 
   final String workerHost; // z.B. robulingo-api.knechtipad-aec.workers.dev
+  final String fileHost; // z.B. robulingo-worker.knechtipad-aec.workers.dev
   final String apiPrefix; // z.B. /api
   final http.Client _http;
 
   ApiClient({
     required this.workerHost,
+    String? fileHost,
     this.apiPrefix = '/api',
     http.Client? httpClient,
-  }) : _http = httpClient ?? http.Client();
+  })  : fileHost = fileHost ?? workerHost,
+        _http = httpClient ?? http.Client();
 
-  Uri _uri(String path, [Map<String, String>? query]) {
+  Uri _uriForHost(String host, String path, [Map<String, String>? query]) {
     // apiPrefix kann "/api" oder "api" sein
     final pfx = apiPrefix.startsWith('/') ? apiPrefix : '/$apiPrefix';
     final p = path.startsWith('/') ? path : '/$path';
-    return Uri.https(workerHost, '$pfx$p', query);
+    return Uri.https(host, '$pfx$p', query);
   }
+
+  Uri _uri(String path, [Map<String, String>? query]) =>
+      _uriForHost(workerHost, path, query);
+
+  Uri _fileUri(String key) => _uriForHost(fileHost, '/file', {'key': key});
 
   /// (alte Schnittstelle) beliebige Textdatei laden
   Future<String> loadTextFile(String key) async {
@@ -57,6 +65,20 @@ class ApiClient {
           statusCode: res.statusCode, body: res.body);
     }
     return res.body;
+  }
+
+  Future<String> _loadTextFileFromHost(String host, String key) async {
+    final res = await _http.get(_uriForHost(host, '/file', {'key': key}));
+    if (res.statusCode != 200) {
+      throw ApiException('loadTextFile failed',
+          statusCode: res.statusCode, body: res.body);
+    }
+    return res.body;
+  }
+
+  Future<dynamic> _loadJsonFileFromHost(String host, String key) async {
+    final raw = await _loadTextFileFromHost(host, key);
+    return jsonDecode(raw);
   }
 
   /// (alte Schnittstelle) JSON laden
@@ -146,7 +168,7 @@ class ApiClient {
 
   /// Download binary file (image/audio).
   Future<Uint8List> loadBinaryFile(String key) async {
-    final res = await _http.get(_uri('/file', {'key': key}));
+    final res = await _http.get(_fileUri(key));
     if (res.statusCode != 200) {
       throw ApiException('loadBinaryFile failed', statusCode: res.statusCode);
     }
@@ -154,7 +176,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> _fetchItemMeta(String uuid) async {
-    final dyn = await loadJsonFile('$uuid.json');
+    final dyn = await _loadJsonFileFromHost(fileHost, '$uuid.json');
     if (dyn is! Map<String, dynamic>) {
       throw ApiException('Unexpected item JSON');
     }
@@ -194,7 +216,7 @@ class ApiClient {
       throw ApiException('Audio missing ${entry.uuid} lang=$lang');
     }
     final audioVariants =
-        audioKeys.map((k) => _uri('/file', {'key': k})).toList(growable: false);
+        audioKeys.map((k) => _fileUri(k)).toList(growable: false);
     final audioUri = audioVariants.first;
 
     final String? phonetic = _phoneticForLang(meta, lang);
@@ -267,7 +289,7 @@ class ApiClient {
     final keys = _audioKeysForLang(manifest, lang);
     if (keys.isEmpty) return false;
     for (final key in keys) {
-      if (await audioUrlOk(_uri('/file', {'key': key}))) return true;
+      if (await audioUrlOk(_fileUri(key))) return true;
     }
     return false;
   }
