@@ -10,10 +10,37 @@ import 'package:flutter/material.dart';
 
 import '../constants.dart';
 
-class LangSelector extends StatelessWidget {
-  const LangSelector({super.key, required this.onSelect});
+class LangSelector extends StatefulWidget {
+  const LangSelector({
+    super.key,
+    required this.onSelect,
+    this.showUserIdRecovery = false,
+    this.onRecoverUserId,
+  });
 
   final void Function(String lang) onSelect;
+  final bool showUserIdRecovery;
+  final void Function(String userId)? onRecoverUserId;
+
+  @override
+  State<LangSelector> createState() => _LangSelectorState();
+}
+
+class _LangSelectorState extends State<LangSelector> {
+  final TextEditingController _userIdController = TextEditingController();
+
+  @override
+  void dispose() {
+    _userIdController.dispose();
+    super.dispose();
+  }
+
+  void _submitUserId() {
+    final raw = _userIdController.text.trim();
+    if (raw.isEmpty) return;
+    widget.onRecoverUserId?.call(raw);
+    _userIdController.clear();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -25,6 +52,38 @@ class LangSelector extends StatelessWidget {
         isLandscape ? min(84.0, size.height * 0.2) : 96.0;
     final double flagFontSize = tileSize * 0.48;
     final double spacing = isLandscape ? 16.0 : 24.0;
+    final Widget recoveryPanel = widget.showUserIdRecovery
+        ? Padding(
+            padding: const EdgeInsets.only(top: 16.0),
+            child: Column(
+              children: [
+                const Text(
+                  'User ID wiederherstellen',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: isLandscape ? 320 : double.infinity,
+                  child: TextField(
+                    controller: _userIdController,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: 'User ID eingeben',
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _submitUserId(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed:
+                      widget.onRecoverUserId == null ? null : _submitUserId,
+                  child: const Text('User ID verwenden'),
+                ),
+              ],
+            ),
+          )
+        : const SizedBox.shrink();
     return Padding(
       padding: EdgeInsets.symmetric(vertical: isLandscape ? 16 : 32, horizontal: 24),
       child: isLandscape
@@ -51,7 +110,7 @@ class LangSelector extends StatelessWidget {
                         children: langChoices
                             .map(
                               (l) => GestureDetector(
-                                onTap: () => onSelect(l),
+                                onTap: () => widget.onSelect(l),
                                 child: Container(
                                   width: tileSize,
                                   height: tileSize,
@@ -77,6 +136,15 @@ class LangSelector extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (widget.showUserIdRecovery) ...[
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: 240,
+                    child: SingleChildScrollView(
+                      child: recoveryPanel,
+                    ),
+                  ),
+                ],
               ],
             )
           : Column(
@@ -97,7 +165,7 @@ class LangSelector extends StatelessWidget {
                       children: langChoices
                           .map(
                             (l) => GestureDetector(
-                              onTap: () => onSelect(l),
+                              onTap: () => widget.onSelect(l),
                               child: Container(
                                 width: tileSize,
                                 height: tileSize,
@@ -122,6 +190,7 @@ class LangSelector extends StatelessWidget {
                     ),
                   ),
                 ),
+                recoveryPanel,
               ],
             ),
     );

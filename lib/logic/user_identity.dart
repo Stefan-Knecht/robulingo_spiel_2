@@ -6,13 +6,25 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+
+import '../util/web_cookies_stub.dart'
+    if (dart.library.html) '../util/web_cookies.dart';
 
 /// Erzeugt/liest eine stabile pseudonyme User-ID, die auf dem Gerät persistiert.
 class UserIdentity {
   static const _fileName = 'user_id.txt';
+  static const _cookieName = 'robulingo_user_id';
 
   Future<String> loadOrCreate() async {
+    if (kIsWeb) {
+      final existing = (getCookieValue(_cookieName) ?? '').trim();
+      if (existing.isNotEmpty) return existing;
+      final id = _generateId();
+      setCookieValue(_cookieName, id, maxAgeDays: 3650);
+      return id;
+    }
     final file = await _file();
     if (await file.exists()) {
       final existing = (await file.readAsString()).trim();
@@ -21,6 +33,17 @@ class UserIdentity {
     final id = _generateId();
     await file.writeAsString(id);
     return id;
+  }
+
+  Future<void> save(String id) async {
+    final cleaned = id.trim();
+    if (cleaned.isEmpty) return;
+    if (kIsWeb) {
+      setCookieValue(_cookieName, cleaned, maxAgeDays: 3650);
+      return;
+    }
+    final file = await _file();
+    await file.writeAsString(cleaned);
   }
 
   Future<File> _file() async {

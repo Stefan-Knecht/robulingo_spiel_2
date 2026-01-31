@@ -19,6 +19,9 @@ export default {
       if (path.endsWith('/audio-target-matches')) {
         return await handleAudioTargetMatches(request, env);
       }
+      if (path.endsWith('/resume-state')) {
+        return await handleResumeState(request, env);
+      }
       if (path.endsWith('/user-curriculum')) {
         return await handleCurriculum(request, env);
       }
@@ -199,4 +202,35 @@ async function handleCurriculum(request, env) {
   }
 
   return new Response('method not allowed', { status: 405 });
+}
+
+// ---------- /resume-state ----------
+async function handleResumeState(request, env) {
+  const uid = request.headers.get('x-user-id');
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400 });
+  }
+  const bucket = env.USERDATA;
+  const key = `${uid}/resume_state.json`;
+
+  if (request.method === 'GET') {
+    const obj = await bucket.get(key);
+    if (!obj) return new Response('not found', { status: 404, headers: CORS_HEADERS });
+    return new Response(obj.body, {
+      status: 200,
+      headers: { ...CORS_HEADERS, 'content-type': 'application/json' },
+    });
+  }
+
+  if (request.method === 'POST') {
+    const body = await request.json().catch(() => null);
+    if (!body) {
+      return new Response('invalid body', { status: 400, headers: CORS_HEADERS });
+    }
+    const payload = JSON.stringify(body);
+    await bucket.put(key, payload, { httpMetadata: { contentType: 'application/json' } });
+    return new Response('saved', { status: 200, headers: CORS_HEADERS });
+  }
+
+  return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
 }
