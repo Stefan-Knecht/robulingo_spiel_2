@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
@@ -9,7 +8,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:robulingo_flutter/constants.dart';
@@ -26,6 +24,7 @@ import 'package:robulingo_flutter/logic/item_stats.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/logic/ladder_controller.dart'
     show MoveEvent, MoveKind;
+import 'package:robulingo_flutter/logic/log_storage.dart';
 import 'package:robulingo_flutter/logic/naming_controller.dart';
 import 'package:robulingo_flutter/logic/onboarding_store.dart';
 import 'package:robulingo_flutter/logic/app_exit.dart';
@@ -156,6 +155,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   late NamingController namingController;
   final VoiceState voiceState = VoiceState();
   late VoiceController voiceController;
+  bool micGateActive = false;
 
   bool get micReady => voiceState.micReady;
   set micReady(bool value) => voiceState.micReady = value;
@@ -372,6 +372,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       setState(() {
         userId = id;
       });
+      if (!enableRemoteUserDelta) {
+        unawaited(userDeltaStore.delete(id));
+      }
       unawaited(protocolLog.setUserId(id));
       _configureLoggerRemote();
       if (showRestartSplash) {
@@ -385,6 +388,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   void _configureLoggerRemote() {
     if (!loggerReady) return;
+    if (!enableRemoteLogUpload) return;
     if (userId == null || userId!.isEmpty) return;
     logger.configureRemote(
       userId: userId!,
@@ -495,6 +499,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final cache = await sessionCacheStore.load();
     if (cache != null) return;
     if (!mounted) return;
+    final fallbackWinsYou = latest.winsYou ?? 0;
+    final fallbackWinsRival = latest.winsRival ?? 0;
     setState(() {
       lang = latest.lang;
       nativeLang = latest.nativeLang;
@@ -507,7 +513,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       error = null;
     });
     unawaited(_loadHintPack());
-    ladderController.setWins(you: 0, rival: 0);
+    ladderController.setWins(you: fallbackWinsYou, rival: fallbackWinsRival);
+    _saveOnboardingSnapshot(startKey: latest.startKey);
     await _loadLastSessionWins();
     unawaited(_updateRestartModuleProgress());
   }
@@ -600,12 +607,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await onboardingStore.clear();
     await sessionCacheStore.clear();
     if (userId != null && userId!.isNotEmpty) {
-      final resetDelta = UserCurriculumDelta(cursor: -1);
-      unawaited(userDeltaStore.save(userId!, resetDelta));
-      unawaited(userCurriculumService.pushDelta(
-          userId: userId!,
-          startKey: activeStartCurriculumKey ?? defaultStartCurriculum,
-          delta: resetDelta));
+      if (enableRemoteUserDelta) {
+        final resetDelta = UserCurriculumDelta(cursor: -1);
+        unawaited(userDeltaStore.save(userId!, resetDelta));
+        unawaited(userCurriculumService.pushDelta(
+            userId: userId!,
+            startKey: activeStartCurriculumKey ?? defaultStartCurriculum,
+            delta: resetDelta));
+      } else {
+        unawaited(userDeltaStore.delete(userId!));
+      }
     }
     setState(() {
       awaitingLang = true;
@@ -677,6 +688,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final entry = resumeStateController.entryForStartKey(startKey);
       if (entry != null && entry.cursor >= 0) return entry.cursor;
     }
+    if (!enableRemoteUserDelta) {
+      return null;
+    }
     final delta = userDelta ??
         (userId != null && userId!.isNotEmpty
             ? await userDeltaStore.load(userId!)
@@ -710,12 +724,15 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         fallbackCursorIndex ??
         0;
 
-    final startIndex = max(0, cursorIndex - 9);
+    final startIndex = max(0, cursorIndex - 5);
     presentationPolicy.initializeComprehensionBlock(
       curriculumUuids: curriculumUuids,
       startIndex: startIndex,
       refillerQueue: refiller.queue,
     );
+    final int idxInBlock = (cursorIndex - startIndex)
+        .clamp(0, max(0, presentationPolicy.comprehensionBlockUuids.length - 1));
+    presentationPolicy.setComprehensionIndex(idxInBlock);
 
     final slot = presentationPolicy.currentSlot;
     if (slot.targetUuid.isEmpty) return;
@@ -849,10 +866,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _loadLastSessionWins() async {
     if (sessionStart != null) return; // already in a live session
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/logs/events.ndjson');
-      if (!await file.exists()) return;
-      final lines = await file.readAsLines();
+      final storage = LogStorage();
+      final lines = await storage.readLines();
+      if (lines.isEmpty) return;
       final Map<String, _SessionWinSnapshot> sessions = {};
       for (final line in lines) {
         if (line.trim().isEmpty) continue;
@@ -897,12 +913,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final data = await TrainingCalendarLoader.load(
         thresholdMinutes: 5,
         idleCapSeconds: 20,
+        fallbackDatesUtc: _resumeFallbackDatesUtc(),
       );
       final idleDays = data.idleDaysSince(DateTime.now().toUtc());
       ladderController.setRivalIdleDays(idleDays);
     } catch (_) {
       // ignore log errors
     }
+  }
+
+  List<DateTime>? _resumeFallbackDatesUtc() {
+    final entries = resumeStateController.state?.entries;
+    if (entries == null || entries.isEmpty) return null;
+    return entries.map((e) => e.date).toList(growable: false);
   }
 
   Future<void> _openSettings() async {
@@ -1413,6 +1436,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _maybeApplyUserCurriculumDelta(String startKey) async {
+    if (!enableRemoteUserDelta) {
+      userDelta = null;
+      curriculumStartOffset = _offsetAfterResumeCursor(startKey);
+      resetCursorOnNextLoad = false;
+      return;
+    }
     if (userId == null || userId!.isEmpty) {
       userDelta = null;
       curriculumStartOffset = 0;
@@ -1441,6 +1470,20 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     } else {
       curriculumStartOffset = 0;
     }
+  }
+
+  int _offsetAfterResumeCursor(String startKey) {
+    if (curriculum.isEmpty) return 0;
+    final cursor = resumeStateController.cursorForStartKey(
+      startKey: startKey,
+      lang: lang,
+      nativeLang: nativeLang,
+    );
+    if (cursor == null) return 0;
+    final cursorPos = cursor.clamp(-1, curriculum.length - 1);
+    final next = cursorPos + 1;
+    if (next >= curriculum.length) return 0;
+    return next;
   }
 
   Future<void> _loadSeeds() async {
@@ -1498,6 +1541,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (cursor < 0) return;
     protocolLog.addNote(
         'Cursor: startKey=$startKey cursor=$cursor uuid=$uuid');
+    if (!enableRemoteUserDelta) return;
     final nextDelta = (userDelta ?? UserCurriculumDelta()).withCursor(cursor);
     userDelta = nextDelta;
     unawaited(userDeltaStore.save(userId!, nextDelta));
@@ -1542,6 +1586,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       nativeLang: nativeLang,
       cursor: cursor,
       date: DateTime.now().toUtc(),
+      winsYou: ladder.winsYou,
+      winsRival: ladder.winsRival,
     );
     await resumeStateController.pushEntry(userId: uid, entry: entry);
   }
@@ -1721,6 +1767,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       currentTrial = trial;
     });
+    if (trial != null && loggerReady) {
+      unawaited(logger.log('trial_presented', {
+        'mode': slot.mode == PresentationMode.naming ? 'naming' : 'comprehension',
+        'uuid': trial.target.uuid,
+        'distractor_uuid': trial.distractor.uuid,
+        'target_on_left': trial.targetOnLeft,
+        'trial_index': trialIndex,
+        'is_refiller': presentationPolicy.isCurrentSlotFromRefiller,
+        'is_review': trial.isReview,
+      }));
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startTrial(token);
     });
@@ -2358,6 +2415,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (micGateGranted) return false;
     if (micGateToken == token) return false;
     micGateToken = token;
+    micGateActive = true;
     debugPrint(
         '[naming][gate-open] token=$token trialIdx=$trialIndex block=$namingBlockRemaining');
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2374,8 +2432,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         ),
       )
           .then((result) {
-        if (!mounted || token != currentTrialToken) return;
+        if (!mounted || token != currentTrialToken) {
+          micGateActive = false;
+          return;
+        }
         micGateToken = -1;
+        micGateActive = false;
         if (result == 'allow') {
           micGateGranted = true;
           micPrimed = true;
@@ -2495,6 +2557,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
+      if (micGateActive) {
+        Navigator.of(context).pop('allow');
+        return true;
+      }
       if (showRestartSplash) {
         unawaited(_startFromSplash());
         return true;
@@ -2632,6 +2698,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           onRestart: () => _restartOnboarding(),
           onStart: _startFromSplash,
           moduleProgress: restartModuleProgress,
+          fallbackDatesUtc: _resumeFallbackDatesUtc(),
         ),
       );
     }
@@ -2715,12 +2782,15 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           : trial.targetImageBytes;
       final size = MediaQuery.of(context).size;
       final bool isLandscape = size.width > size.height;
-      final double imageHeight = isLandscape
-          ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
-          : min(size.height * 0.38, 320.0);
       final bool isNamingTrial = _isNamingTrial();
       final bool isNamingView =
           isNamingTrial || namingInProgress || namingOutcome != null;
+      final double baseImageHeight = isLandscape
+          ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
+          : min(size.height * 0.38, 320.0);
+      final double imageHeight = kIsWeb && isNamingView
+          ? baseImageHeight * 0.75
+          : baseImageHeight;
       final bool showDashboardButton =
           ladder.hasFlagAppeared || ladder.winsYou > 0 || ladder.winsRival > 0;
       final bool showHourglass = namingInProgress || batchLoading || loading;

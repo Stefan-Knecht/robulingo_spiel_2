@@ -18,8 +18,11 @@ cd tools/worker
 wrangler deploy
 ```
 
-After deploy, the app will POST:
+After deploy, the app will POST (per-session logs):
 
-- `POST https://<workerHost><apiPrefix>/log` → `userdata/<userId>/log.ndjson.gz`
-- `POST https://<workerHost><apiPrefix>/audio-target-matches` → `userdata/<userId>/audio_target_matches.ndjson.gz`
+- `POST https://<workerHost><apiPrefix>/log` → `userdata/<userId>/runs/<sessionId>.ndjson.gz`
+- `POST https://<workerHost><apiPrefix>/audio-target-matches` → `userdata/<userId>/audio_target_matches/<sessionId>.ndjson.gz`
 
+These endpoints require headers:
+- `x-user-id`
+- `x-session-id`

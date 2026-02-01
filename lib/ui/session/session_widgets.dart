@@ -6,6 +6,7 @@
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:robulingo_flutter/data/hint_models.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
@@ -59,6 +60,7 @@ class RestartSplash extends StatefulWidget {
     required this.onRestart,
     required this.onStart,
     required this.moduleProgress,
+    this.fallbackDatesUtc,
   });
 
   final int wins;
@@ -67,6 +69,7 @@ class RestartSplash extends StatefulWidget {
   final VoidCallback onRestart;
   final VoidCallback onStart;
   final RestartModuleProgress moduleProgress;
+  final List<DateTime>? fallbackDatesUtc;
 
   @override
   State<RestartSplash> createState() => _RestartSplashState();
@@ -107,7 +110,9 @@ class _RestartSplashState extends State<RestartSplash> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: TrainingCalendarPanel(),
+                child: TrainingCalendarPanel(
+                  fallbackDatesUtc: widget.fallbackDatesUtc,
+                ),
               ),
             ),
             Padding(
@@ -263,6 +268,14 @@ class NamingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool isWeb = kIsWeb;
+    final double gapAfterStatus = isWeb ? 2 : 8;
+    final double gapHourglass = isWeb ? 2 : 6;
+    final double gapButton = isWeb ? 4 : 8;
+    final double gapSettings = isWeb ? 2 : 6;
+    final double gapTranscript = isWeb ? 2 : 4;
+    final double cardMargin = isWeb ? 4 : 8;
+    final double cardPadding = isWeb ? 8 : 12;
     final bool isCorrect = namingOutcome == true;
     final Color borderColor = namingOutcome == null
         ? Colors.grey.shade400
@@ -342,15 +355,15 @@ class NamingView extends StatelessWidget {
               tooltip: 'Benennen verschieben',
               onPressed: namingInProgress ? null : onPostpone,
               icon: const ImageIcon(
-                AssetImage('assets/icons/postpone.webp'),
+                AssetImage('assets/icons/mic_delay.webp'),
                 size: 28,
               ),
             ),
           ),
         AnimatedContainer(
           duration: const Duration(milliseconds: 250),
-          margin: const EdgeInsets.all(8),
-          padding: const EdgeInsets.all(12),
+          margin: EdgeInsets.all(cardMargin),
+          padding: EdgeInsets.all(cardPadding),
           decoration: BoxDecoration(
             color: cardFill,
             border: Border.all(
@@ -413,7 +426,7 @@ class NamingView extends StatelessWidget {
           ),
         ),
         if (statusText.isNotEmpty || showRepeatIcon) ...[
-          const SizedBox(height: 8),
+          SizedBox(height: gapAfterStatus),
           if (showRepeatIcon)
             const CircleAvatar(
               radius: 16,
@@ -423,14 +436,14 @@ class NamingView extends StatelessWidget {
           else
             Text(statusText, style: const TextStyle(fontSize: 14)),
         ],
-        if (showHourglass)
+        if (showHourglass && !isWeb)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: EdgeInsets.only(top: gapHourglass),
             child: Icon(Icons.hourglass_top,
                 size: 18, color: Colors.grey.shade700),
           ),
         Padding(
-          padding: const EdgeInsets.only(top: 8),
+          padding: EdgeInsets.only(top: gapButton),
           child: ElevatedButton.icon(
             onPressed: namingInProgress ? null : onStartNaming,
             icon: const Icon(Icons.mic),
@@ -439,7 +452,7 @@ class NamingView extends StatelessWidget {
         ),
         if (micDenied || namingHold)
           Padding(
-            padding: const EdgeInsets.only(top: 8),
+            padding: EdgeInsets.only(top: gapButton),
             child: OutlinedButton.icon(
               onPressed: () => onSkip('mic-denied'),
               icon: const Icon(Icons.arrow_forward),
@@ -448,7 +461,7 @@ class NamingView extends StatelessWidget {
           ),
         if (micDenied || micPermanentlyDenied || speechPermanentlyDenied)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: EdgeInsets.only(top: gapSettings),
             child: OutlinedButton.icon(
               onPressed: onOpenSettings,
               icon: const Icon(Icons.settings),
@@ -457,12 +470,15 @@ class NamingView extends StatelessWidget {
           ),
         IconButton(
           onPressed: () => onSkip('user-skip'),
+          padding: isWeb ? EdgeInsets.zero : null,
+          constraints:
+              isWeb ? const BoxConstraints(minWidth: 32, minHeight: 32) : null,
           icon: const Icon(Icons.refresh,
               color: Colors.red, size: 28, opticalSize: 28),
           tooltip: 'Überspringen',
         ),
         if (showTranscript) ...[
-          const SizedBox(height: 4),
+          SizedBox(height: gapTranscript),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -767,15 +783,21 @@ class SessionBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool isWeb = kIsWeb;
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
+    final double panelGap = isWeb ? 4 : 12;
+    final double infoPanelVerticalPadding = isWeb ? 8 : 14;
+    final double trackTopPadding = isWeb ? 2 : 8;
     final double bottomBarHeight = namingInProgress ? 48.0 : 0.0;
     final double verticalInsets =
         MediaQuery.of(context).padding.vertical + 32 + bottomBarHeight;
     final double availableHeight = size.height - verticalInsets;
 
-    final trackWidget = Padding(
-      padding: const EdgeInsets.only(top: 8),
+    final bool shrinkHexaWeb = kIsWeb && isNaming;
+    final double namingHexaScale = shrinkHexaWeb ? 0.7 : 1.0;
+    final baseTrackWidget = Padding(
+      padding: EdgeInsets.only(top: trackTopPadding),
       child: HexagonTrack(
         youIndex: ladder.youIndex,
         rivalIndex: ladder.rivalIndex,
@@ -787,8 +809,26 @@ class SessionBody extends StatelessWidget {
         rivalFlagShowIndex: ladder.rivalFlagShowIndex,
         youTrail: ladder.youTrail,
         rivalTrail: ladder.rivalTrail,
+        uiScale: namingHexaScale,
+        centerGrid: shrinkHexaWeb,
       ),
     );
+    final Widget trackWidget = shrinkHexaWeb
+        ? LayoutBuilder(
+            builder: (context, constraints) {
+              final double maxWidth = constraints.maxWidth.isFinite
+                  ? constraints.maxWidth
+                  : size.width;
+              return Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(
+                  width: maxWidth * 0.7,
+                  child: baseTrackWidget,
+                ),
+              );
+            },
+          )
+        : baseTrackWidget;
 
     final trialWidget = isNaming
         ? NamingView(
@@ -829,7 +869,7 @@ class SessionBody extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (isLandscape) const SizedBox(height: 4),
+        if (isLandscape) SizedBox(height: isWeb ? 2 : 4),
         trialWidget,
         //const SizedBox(height: 32),
         Stack(
@@ -837,7 +877,8 @@ class SessionBody extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding: EdgeInsets.symmetric(
+                    horizontal: 16, vertical: infoPanelVerticalPadding),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     begin: Alignment.topLeft,
@@ -858,26 +899,95 @@ class SessionBody extends StatelessWidget {
                   if (targetText.trim().isNotEmpty ||
                       (targetPhonetic != null &&
                           targetPhonetic!.trim().isNotEmpty))
-                    Text.rich(
-                      TextSpan(
-                        text: targetText,
-                        children: [
-                          if (targetPhonetic != null &&
-                              targetPhonetic!.isNotEmpty)
-                            TextSpan(
-                              text: '  ${targetPhonetic!}',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontStyle: FontStyle.italic,
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 2,
+                      children: [
+                        if (isWeb && hasPostponedNamingBlocks && !isNaming)
+                          Tooltip(
+                            message: 'Benennen',
+                            child: IconButton(
+                              onPressed: onReactivateNamingBlocks,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                  minWidth: 26, minHeight: 26),
+                              icon: const ImageIcon(
+                                AssetImage('assets/icons/mic_restart.webp'),
+                                size: 18,
                                 color: Colors.blue,
-                                fontWeight: FontWeight.w500,
                               ),
                             ),
-                        ],
-                      ),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          fontSize: 26, fontWeight: FontWeight.bold),
+                          ),
+                        if (isWeb && phoneticButtonVisible)
+                          Tooltip(
+                            message: 'Phonetic',
+                            child: IconButton(
+                              onPressed: onTogglePhonetic,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                  minWidth: 26, minHeight: 26),
+                              icon: ImageIcon(
+                                const AssetImage('assets/icons/phonetic.webp'),
+                                size: 18,
+                                color: phoneticOverrideActive
+                                    ? Colors.blue
+                                    : Colors.grey[700],
+                              ),
+                            ),
+                          ),
+                        if (isWeb && audioHintEnabled)
+                          Tooltip(
+                            message: 'Audio hint',
+                            child: IconButton(
+                              onPressed: onPlayAudioHint,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                  minWidth: 26, minHeight: 26),
+                              icon: const Icon(Icons.volume_up, size: 18),
+                            ),
+                          ),
+                        if (isWeb && hintButtonVisible)
+                          Tooltip(
+                            message: hintLabel,
+                            child: IconButton(
+                              onPressed: onToggleHints,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                  minWidth: 26, minHeight: 26),
+                              icon: ImageIcon(
+                                const AssetImage(
+                                    'assets/icons/Magnifying_glass.webp'),
+                                size: 18,
+                                color: hintButtonActive
+                                    ? const Color(0xFF8A6B12)
+                                    : Colors.grey[800],
+                              ),
+                            ),
+                          ),
+                        Text.rich(
+                          TextSpan(
+                            text: targetText,
+                            children: [
+                              if (targetPhonetic != null &&
+                                  targetPhonetic!.isNotEmpty)
+                                TextSpan(
+                                  text: '  ${targetPhonetic!}',
+                                  style: const TextStyle(
+                                    fontSize: 20,
+                                    fontStyle: FontStyle.italic,
+                                    color: Colors.blue,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 26, fontWeight: FontWeight.bold),
+                        ),
+                      ],
                     ),
                   if (showNative &&
                       nativeText != null &&
@@ -892,10 +1002,11 @@ class SessionBody extends StatelessWidget {
                           color: Colors.green),
                     ),
                   ],
-                  if (phoneticButtonVisible ||
-                      audioHintEnabled ||
-                      hintButtonVisible ||
-                      hasPostponedNamingBlocks) ...[
+                  if (!isWeb &&
+                      (phoneticButtonVisible ||
+                          audioHintEnabled ||
+                          hintButtonVisible ||
+                          hasPostponedNamingBlocks)) ...[
                     const SizedBox(height: 10),
                     Wrap(
                       spacing: 10,
@@ -917,7 +1028,7 @@ class SessionBody extends StatelessWidget {
                               ),
                               onPressed: onReactivateNamingBlocks,
                               child: const ImageIcon(
-                                AssetImage('assets/icons/antepone.webp'),
+                                AssetImage('assets/icons/mic_restart.webp'),
                                 size: 20,
                                 color: Colors.blue,
                               ),
@@ -1024,7 +1135,7 @@ class SessionBody extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: panelGap),
         Column(
           children: [
             DashboardButtonRow(
@@ -1054,29 +1165,41 @@ class SessionBody extends StatelessWidget {
         ),
       );
     } else {
-      final double trialHeight = imageHeight + 24;
-      final double maxTrackHeight =
-          (availableHeight - trialHeight - 12).clamp(0.0, availableHeight) *
-              0.85;
-      final Widget landscapeTrackWidget = ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxTrackHeight),
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
+      if (shrinkHexaWeb) {
+        layout = Column(
+          mainAxisAlignment: MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            trackWidget,
+            if (isWeb) const SizedBox(height: 2),
+            content,
+          ],
+        );
+      } else {
+        final double trialHeight = imageHeight + 24;
+        final double maxTrackHeight =
+            (availableHeight - trialHeight - 12).clamp(0.0, availableHeight) *
+                0.85;
+        final Widget landscapeTrackWidget = ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxTrackHeight),
+          child: Align(
             alignment: Alignment.topCenter,
-            child: trackWidget,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.topCenter,
+              child: trackWidget,
+            ),
           ),
-        ),
-      );
-      layout = Column(
-        mainAxisAlignment: MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          landscapeTrackWidget,
-          content,
-        ],
-      );
+        );
+        layout = Column(
+          mainAxisAlignment: MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            landscapeTrackWidget,
+            content,
+          ],
+        );
+      }
     }
 
     if (onEscapeToOpeningPanel == null) {

@@ -4,6 +4,7 @@
 // Tücken: Timeout nach 15s; Ergebnis wird über Callbacks nach oben gereicht.
 // ------------------------------------------------------------
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class MicGate extends StatefulWidget {
   const MicGate({
@@ -47,13 +48,32 @@ class _MicGateState extends State<MicGate> with SingleTickerProviderStateMixin {
     super.dispose();
   }
 
+  void _handleAllow() {
+    if (_handled) return;
+    _handled = true;
+    widget.onAllow();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Stack(
-          children: [
+    return Focus(
+      autofocus: true,
+      onKey: (node, event) {
+        if (event is RawKeyDownEvent) {
+          final key = event.logicalKey;
+          if (key == LogicalKeyboardKey.enter ||
+              key == LogicalKeyboardKey.numpadEnter) {
+            _handleAllow();
+            return KeyEventResult.handled;
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Stack(
+            children: [
             Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -70,11 +90,7 @@ class _MicGateState extends State<MicGate> with SingleTickerProviderStateMixin {
                       );
                     },
                     child: GestureDetector(
-                      onTap: () {
-                        if (_handled) return;
-                        _handled = true;
-                        widget.onAllow();
-                      },
+                      onTap: _handleAllow,
                       child: Container(
                         width: 110,
                         height: 110,
@@ -101,10 +117,16 @@ class _MicGateState extends State<MicGate> with SingleTickerProviderStateMixin {
                   _handled = true;
                   widget.onDeny();
                 },
-                child: const Icon(Icons.close, size: 30, color: Colors.red),
+                child: Image.asset(
+                  'assets/icons/mic_delay.webp',
+                  width: 34,
+                  height: 34,
+                  fit: BoxFit.contain,
+                ),
               ),
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );

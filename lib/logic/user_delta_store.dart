@@ -38,4 +38,15 @@ class UserDeltaStore {
       // ignore
     }
   }
+
+  Future<void> delete(String userId) async {
+    try {
+      final f = await _file(userId);
+      if (await f.exists()) {
+        await f.delete();
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
 }

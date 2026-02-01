@@ -95,7 +95,7 @@ class _DashboardButtonRowState extends State<DashboardButtonRow> with SingleTick
                   boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
                 ),
                 child: const Center(
-                  child: Icon(Icons.hourglass_top, size: 24, color: Colors.black87),
+                  child: Icon(Icons.mic, size: 24, color: Colors.black87),
                 ),
               ),
             ),

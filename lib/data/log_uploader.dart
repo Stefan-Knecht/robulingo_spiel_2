@@ -30,19 +30,24 @@ class LogUploader {
   Future<bool> upload({
     required String userId,
     required List<String> lines,
+    String? sessionId,
   }) async {
     if (lines.isEmpty) return true;
     final body = '${lines.join('\n')}\n';
     final gz = gzip.encode(utf8.encode(body));
     try {
+      final headers = <String, String>{
+        'content-type': 'application/x-ndjson',
+        'content-encoding': 'gzip',
+        'x-user-id': userId,
+      };
+      if (sessionId != null && sessionId.isNotEmpty) {
+        headers['x-session-id'] = sessionId;
+      }
       final res = await _http
           .post(
             _path(endpointPath),
-            headers: {
-              'content-type': 'application/x-ndjson',
-              'content-encoding': 'gzip',
-              'x-user-id': userId,
-            },
+            headers: headers,
             body: gz,
           )
           .timeout(_timeout);

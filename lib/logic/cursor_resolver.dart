@@ -1,9 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
-
-import 'package:path_provider/path_provider.dart';
-
 import 'resume_state_controller.dart';
+import 'log_storage.dart';
 
 Future<String?> loadLogDerivedCursorUuid({
   required String? userId,
@@ -11,10 +8,9 @@ Future<String?> loadLogDerivedCursorUuid({
   required String lang,
 }) async {
   try {
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/logs/events.ndjson');
-    if (!await file.exists()) return null;
-    final lines = await file.readAsLines();
+    final storage = LogStorage();
+    final lines = await storage.readLines();
+    if (lines.isEmpty) return null;
 
     final String? uid = (userId != null && userId.isNotEmpty) ? userId : null;
     String? bestLangOnly;

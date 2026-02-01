@@ -9,6 +9,8 @@ class ResumeStateEntry {
   final String? nativeLang;
   final int cursor;
   final DateTime date;
+  final int? winsYou;
+  final int? winsRival;
 
   ResumeStateEntry({
     required this.startKey,
@@ -16,6 +18,8 @@ class ResumeStateEntry {
     required this.nativeLang,
     required this.cursor,
     required this.date,
+    this.winsYou,
+    this.winsRival,
   });
 
   Map<String, dynamic> toJson() => {
@@ -24,6 +28,8 @@ class ResumeStateEntry {
         if (nativeLang != null) 'nativeLang': nativeLang,
         'cursor': cursor,
         'date': date.toUtc().toIso8601String(),
+        if (winsYou != null) 'winsYou': winsYou,
+        if (winsRival != null) 'winsRival': winsRival,
       };
 
   factory ResumeStateEntry.fromJson(Map<String, dynamic> json) {
@@ -31,6 +37,8 @@ class ResumeStateEntry {
     final lang = (json['lang'] as String?)?.trim() ?? '';
     final nativeLang = (json['nativeLang'] as String?)?.trim();
     final cursor = (json['cursor'] as num?)?.toInt() ?? -1;
+    final winsYou = (json['winsYou'] as num?)?.toInt();
+    final winsRival = (json['winsRival'] as num?)?.toInt();
     final rawDate = (json['date'] as String?)?.trim();
     final parsed =
         rawDate != null ? DateTime.tryParse(rawDate) : null;
@@ -40,6 +48,8 @@ class ResumeStateEntry {
       nativeLang: nativeLang?.isEmpty == true ? null : nativeLang,
       cursor: cursor,
       date: parsed ?? DateTime.now().toUtc(),
+      winsYou: winsYou,
+      winsRival: winsRival,
     );
   }
 }

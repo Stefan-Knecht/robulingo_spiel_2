@@ -1,16 +1,14 @@
 // ------------------------------------------------------------
 // Ziel (Laien): Lokale NDJSON-Logs schreiben (session/trials), um Verhalten nachzuvollziehen.
-// Strategie: Append-only Datei im App-Dokumente-Ordner, keine Abhängigkeit zur Hauptlogik.
+// Strategie: Append-only Speicher (Datei auf IO, localStorage im Web), keine Abhängigkeit zur Hauptlogik.
 // Schritte: init (Datei anlegen), startSession/endSession, log(type, data).
 // Tücken: I/O-Fehler werden geschluckt; Pfad bei Plattformwechsel prüfen.
 // ------------------------------------------------------------
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
-import 'package:path_provider/path_provider.dart';
-
 import 'data/log_uploader.dart';
+import 'logic/log_storage.dart';
 
 /// Append-only NDJSON logger for local analytics.
 class EventLogger {
@@ -18,8 +16,8 @@ class EventLogger {
   factory EventLogger() => _instance;
   EventLogger._internal();
 
-  File? _file;
   bool _ready = false;
+  LogStorage? _storage;
   String sessionId = '';
   String userId = '';
   String workerHost = '';
@@ -42,11 +40,8 @@ class EventLogger {
 
   Future<void> init() async {
     if (_ready) return;
-    final dir = await getApplicationDocumentsDirectory();
-    final logsDir = Directory('${dir.path}/logs');
-    // Lege den lokalen Ordner fuer Log-Dateien an.
-    await logsDir.create(recursive: true);
-    _file = File('${logsDir.path}/events.ndjson');
+    _storage = LogStorage();
+    await _storage!.init();
     _ready = true;
   }
 
@@ -84,7 +79,8 @@ class EventLogger {
 
   String _newSessionId() {
     final rnd = Random();
-    return 's${DateTime.now().microsecondsSinceEpoch}_${rnd.nextInt(1 << 32)}';
+    // On web, bitwise shifts are 32-bit; (1 << 32) becomes 0 → RangeError.
+    return 's${DateTime.now().microsecondsSinceEpoch}_${rnd.nextInt(0x7fffffff)}';
   }
 
   Future<void> startSession({required String lang}) async {
@@ -100,7 +96,7 @@ class EventLogger {
   }
 
   Future<void> log(String type, Map<String, dynamic> data) async {
-    if (!_ready || _file == null) return;
+    if (!_ready || _storage == null) return;
     final now = DateTime.now().toUtc().toIso8601String();
     // Eine Zeile pro Event (NDJSON), damit sie leicht lesbar und append-only ist.
     final payload = {
@@ -115,13 +111,13 @@ class EventLogger {
       if (mode != null) 'mode': mode,
       ...data,
     };
-    final line = '${jsonEncode(payload)}\n';
+    final line = jsonEncode(payload);
     try {
-      await _file!.writeAsString(line, mode: FileMode.append, flush: false);
-      _pendingUpload.add(line.trimRight());
+      await _storage!.appendLine(line);
+      _pendingUpload.add(line);
       _scheduleUpload();
       if (type == 'audio_target_match') {
-        _pendingAudioMatchUpload.add(line.trimRight());
+        _pendingAudioMatchUpload.add(line);
         _scheduleAudioMatchUpload();
       }
     } catch (_) {
@@ -151,9 +147,14 @@ class EventLogger {
     if (_uploader == null || userId.isEmpty) return;
     if (_pendingUpload.isEmpty) return;
     _uploading = true;
+    final sid = sessionId.isNotEmpty ? sessionId : _newSessionId();
+    if (sessionId.isEmpty) {
+      sessionId = sid;
+    }
     // Schicke Logs im Batch; bei Erfolg entfernen.
     final batch = List<String>.from(_pendingUpload);
-    final ok = await _uploader!.upload(userId: userId, lines: batch);
+    final ok =
+        await _uploader!.upload(userId: userId, lines: batch, sessionId: sid);
     if (ok) {
       _pendingUpload.removeRange(0, batch.length);
     }
@@ -169,8 +170,13 @@ class EventLogger {
     if (_audioMatchUploader == null || userId.isEmpty) return;
     if (_pendingAudioMatchUpload.isEmpty) return;
     _uploadingAudioMatches = true;
+    final sid = sessionId.isNotEmpty ? sessionId : _newSessionId();
+    if (sessionId.isEmpty) {
+      sessionId = sid;
+    }
     final batch = List<String>.from(_pendingAudioMatchUpload);
-    final ok = await _audioMatchUploader!.upload(userId: userId, lines: batch);
+    final ok = await _audioMatchUploader!
+        .upload(userId: userId, lines: batch, sessionId: sid);
     if (ok) {
       _pendingAudioMatchUpload.removeRange(0, batch.length);
     }

@@ -178,11 +178,15 @@ async function handleLog(request, env) {
     return new Response('method not allowed', { status: 405 });
   }
   const uid = request.headers.get('x-user-id');
+  const sessionId = request.headers.get('x-session-id');
   if (!uid) {
     return new Response('missing x-user-id', { status: 400 });
   }
+  if (!sessionId) {
+    return new Response('missing x-session-id', { status: 400 });
+  }
   const chunk = await request.arrayBuffer();
-  const key = `${uid}/log.ndjson.gz`;
+  const key = `${uid}/runs/${sessionId}.ndjson.gz`;
   const bucket = env.USERDATA;
 
   // Fetch existing log
@@ -197,7 +201,7 @@ async function handleLog(request, env) {
   if (total > LOG_MAX_BYTES) {
     // Rotate current to a dated backup, then start fresh with the new chunk
     const stamp = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').replace('Z', '');
-    const rotatedKey = `${uid}/log-${stamp}.ndjson.gz`;
+    const rotatedKey = `${uid}/runs/${sessionId}-${stamp}.ndjson.gz`;
     await bucket.copy(key, rotatedKey);
     await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
     return new Response('ok-rotated', { status: 200 });
@@ -219,11 +223,15 @@ async function handleAudioTargetMatches(request, env) {
     return new Response('method not allowed', { status: 405 });
   }
   const uid = request.headers.get('x-user-id');
+  const sessionId = request.headers.get('x-session-id');
   if (!uid) {
     return new Response('missing x-user-id', { status: 400 });
   }
+  if (!sessionId) {
+    return new Response('missing x-session-id', { status: 400 });
+  }
   const chunk = await request.arrayBuffer();
-  const key = `${uid}/audio_target_matches.ndjson.gz`;
+  const key = `${uid}/audio_target_matches/${sessionId}.ndjson.gz`;
   const bucket = env.USERDATA;
 
   const existing = await bucket.get(key);
@@ -236,7 +244,7 @@ async function handleAudioTargetMatches(request, env) {
   const total = oldBytes.byteLength + chunk.byteLength;
   if (total > AUDIO_MATCH_MAX_BYTES) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').replace('Z', '');
-    const rotatedKey = `${uid}/audio_target_matches-${stamp}.ndjson.gz`;
+    const rotatedKey = `${uid}/audio_target_matches/${sessionId}-${stamp}.ndjson.gz`;
     await bucket.copy(key, rotatedKey);
     await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
     return new Response('ok-rotated', { status: 200 });

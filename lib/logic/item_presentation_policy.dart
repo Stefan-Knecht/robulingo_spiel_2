@@ -11,7 +11,7 @@ class ItemPresentationConfig {
     // Comprehension block
     this.comprehensionBlockSize = 10,
     this.comprehensionCoreSize = 9,
-    this.comprehensionDownMaxAttempts = 20, // remove if attempts > 20
+    this.comprehensionDownMaxAttempts = 15, // remove if attempts > 15
     this.distractorWindow = 10,
 
     // Naming qualification + blocks
@@ -77,7 +77,7 @@ class NamingAdvanceDecision {
 /// - fixed repeating comprehension block of 10 (slots 1..9 curriculum, slot 10 from refiller FIFO or curriculum)
 /// - distractors from previous 10 curriculum items (else next 10)
 /// - up-from-comprehension: 4/4 correct comprehension qualifies for naming and removes from comprehension
-/// - down-from-comprehension: remove after >20 answered comprehension attempts
+/// - down-from-comprehension: remove after >15 answered comprehension attempts
 /// - naming blocks of 5 (priority when available), postpone/reactivate FIFO blocks (max 3)
 /// - up/down-from-naming removal returns items to refiller FIFO
 class ItemPresentationPolicy {
@@ -132,6 +132,11 @@ class ItemPresentationPolicy {
 
   List<String> get comprehensionBlockUuids =>
       List<String>.unmodifiable(_comprehensionBlock);
+
+  void setComprehensionIndex(int idx) {
+    if (_comprehensionBlock.isEmpty) return;
+    _comprehensionIndex = idx.clamp(0, _comprehensionBlock.length - 1);
+  }
 
   List<String> get refillerQueueSnapshot =>
       List<String>.unmodifiable(_refillerQueue.toList());

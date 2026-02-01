@@ -4,12 +4,11 @@
 // Tücken: NDJSON-Logs müssen existieren; Asset-Pfade für Rival/Therapist hängen von Wins/ViewCount ab.
 // ------------------------------------------------------------
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
+import '../../logic/log_storage.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String focus;
@@ -288,25 +287,22 @@ class DashboardDataLoader {
   static Future<List<int>> loadWeekMinutes(
       {int currentSessionMinutes = 0}) async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/logs/events.ndjson');
       final Map<String, _SessionSpan> spans = {};
-      if (await file.exists()) {
-        final lines = await file.readAsLines();
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          try {
-            final data = jsonDecode(line) as Map<String, dynamic>;
-            final tsStr = data['ts'] as String?;
-            final session = data['session'] as String? ?? 'unknown';
-            if (tsStr == null) continue;
-            final ts = DateTime.tryParse(tsStr)?.toUtc();
-            if (ts == null) continue;
-            final span = spans.putIfAbsent(session, () => _SessionSpan());
-            span.update(ts);
-          } catch (_) {
-            // ignore malformed line
-          }
+      final storage = LogStorage();
+      final lines = await storage.readLines();
+      for (final line in lines) {
+        if (line.trim().isEmpty) continue;
+        try {
+          final data = jsonDecode(line) as Map<String, dynamic>;
+          final tsStr = data['ts'] as String?;
+          final session = data['session'] as String? ?? 'unknown';
+          if (tsStr == null) continue;
+          final ts = DateTime.tryParse(tsStr)?.toUtc();
+          if (ts == null) continue;
+          final span = spans.putIfAbsent(session, () => _SessionSpan());
+          span.update(ts);
+        } catch (_) {
+          // ignore malformed line
         }
       }
 
@@ -475,53 +471,49 @@ class SuccessSeriesLoader {
     final Map<String, _SessionAccumulator> sessions = {};
     DateTime? earliestStart;
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/logs/events.ndjson');
-      if (await file.exists()) {
-        final lines = await file.readAsLines();
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          Map<String, dynamic> data;
-          try {
-            data = jsonDecode(line) as Map<String, dynamic>;
-          } catch (_) {
-            continue;
-          }
-          final type = data['type'] as String?;
-          final sessionId = data['session'] as String? ?? 'unknown';
-          final tsStr = data['ts'] as String?;
-          final ts = tsStr == null ? null : DateTime.tryParse(tsStr)?.toUtc();
-          if (ts != null) {
-            earliestStart = earliestStart == null || ts.isBefore(earliestStart)
-                ? ts
-                : earliestStart;
-          }
-          final acc =
-              sessions.putIfAbsent(sessionId, () => _SessionAccumulator());
-          switch (type) {
-            case 'session_start':
-              acc.start = ts;
-              break;
-            case 'session_end':
-              acc.end = ts;
-              break;
-            case 'trial_result':
-              final uuid = data['uuid'] as String?;
-              final correct = data['correct'] == true;
-              if (uuid == null) break;
-              acc.ensureItem(uuid);
-              acc.items[uuid]!.addComp(correct);
-              break;
-            case 'naming_result':
-              final uuid = data['uuid'] as String?;
-              final correct = data['correct'] == true;
-              if (uuid == null) break;
-              acc.ensureItem(uuid);
-              acc.items[uuid]!.addNaming(correct);
-              break;
-            default:
-              break;
-          }
+      final storage = LogStorage();
+      final lines = await storage.readLines();
+      for (final line in lines) {
+        if (line.trim().isEmpty) continue;
+        Map<String, dynamic> data;
+        try {
+          data = jsonDecode(line) as Map<String, dynamic>;
+        } catch (_) {
+          continue;
+        }
+        final type = data['type'] as String?;
+        final sessionId = data['session'] as String? ?? 'unknown';
+        final tsStr = data['ts'] as String?;
+        final ts = tsStr == null ? null : DateTime.tryParse(tsStr)?.toUtc();
+        if (ts != null) {
+          earliestStart = earliestStart == null || ts.isBefore(earliestStart)
+              ? ts
+              : earliestStart;
+        }
+        final acc = sessions.putIfAbsent(sessionId, () => _SessionAccumulator());
+        switch (type) {
+          case 'session_start':
+            acc.start = ts;
+            break;
+          case 'session_end':
+            acc.end = ts;
+            break;
+          case 'trial_result':
+            final uuid = data['uuid'] as String?;
+            final correct = data['correct'] == true;
+            if (uuid == null) break;
+            acc.ensureItem(uuid);
+            acc.items[uuid]!.addComp(correct);
+            break;
+          case 'naming_result':
+            final uuid = data['uuid'] as String?;
+            final correct = data['correct'] == true;
+            if (uuid == null) break;
+            acc.ensureItem(uuid);
+            acc.items[uuid]!.addNaming(correct);
+            break;
+          default:
+            break;
         }
       }
     } catch (_) {
