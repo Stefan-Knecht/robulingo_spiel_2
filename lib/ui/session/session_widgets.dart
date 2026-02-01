@@ -1038,6 +1038,8 @@ class SessionBody extends StatelessWidget {
       ],
     );
 
+    final Widget content = contentColumn;
+
     Widget layout;
     if (!isLandscape) {
       layout = SingleChildScrollView(
@@ -1047,7 +1049,7 @@ class SessionBody extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             trackWidget,
-            contentColumn,
+            content,
           ],
         ),
       );
@@ -1072,7 +1074,7 @@ class SessionBody extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           landscapeTrackWidget,
-          contentColumn,
+          content,
         ],
       );
     }

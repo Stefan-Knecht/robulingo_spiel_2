@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -56,6 +57,9 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   late Future<_DashboardData> _dataFuture;
+  static const String _cliCommandsText = '''←    →
+F     J
+''';
 
   @override
   void initState() {
@@ -174,6 +178,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           },
                   ),
                 ),
+                if (kIsWeb)
+                  Positioned(
+                    top: 8,
+                    left: 64,
+                    child: IconButton(
+                      tooltip: 'CLI commands',
+                      icon: Icon(
+                        Icons.code,
+                        size: 34,
+                        color: Colors.green.shade700,
+                        weight: 800,
+                      ),
+                      onPressed: _showCliCommandsDialog,
+                    ),
+                  ),
                 Positioned(
                   top: 8,
                   right: 8,
@@ -218,6 +237,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
             );
           },
         ),
+      ),
+    );
+  }
+
+  void _showCliCommandsDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                SelectableText(
+                  _cliCommandsText,
+                  style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }

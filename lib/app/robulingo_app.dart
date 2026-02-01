@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -109,7 +110,7 @@ class _RestartGratisInfo {
 }
 
 class _RobuLingoAppState extends State<RobuLingoApp>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   static const int cachedItemCount = 12; // TODO: 500 im Zielzustand
   static const int namingMinUniqueItems = 5;
   // Tunable: spacing between naming reward steps/beeps.
@@ -276,10 +277,18 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     freeItemsRemaining: 0,
   );
   int _restartPanelInfoRequest = 0;
+  bool _lifecyclePersisting = false;
+  final FocusNode _keyboardFocusNode = FocusNode(debugLabel: 'AppKeyboard');
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _keyboardFocusNode.requestFocus();
+      }
+    });
     logger = EventLogger();
     protocolLog = PresentationProtocolLog();
     namingController = NamingController(
@@ -336,6 +345,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _initLogger();
     _initUserId();
     _loadSavedOnboarding();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_persistProgressSnapshot());
+    }
   }
 
   Future<void> _initLogger() async {
@@ -469,14 +486,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _loadResumeStateFallback() async {
     final uid = userId;
     if (uid == null || uid.isEmpty) return;
-    if (!mounted) return;
-    if (!awaitingLang || showRestartSplash) return;
-    final cache = await sessionCacheStore.load();
-    if (cache != null) return;
     final state = await resumeStateController.fetchAndSet(uid);
     if (state == null || state.entries.isEmpty) return;
     final latest = state.mostRecentEntry();
     if (latest == null) return;
+    if (!mounted) return;
+    if (!awaitingLang || showRestartSplash) return;
+    final cache = await sessionCacheStore.load();
+    if (cache != null) return;
     if (!mounted) return;
     setState(() {
       lang = latest.lang;
@@ -493,6 +510,18 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     ladderController.setWins(you: 0, rival: 0);
     await _loadLastSessionWins();
     unawaited(_updateRestartModuleProgress());
+  }
+
+  Future<void> _persistProgressSnapshot() async {
+    if (_lifecyclePersisting) return;
+    _lifecyclePersisting = true;
+    try {
+      await _pushResumeState();
+      await _persistUserCursor();
+      await _persistRefillerQueue();
+    } finally {
+      _lifecyclePersisting = false;
+    }
   }
 
   Future<void> _loadHintPack({bool forceRefresh = false}) async {
@@ -2459,8 +2488,57 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(onboardingStore.save(data));
   }
 
+  bool _handleKeyboardEvent(RawKeyEvent event) {
+    if (event is! RawKeyDownEvent) return false;
+    final focusWidget = FocusManager.instance.primaryFocus?.context?.widget;
+    if (focusWidget is EditableText) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      if (showRestartSplash) {
+        unawaited(_startFromSplash());
+        return true;
+      }
+    }
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.keyF) {
+      unawaited(_select(true));
+      return true;
+    }
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.keyJ) {
+      unawaited(_select(false));
+      return true;
+    }
+    return false;
+  }
+
+  Widget _wrapWithKeyboardShortcuts(Widget child) {
+    if (!_keyboardFocusNode.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_keyboardFocusNode.hasFocus) {
+          _keyboardFocusNode.requestFocus();
+        }
+      });
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTapDown: (_) {
+        if (!_keyboardFocusNode.hasFocus) {
+          _keyboardFocusNode.requestFocus();
+        }
+      },
+      child: RawKeyboardListener(
+        focusNode: _keyboardFocusNode,
+        onKey: _handleKeyboardEvent,
+        child: child,
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     playbackSub?.cancel();
     player.dispose();
     hintPlayer.dispose();
@@ -2473,6 +2551,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     ladderController.dispose();
     micController.dispose();
     nativeSelectTimer?.cancel();
+    _keyboardFocusNode.dispose();
     if (loggerReady) {
       unawaited(logger.endSession());
     }
@@ -2482,66 +2561,78 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   @override
   Widget build(BuildContext context) {
     if (awaitingLang) {
-    return Scaffold(
-      body: SafeArea(
-        child: LangSelector(
-          onSelect: _onSelectLang,
-          showHistoryButton: true,
-          onOpenHistory: _openHistoryPanel,
+      return _wrapWithKeyboardShortcuts(
+        Scaffold(
+          body: SafeArea(
+            child: LangSelector(
+              onSelect: _onSelectLang,
+              showHistoryButton: true,
+              onOpenHistory: _openHistoryPanel,
+            ),
+          ),
         ),
-      ),
-    );
+      );
     }
 
     if (pickFlowActive) {
       if (awaitingPickNative) {
-        return Scaffold(
-          body: SafeArea(
-            child: NativeLangSelector(
-              targetLang: lang,
-              onSelect: _onSelectPickNative,
+        return _wrapWithKeyboardShortcuts(
+          Scaffold(
+            body: SafeArea(
+              child: NativeLangSelector(
+                targetLang: lang,
+                onSelect: _onSelectPickNative,
+              ),
             ),
           ),
         );
       }
-      return Scaffold(
-        body: SafeArea(
-          child: _buildPickMenu(),
+      return _wrapWithKeyboardShortcuts(
+        Scaffold(
+          body: SafeArea(
+            child: _buildPickMenu(),
+          ),
         ),
       );
     }
 
     if (awaitingStart) {
-      return Scaffold(
-        body: SafeArea(
-          child: StartCurriculumSelector(
-            onSelect: _onSelectStart,
-            onPickSelected: _enterPickFlow,
+      return _wrapWithKeyboardShortcuts(
+        Scaffold(
+          body: SafeArea(
+            child: StartCurriculumSelector(
+              onSelect: _onSelectStart,
+              onPickSelected: _enterPickFlow,
+            ),
           ),
         ),
       );
     }
 
     if (awaitingNative && activeStartCurriculumKey != null) {
-      return Scaffold(
-        body: SafeArea(
-          child: NativeLangSelector(
-            targetLang: lang,
-            onSelect: (mother) =>
-                _onSelectNative(mother, activeStartCurriculumKey!),
+      return _wrapWithKeyboardShortcuts(
+        Scaffold(
+          body: SafeArea(
+            child: NativeLangSelector(
+              targetLang: lang,
+              onSelect: (mother) =>
+                  _onSelectNative(mother, activeStartCurriculumKey!),
+            ),
           ),
         ),
       );
     }
 
     if (showRestartSplash) {
-      return RestartSplash(
-        wins: ladder.winsYou,
-        rivalWins: ladder.winsRival,
-        viewCount: dashboardViewCount,
-        onRestart: () => _restartOnboarding(),
-        onStart: _startFromSplash,
-        moduleProgress: restartModuleProgress,
+      return _wrapWithKeyboardShortcuts(
+        RestartSplash(
+          wins: ladder.winsYou,
+          rivalWins: ladder.winsRival,
+          viewCount: dashboardViewCount,
+          onRestart: () => _restartOnboarding(),
+          onStart: _startFromSplash,
+          moduleProgress: restartModuleProgress,
+        ),
       );
     }
 
@@ -2753,31 +2844,33 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       );
     }
 
-    return Scaffold(
-      bottomNavigationBar: namingInProgress
-          ? SizedBox(
-              height: 48,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-                child: MicProgressBar(
-                    animation: micAnimation, micStage: micStage, micOn: micOn),
-              ),
-            )
-          : null,
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return SingleChildScrollView(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+    return _wrapWithKeyboardShortcuts(
+      Scaffold(
+        bottomNavigationBar: namingInProgress
+            ? SizedBox(
+                height: 48,
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: body,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12.0, vertical: 8.0),
+                  child: MicProgressBar(
+                      animation: micAnimation, micStage: micStage, micOn: micOn),
                 ),
-              ),
-            );
-          },
+              )
+            : null,
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: body,
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ),
     );
