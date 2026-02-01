@@ -104,9 +104,9 @@ class _RestartSplashState extends State<RestartSplash> {
               ),
             ),
             const SizedBox(height: 12),
-            const Expanded(
+            Expanded(
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: TrainingCalendarPanel(),
               ),
             ),
@@ -238,6 +238,7 @@ class NamingView extends StatelessWidget {
     required this.onOpenSettings,
     required this.onSkip,
     this.onPostpone,
+    this.onEscapeToOpeningPanel,
   });
 
   final Uint8List leftImageBytes;
@@ -258,6 +259,7 @@ class NamingView extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final void Function(String reason) onSkip;
   final VoidCallback? onPostpone;
+  final VoidCallback? onEscapeToOpeningPanel;
 
   @override
   Widget build(BuildContext context) {
@@ -398,8 +400,7 @@ class NamingView extends StatelessWidget {
                   child: Center(
                     child: CircleAvatar(
                       radius: 24,
-                      backgroundColor:
-                          namingOutcome! ? Colors.green : Colors.red,
+                      backgroundColor: namingOutcome! ? Colors.green : Colors.red,
                       child: Icon(
                         namingOutcome! ? Icons.check : Icons.close,
                         size: 30,
@@ -518,6 +519,7 @@ class TrialOptionsRow extends StatelessWidget {
     required this.disableSelection,
     this.spokenCueText,
     required this.onSelect,
+    this.onEscapeToOpeningPanel,
   });
 
   final Uint8List leftImageBytes;
@@ -529,6 +531,7 @@ class TrialOptionsRow extends StatelessWidget {
   final bool disableSelection;
   final String? spokenCueText;
   final void Function(bool choseLeft) onSelect;
+  final VoidCallback? onEscapeToOpeningPanel;
 
   @override
   Widget build(BuildContext context) {
@@ -711,6 +714,7 @@ class SessionBody extends StatelessWidget {
     required this.hasPostponedNamingBlocks,
     required this.onReactivateNamingBlocks,
     required this.onPostponeNamingBlocks,
+    this.onEscapeToOpeningPanel,
   });
 
   final HexagonState ladder;
@@ -759,6 +763,7 @@ class SessionBody extends StatelessWidget {
   final bool hasPostponedNamingBlocks;
   final VoidCallback? onReactivateNamingBlocks;
   final VoidCallback? onPostponeNamingBlocks;
+  final VoidCallback? onEscapeToOpeningPanel;
 
   @override
   Widget build(BuildContext context) {
@@ -805,6 +810,7 @@ class SessionBody extends StatelessWidget {
             onOpenSettings: onOpenMicSettings,
             onSkip: onSkipNaming,
             onPostpone: onPostponeNamingBlocks,
+            onEscapeToOpeningPanel: onEscapeToOpeningPanel,
           )
         : TrialOptionsRow(
             leftImageBytes: leftImageBytes,
@@ -816,190 +822,207 @@ class SessionBody extends StatelessWidget {
             disableSelection: isNaming,
             spokenCueText: spokenCueText,
             onSelect: onSelect,
+            onEscapeToOpeningPanel: onEscapeToOpeningPanel,
           );
 
-      final contentColumn = Column(
+    final contentColumn = Column(
       mainAxisAlignment: MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (isLandscape) const SizedBox(height: 4),
         trialWidget,
         //const SizedBox(height: 32),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFF9FAFF), Color(0xFFEFF3FF)],
-            ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.black12),
-            boxShadow: const [
-              BoxShadow(
-                  color: Color(0x14000000),
-                  blurRadius: 8,
-                  offset: Offset(0, 4)),
-            ],
-          ),
-          child: Column(
-            children: [
-              if (targetText.trim().isNotEmpty ||
-                  (targetPhonetic != null && targetPhonetic!.trim().isNotEmpty))
-                Text.rich(
-                  TextSpan(
-                    text: targetText,
-                    children: [
-                      if (targetPhonetic != null && targetPhonetic!.isNotEmpty)
-                        TextSpan(
-                          text: '  ${targetPhonetic!}',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontStyle: FontStyle.italic,
-                            color: Colors.blue,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                    ],
+        Stack(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFF9FAFF), Color(0xFFEFF3FF)],
                   ),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 26, fontWeight: FontWeight.bold),
-                ),
-              if (showNative && nativeText != null && nativeText!.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  nativeText!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.green),
-                ),
-              ],
-              if (phoneticButtonVisible ||
-                  audioHintEnabled ||
-                  hintButtonVisible ||
-                  hasPostponedNamingBlocks) ...[
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    if (hasPostponedNamingBlocks && !isNaming)
-                      Tooltip(
-                        message: 'Benennen',
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: const Color(0xFFEFF6FF),
-                            foregroundColor: Colors.black87,
-                            side: const BorderSide(color: Colors.black12),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: onReactivateNamingBlocks,
-                          child: const ImageIcon(
-                            AssetImage('assets/icons/antepone.webp'),
-                            size: 20,
-                            color: Colors.blue,
-                          ),
-                        ),
-                      ),
-                    if (phoneticButtonVisible)
-                      Tooltip(
-                        message: 'Phonetic',
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: phoneticOverrideActive
-                                ? const Color(0xFFE7F0FF)
-                                : Colors.white,
-                            foregroundColor: Colors.black87,
-                            side: BorderSide(
-                              color: phoneticOverrideActive
-                                  ? const Color(0xFF8AB4F8)
-                                  : Colors.black12,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: onTogglePhonetic,
-                          child: ImageIcon(
-                            const AssetImage('assets/icons/phonetic.webp'),
-                            color: phoneticOverrideActive
-                                ? Colors.blue
-                                : Colors.grey[700],
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    if (audioHintEnabled)
-                      Tooltip(
-                        message: 'Audio hint',
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: Colors.black87,
-                            side: const BorderSide(color: Colors.black12),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: onPlayAudioHint,
-                          child: const Icon(Icons.volume_up, size: 20),
-                        ),
-                      ),
-                    if (hintButtonVisible)
-                      Tooltip(
-                        message: hintLabel,
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: hintButtonActive
-                                ? const Color(0xFFFFF2C0)
-                                : Colors.white,
-                            foregroundColor: Colors.black87,
-                            side: BorderSide(
-                              color: hintButtonActive
-                                  ? const Color(0xFFE7C36A)
-                                  : Colors.black12,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: onToggleHints,
-                          child: ImageIcon(
-                            const AssetImage('assets/icons/Magnifying_glass.webp'),
-                            size: 20,
-                            color: hintButtonActive
-                                ? const Color(0xFF8A6B12)
-                                : Colors.grey[800],
-                          ),
-                        ),
-                      ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.black12),
+                  boxShadow: const [
+                    BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 8,
+                        offset: Offset(0, 4)),
                   ],
                 ),
-              ],
-              if (hintEntries.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _HintPanel(key: hintPanelKey, label: hintLabel, hints: hintEntries),
-              ] else if (hintMissingText != null &&
-                  hintMissingText!.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Text(
-                  hintMissingText!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 14, color: Colors.black45),
-                ),
-              ],
-            ],
-          ),
+                child: Column(
+                  children: [
+                  if (targetText.trim().isNotEmpty ||
+                      (targetPhonetic != null &&
+                          targetPhonetic!.trim().isNotEmpty))
+                    Text.rich(
+                      TextSpan(
+                        text: targetText,
+                        children: [
+                          if (targetPhonetic != null &&
+                              targetPhonetic!.isNotEmpty)
+                            TextSpan(
+                              text: '  ${targetPhonetic!}',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontStyle: FontStyle.italic,
+                                color: Colors.blue,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                        ],
+                      ),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 26, fontWeight: FontWeight.bold),
+                    ),
+                  if (showNative &&
+                      nativeText != null &&
+                      nativeText!.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      nativeText!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.green),
+                    ),
+                  ],
+                  if (phoneticButtonVisible ||
+                      audioHintEnabled ||
+                      hintButtonVisible ||
+                      hasPostponedNamingBlocks) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        if (hasPostponedNamingBlocks && !isNaming)
+                          Tooltip(
+                            message: 'Benennen',
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor: const Color(0xFFEFF6FF),
+                                foregroundColor: Colors.black87,
+                                side: const BorderSide(color: Colors.black12),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14)),
+                              ),
+                              onPressed: onReactivateNamingBlocks,
+                              child: const ImageIcon(
+                                AssetImage('assets/icons/antepone.webp'),
+                                size: 20,
+                                color: Colors.blue,
+                              ),
+                            ),
+                          ),
+                        if (phoneticButtonVisible)
+                          Tooltip(
+                            message: 'Phonetic',
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor: phoneticOverrideActive
+                                    ? const Color(0xFFE7F0FF)
+                                    : Colors.white,
+                                foregroundColor: Colors.black87,
+                                side: BorderSide(
+                                  color: phoneticOverrideActive
+                                      ? const Color(0xFF8AB4F8)
+                                      : Colors.black12,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14)),
+                              ),
+                              onPressed: onTogglePhonetic,
+                              child: ImageIcon(
+                                const AssetImage('assets/icons/phonetic.webp'),
+                                color: phoneticOverrideActive
+                                    ? Colors.blue
+                                    : Colors.grey[700],
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        if (audioHintEnabled)
+                          Tooltip(
+                            message: 'Audio hint',
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.black87,
+                                side: const BorderSide(color: Colors.black12),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14)),
+                              ),
+                              onPressed: onPlayAudioHint,
+                              child: const Icon(Icons.volume_up, size: 20),
+                            ),
+                          ),
+                        if (hintButtonVisible)
+                          Tooltip(
+                            message: hintLabel,
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor: hintButtonActive
+                                    ? const Color(0xFFFFF2C0)
+                                    : Colors.white,
+                                foregroundColor: Colors.black87,
+                                side: BorderSide(
+                                  color: hintButtonActive
+                                      ? const Color(0xFFE7C36A)
+                                      : Colors.black12,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14)),
+                              ),
+                              onPressed: onToggleHints,
+                              child: ImageIcon(
+                                const AssetImage(
+                                    'assets/icons/Magnifying_glass.webp'),
+                                size: 20,
+                                color: hintButtonActive
+                                    ? const Color(0xFF8A6B12)
+                                    : Colors.grey[800],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (hintEntries.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _HintPanel(
+                        key: hintPanelKey,
+                        label: hintLabel,
+                        hints: hintEntries),
+                  ] else if (hintMissingText != null &&
+                      hintMissingText!.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      hintMissingText!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 14, color: Colors.black45),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         Column(
@@ -1015,8 +1038,9 @@ class SessionBody extends StatelessWidget {
       ],
     );
 
+    Widget layout;
     if (!isLandscape) {
-      return SingleChildScrollView(
+      layout = SingleChildScrollView(
         padding: const EdgeInsets.only(bottom: 16),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.start,
@@ -1027,29 +1051,44 @@ class SessionBody extends StatelessWidget {
           ],
         ),
       );
+    } else {
+      final double trialHeight = imageHeight + 24;
+      final double maxTrackHeight =
+          (availableHeight - trialHeight - 12).clamp(0.0, availableHeight) *
+              0.85;
+      final Widget landscapeTrackWidget = ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxTrackHeight),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.topCenter,
+            child: trackWidget,
+          ),
+        ),
+      );
+      layout = Column(
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          landscapeTrackWidget,
+          contentColumn,
+        ],
+      );
     }
 
-    final double trialHeight = imageHeight + 24;
-    final double maxTrackHeight =
-        (availableHeight - trialHeight - 12).clamp(0.0, availableHeight) * 0.85;
-    final Widget landscapeTrackWidget = ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: maxTrackHeight),
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.topCenter,
-          child: trackWidget,
-        ),
-      ),
-    );
+    if (onEscapeToOpeningPanel == null) {
+      return layout;
+    }
 
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Stack(
       children: [
-        landscapeTrackWidget,
-        contentColumn,
+        layout,
+        Positioned(
+          left: 8,
+          bottom: 8,
+          child: _EscapeButton(onTap: onEscapeToOpeningPanel!),
+        ),
       ],
     );
   }
@@ -1119,6 +1158,44 @@ class _HintPanel extends StatelessWidget {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _EscapeButton extends StatelessWidget {
+  const _EscapeButton({required this.onTap, this.size = 20});
+
+  final VoidCallback onTap;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Zum Start',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.black12),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1A000000),
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Image.asset(
+            'assets/icons/escape.webp',
+            width: size,
+            height: size,
+            fit: BoxFit.contain,
+          ),
+        ),
       ),
     );
   }

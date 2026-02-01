@@ -28,6 +28,7 @@ Future<String?> loadLogDerivedCursorUuid({
         continue;
       }
       if (data['type'] != 'trial_result') continue;
+      if (data['is_refiller'] == true) continue;
       final eventLang = (data['lang'] as String?)?.trim();
       if (eventLang != lang) continue;
 

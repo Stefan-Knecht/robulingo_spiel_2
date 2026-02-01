@@ -24,6 +24,7 @@ class DashboardScreen extends StatefulWidget {
   final Map<String, int> namingAttempts;
   final Map<String, int> namingCorrect;
   final VoidCallback? onExitToOpeningPanel;
+  final Future<void> Function()? onExitToResumePanel;
   final VoidCallback? onExitApp;
   final Future<String> Function()? onExportProtocol;
   final VoidCallback? onReturnToGame;
@@ -43,6 +44,7 @@ class DashboardScreen extends StatefulWidget {
     required this.namingAttempts,
     required this.namingCorrect,
     this.onExitToOpeningPanel,
+    this.onExitToResumePanel,
     this.onExitApp,
     this.onExportProtocol,
     this.onReturnToGame,
@@ -192,12 +194,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   bottom: 16,
                   right: 16,
                   child: GestureDetector(
-                    onTap: () {
+                    onTap: () async {
+                      Navigator.of(context).popUntil((route) => route.isFirst);
+                      if (widget.onExitToResumePanel != null) {
+                        await widget.onExitToResumePanel!.call();
+                        return;
+                      }
                       if (widget.onExitApp != null) {
                         widget.onExitApp!.call();
                         return;
                       }
-                      Navigator.of(context).popUntil((route) => route.isFirst);
                       widget.onExitToOpeningPanel?.call();
                     },
                     child: Image.asset(
@@ -766,7 +772,10 @@ class _WiggleTrophyState extends State<_WiggleTrophy>
 
 class CalendarPanel extends StatelessWidget {
   final List<int> weekMinutes;
-  const CalendarPanel({super.key, required this.weekMinutes});
+  const CalendarPanel({
+    super.key,
+    required this.weekMinutes,
+  });
 
   @override
   Widget build(BuildContext context) {

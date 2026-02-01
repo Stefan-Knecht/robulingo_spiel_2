@@ -166,7 +166,7 @@ Future<void> showHistoryPanel({
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'User History',
+                              'Progress Reference',
                               style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold),

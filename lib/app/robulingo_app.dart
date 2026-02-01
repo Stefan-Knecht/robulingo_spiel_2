@@ -219,6 +219,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
   PresentationSlot? pendingNextSlot;
   String? _lastAnsweredCursorUuid;
+  String? _lastNonRefillerCursorUuid;
   final RefillerStore refillerStore = RefillerStore();
   final List<String> loadErrors = [];
   int trialIndex = 0;
@@ -768,6 +769,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         lastSelectionIsLeft = null;
         presentationPolicy.reset();
         _lastAnsweredCursorUuid = restored.savedUuid;
+        _lastNonRefillerCursorUuid = restored.savedUuid;
         namingInProgress = false;
         namingHold = false;
         micOn = false;
@@ -1265,6 +1267,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       currentSlot = initData.currentSlot;
       pendingNextSlot = initData.pendingNextSlot;
       _lastAnsweredCursorUuid = initData.lastAnsweredCursorUuid;
+      _lastNonRefillerCursorUuid = initData.lastAnsweredCursorUuid;
       hasAnswered = initData.hasAnswered;
       lastCorrect = initData.lastCorrect;
       lastSelectionIsLeft = initData.lastSelectionIsLeft;
@@ -1456,10 +1459,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (userId == null || userId!.isEmpty) return;
     if (curriculum.isEmpty) return;
     final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
-    final uuid = _lastAnsweredCursorUuid ??
-        currentTrial?.target.uuid ??
-        currentSlot.targetUuid;
-    if (uuid.isEmpty) return;
+    String? uuid = _lastNonRefillerCursorUuid;
+    if (uuid == null || uuid.isEmpty) {
+      if (presentationPolicy.isCurrentSlotFromRefiller) return;
+      uuid = currentTrial?.target.uuid ?? currentSlot.targetUuid;
+    }
+    if (uuid == null || uuid.isEmpty) return;
     final cursor = curriculum.indexWhere((e) => e.uuid == uuid);
     if (cursor < 0) return;
     protocolLog.addNote(
@@ -1485,9 +1490,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   int? _currentCursorIndexForResume(String startKey) {
     if (curriculum.isEmpty) return null;
-    final uuid = _lastAnsweredCursorUuid ??
-        currentTrial?.target.uuid ??
-        currentSlot.targetUuid;
+    String? uuid = _lastNonRefillerCursorUuid;
+    if (uuid == null || uuid.isEmpty) {
+      if (presentationPolicy.isCurrentSlotFromRefiller) return null;
+      uuid = currentTrial?.target.uuid ?? currentSlot.targetUuid;
+    }
     if (uuid == null || uuid.isEmpty) return null;
     final idx = curriculum.indexWhere((e) => e.uuid == uuid);
     if (idx < 0) return null;
@@ -2202,7 +2209,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       lastTenResults.removeAt(0);
     }
     comprehensionSeen.add(trial.target.uuid);
+    final bool isRefiller = presentationPolicy.isCurrentSlotFromRefiller;
     _lastAnsweredCursorUuid = trial.target.uuid;
+    if (!isRefiller) {
+      _lastNonRefillerCursorUuid = trial.target.uuid;
+    }
     final wasQualified =
         presentationPolicy.readyToName.contains(trial.target.uuid);
     final decision = presentationPolicy.onComprehensionAnswered(
@@ -2229,6 +2240,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       unawaited(logger.log('trial_result', {
         'lang': lang,
         'uuid': trial.target.uuid,
+        'is_refiller': isRefiller,
         'correct': correct,
         'trial_index': trialIndex,
         'selection_left': choseLeft,
@@ -2737,6 +2749,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             : null,
         onPostponeNamingBlocks:
             isNamingView && !namingInProgress ? _postponeActiveNamingBlock : null,
+        onEscapeToOpeningPanel: _exitToOpeningPanel,
       );
     }
 
@@ -2793,12 +2806,59 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           namingAttempts: itemStats.namingAttempts(),
           namingCorrect: itemStats.namingCorrect(),
           onExitToOpeningPanel: _exitToOpeningPanel,
+          onExitToResumePanel: _exitToResumePanelIfAvailable,
           onExitApp: _exitAndClose,
           onExportProtocol: () => protocolLog.export(),
           onReturnToGame: () {},
         ),
       ),
     );
+  }
+
+  Future<void> _exitToResumePanelIfAvailable() async {
+    await _pushResumeState();
+    final saved = await onboardingStore.load();
+    if (!mounted) return;
+    final resumeLang = saved?.lang ?? lang;
+    final resumeStartKey =
+        saved?.startKey ?? activeStartCurriculumKey ?? defaultStartCurriculum;
+    final resumeNative = saved?.nativeLang ?? nativeLang;
+    final resumeWinsYou = saved?.winsYou ?? ladder.winsYou;
+    final resumeWinsRival = saved?.winsRival ?? ladder.winsRival;
+    voiceController.cancelActive();
+    unawaited(player.stop());
+    unawaited(hintPlayer.stop());
+    unawaited(fanfarePlayer.stop());
+    unawaited(moveYouPlayer.stop());
+    unawaited(moveRivalPlayer.stop());
+    unawaited(namingBeepPlayer.stop());
+    unawaited(namingBeepPlayer2.stop());
+    if (loggerReady && sessionStart != null && !sessionEnded) {
+      unawaited(logger.endSession());
+    }
+    setState(() {
+      lang = resumeLang;
+      activeStartCurriculumKey = resumeStartKey;
+      nativeLang = resumeNative;
+      awaitingLang = false;
+      awaitingStart = false;
+      awaitingNative = false;
+      awaitingPickNative = false;
+      pickFlowActive = false;
+      showRestartSplash = true;
+      loading = false;
+      error = null;
+      sessionStart = null;
+      sessionEnded = true;
+      currentTrial = null;
+      currentSlot = const PresentationSlot(
+          mode: PresentationMode.comprehension, targetUuid: '');
+      pendingNextSlot = null;
+    });
+    unawaited(_loadHintPack());
+    ladderController.setWins(you: resumeWinsYou, rival: resumeWinsRival);
+    await _loadLastSessionWins();
+    unawaited(_updateRestartModuleProgress());
   }
 
   void _exitToOpeningPanel() {

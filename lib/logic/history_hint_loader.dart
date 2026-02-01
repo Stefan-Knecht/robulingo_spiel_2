@@ -13,7 +13,7 @@ class HistoryHintLoader {
   Future<String> loadHint(String l1) async {
     if (_cache != null) return _cache!;
     const fallback =
-        'Copy and store the number of your user history so that you can reload it and do not have to start from the very beginning again if your electronic device loses the history.';
+        'Keep a copy of your progress reference in case your device loses it, so you can pick up where you left off.';
     final norm = l1.trim().toLowerCase();
     if (norm.isEmpty) return fallback;
     final keyTxt = 'history_hint_$norm.txt';

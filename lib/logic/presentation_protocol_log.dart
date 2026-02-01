@@ -245,7 +245,8 @@ class PresentationProtocolLog {
     final start = _sessionStartLocal ?? DateTime.now();
     final dateStamp =
         '${start.year}${_fmt2(start.month)}${_fmt2(start.day)}_${_fmt2(start.hour)}${_fmt2(start.minute)}${_fmt2(start.second)}';
-    final fileName = 'RobuLingo_${dateStamp}.txt';
+    final fileName =
+        kIsWeb ? 'RobuLingo.txt' : 'RobuLingo_${dateStamp}.txt';
 
     if (kIsWeb) {
       await downloadTextFile(filename: fileName, contents: content);
