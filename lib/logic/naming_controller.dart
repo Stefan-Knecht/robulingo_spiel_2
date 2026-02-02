@@ -136,8 +136,8 @@ class NamingController {
         _log(
             '[naming][init] ok=$ok available=${speech.isAvailable} hasSpeechPerm=$hasSpeechPerm micGranted=$micGrantedEffective');
         return MicInitResult(
-          // Treat mic grant + init success as ready; tolerate simulator's perm misreporting.
-          ready: ok && micGrantedEffective,
+          // Treat mic grant + init success as ready; require ASR availability on device.
+          ready: ok && micGrantedEffective && speech.isAvailable,
           micGranted: micGrantedEffective,
           speechGranted: hasSpeechPerm || speechGrantedEffective,
           initOk: ok,
@@ -314,6 +314,10 @@ class NamingController {
     try {
       await speech.stop();
     } catch (_) {}
+    if (operatingSystem == 'android') {
+      // Give Android's recognizer a moment to spin up (helps first window).
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
     final completer = Completer<void>();
     bool gotResultEvent = false;
     bool gotSoundLevel = false;
@@ -323,9 +327,15 @@ class NamingController {
     Future<void> startListen(String? useLocale) async {
       const listenMode =
           kIsWeb ? stt.ListenMode.confirmation : stt.ListenMode.dictation;
-      final Duration? listenFor = kIsWeb ? null : duration;
-      final Duration? pauseFor =
-          kIsWeb ? null : const Duration(milliseconds: 800);
+      final bool isAndroid = operatingSystem == 'android';
+      final Duration? listenFor = kIsWeb
+          ? null
+          : (isAndroid ? duration + const Duration(seconds: 2) : duration);
+      final Duration? pauseFor = kIsWeb
+          ? null
+          : (isAndroid
+              ? const Duration(milliseconds: 1500)
+              : const Duration(milliseconds: 800));
       await speech.listen(
         listenFor: listenFor,
         pauseFor: pauseFor,

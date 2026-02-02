@@ -1000,8 +1000,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleSpeechError(String code) {
-    if (code.toLowerCase().contains('no_match') ||
-        code.toLowerCase().contains('no-match')) {
+    final lower = code.toLowerCase();
+    if (lower.contains('no_match') ||
+        lower.contains('no-match') ||
+        lower.contains('speech timeout') ||
+        lower.contains('speech_timeout')) {
       debugPrint('[asr][error-ignored] $code');
       return;
     }
