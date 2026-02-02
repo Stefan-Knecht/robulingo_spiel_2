@@ -2,6 +2,7 @@
 // Ziel (Laien): Hexagon-Gitter als gemeinsames Rennfeld rendern (Spieler & Rival).
 // Strategie: Gleiche Maße wie Ladder nutzen: Track-Breite in 20 Teilstücke, Hex-Form via vorgegebene Punkte, 10x3 Grid.
 // ------------------------------------------------------------
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../logic/hexagon_controller.dart';
@@ -20,6 +21,8 @@ class HexagonTrack extends StatelessWidget {
     required this.rivalFlagShowIndex,
     required this.youTrail,
     required this.rivalTrail,
+    this.uiScale = 1.0,
+    this.centerGrid = false,
   });
 
   final int youIndex;
@@ -32,22 +35,25 @@ class HexagonTrack extends StatelessWidget {
   final int rivalFlagShowIndex;
   final List<HexTrailPoint> youTrail;
   final List<HexTrailPoint> rivalTrail;
+  final double uiScale;
+  final bool centerGrid;
 
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
-    final double labelWidth = isLandscape ? 100.0 : 52.0;
-    final double iconSize = isLandscape ? 176.0 : 52.0;
-    final double flagSize = isLandscape ? 160.0 : 44.0;
+    final double scale = (kIsWeb ? 0.75 : 1.0) * uiScale;
+    final double labelWidth = (isLandscape ? 100.0 : 52.0) * scale;
+    final double iconSize = (isLandscape ? 176.0 : 52.0) * scale;
+    final double flagSize = (isLandscape ? 160.0 : 44.0) * scale;
     final double marginFactor = isLandscape ? 0.2 : 0.15;
-    final double flagColumnWidth = isLandscape ? 100.0 : 58.0;
-    final double gridStrokeWidth = isLandscape ? 1.6 : 1.0;
-    final double markerRadius = isLandscape ? 48.0 : 10.0;
-    final double trailStrokeWidth = isLandscape ? 10.0 : 5.0;
+    final double flagColumnWidth = (isLandscape ? 100.0 : 58.0) * scale;
+    final double gridStrokeWidth = (isLandscape ? 1.6 : 1.0) * scale;
+    final double markerRadius = (isLandscape ? 48.0 : 10.0) * scale;
+    final double trailStrokeWidth = (isLandscape ? 10.0 : 5.0) * scale;
     final EdgeInsets outerPadding = EdgeInsets.symmetric(
-      horizontal: isLandscape ? 16 : 8,
-      vertical: 8,
+      horizontal: (isLandscape ? 16 : 8) * scale,
+      vertical: 8 * scale,
     );
 
     return Padding(
@@ -58,8 +64,13 @@ class HexagonTrack extends StatelessWidget {
           final double unitMinX = unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a < b ? a : b);
           final double unitMaxX = unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a > b ? a : b);
           final double widthFactor = unitMaxX - unitMinX;
-          final double availableWidth =
-              (constraints.maxWidth - labelWidth - flagColumnWidth).clamp(80.0, 2000.0);
+          final double availableWidthBase = centerGrid
+              ? constraints.maxWidth
+              : constraints.maxWidth - labelWidth - flagColumnWidth;
+          final double maxAvailableWidth = 2000.0 * uiScale;
+          final double availableWidth = (availableWidthBase * scale)
+              .clamp(80.0 * scale, maxAvailableWidth)
+              .toDouble();
           final double side = availableWidth / (widthFactor + 2 * marginFactor);
 
           final grid = buildHexGrid(side: side);
@@ -87,7 +98,7 @@ class HexagonTrack extends StatelessWidget {
               .where((c) => c.col == lastCol && c.row == 1)
               .map((c) => _Edge(c.points[1], c.points[2]))
               .toList();
-          final iconsHeight = iconSize * 2 + 12;
+          final iconsHeight = iconSize * 2 + 12 * scale;
           final baseHeight = iconsHeight > trackHeight ? iconsHeight : trackHeight;
           final totalWidth = labelWidth + trackWidth + flagColumnWidth;
           final int playerStartIdx = grid.nodeIndexFor(2, 0, 5) ?? 0;
@@ -114,8 +125,121 @@ class HexagonTrack extends StatelessWidget {
           final double flagTopRival = (trackHeight / 2) - flagSize - 4;
           final double flagTopPlayer = (trackHeight / 2) + 4;
 
+          if (centerGrid) {
+            final double totalHeight = baseHeight + 24 * scale;
+            return SizedBox(
+              height: totalHeight,
+              width: constraints.maxWidth,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(
+                  width: trackWidth,
+                  height: totalHeight,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      SizedBox(
+                        width: trackWidth,
+                        height: trackHeight,
+                        child: CustomPaint(
+                          size: Size(trackWidth, trackHeight),
+                          painter: _HexagonPainter(
+                            cells: shiftedCells,
+                            nodes: shiftedNodes,
+                            youIndex: youIndex,
+                            rivalIndex: rivalIndex,
+                            youTrail: youTrail,
+                            rivalTrail: rivalTrail,
+                            finishEdges: finishEdges,
+                            gridStrokeWidth: gridStrokeWidth,
+                            markerRadius: markerRadius,
+                            trailStrokeWidth: trailStrokeWidth,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: -labelWidth,
+                        top: 0,
+                        child: SizedBox(
+                          width: labelWidth,
+                          height: trackHeight,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              Positioned(
+                                left: (labelWidth - iconSize) / 2,
+                                top: rivalTop,
+                                child: Image.asset(
+                                  'assets/icons/rival.webp',
+                                  width: iconSize,
+                                  height: iconSize,
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                              Positioned(
+                                left: (labelWidth - iconSize) / 2,
+                                top: playerTop,
+                                child: Image.asset(
+                                  'assets/icons/player.webp',
+                                  width: iconSize,
+                                  height: iconSize,
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: trackWidth,
+                        top: 0,
+                        child: SizedBox(
+                          width: flagColumnWidth,
+                          height: trackHeight,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              if (youFlagVisible)
+                                Positioned(
+                                  left: (flagColumnWidth - flagSize) / 2,
+                                  top: flagTopPlayer,
+                                  child: Transform.rotate(
+                                    angle: youFlagAngle,
+                                    child: Image.asset(
+                                      'assets/icons/flag_player_$youFlagShowIndex.webp',
+                                      width: flagSize,
+                                      height: flagSize,
+                                      fit: BoxFit.contain,
+                                    ),
+                                  ),
+                                ),
+                              if (rivalFlagVisible)
+                                Positioned(
+                                  left: (flagColumnWidth - flagSize) / 2,
+                                  top: flagTopRival,
+                                  child: Transform.rotate(
+                                    angle: rivalFlagAngle,
+                                    child: Image.asset(
+                                      'assets/icons/flag_rival_$rivalFlagShowIndex.webp',
+                                      width: flagSize,
+                                      height: flagSize,
+                                      fit: BoxFit.contain,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+
           return SizedBox(
-            height: baseHeight + 24,
+            height: baseHeight + 24 * scale,
             width: totalWidth,
             child: Stack(
               clipBehavior: Clip.none,
@@ -183,12 +307,12 @@ class HexagonTrack extends StatelessWidget {
                               top: flagTopPlayer,
                               child: Transform.rotate(
                                 angle: youFlagAngle,
-                                  child: Image.asset(
-                                    'assets/icons/flag_player_$youFlagShowIndex.webp',
-                                    width: flagSize,
-                                    height: flagSize,
-                                    fit: BoxFit.contain,
-                                  ),
+                                child: Image.asset(
+                                  'assets/icons/flag_player_$youFlagShowIndex.webp',
+                                  width: flagSize,
+                                  height: flagSize,
+                                  fit: BoxFit.contain,
+                                ),
                               ),
                             ),
                           if (rivalFlagVisible)
@@ -197,12 +321,12 @@ class HexagonTrack extends StatelessWidget {
                               top: flagTopRival,
                               child: Transform.rotate(
                                 angle: rivalFlagAngle,
-                                  child: Image.asset(
-                                    'assets/icons/flag_rival_$rivalFlagShowIndex.webp',
-                                    width: flagSize,
-                                    height: flagSize,
-                                    fit: BoxFit.contain,
-                                  ),
+                                child: Image.asset(
+                                  'assets/icons/flag_rival_$rivalFlagShowIndex.webp',
+                                  width: flagSize,
+                                  height: flagSize,
+                                  fit: BoxFit.contain,
+                                ),
                               ),
                             ),
                         ],

@@ -11,7 +11,7 @@ class ItemPresentationConfig {
     // Comprehension block
     this.comprehensionBlockSize = 10,
     this.comprehensionCoreSize = 9,
-    this.comprehensionDownMaxAttempts = 20, // remove if attempts > 20
+    this.comprehensionDownMaxAttempts = 15, // remove if attempts > 15
     this.distractorWindow = 10,
 
     // Naming qualification + blocks
@@ -77,7 +77,7 @@ class NamingAdvanceDecision {
 /// - fixed repeating comprehension block of 10 (slots 1..9 curriculum, slot 10 from refiller FIFO or curriculum)
 /// - distractors from previous 10 curriculum items (else next 10)
 /// - up-from-comprehension: 4/4 correct comprehension qualifies for naming and removes from comprehension
-/// - down-from-comprehension: remove after >20 answered comprehension attempts
+/// - down-from-comprehension: remove after >15 answered comprehension attempts
 /// - naming blocks of 5 (priority when available), postpone/reactivate FIFO blocks (max 3)
 /// - up/down-from-naming removal returns items to refiller FIFO
 class ItemPresentationPolicy {
@@ -124,12 +124,19 @@ class ItemPresentationPolicy {
   // Resume point in comprehension (block index 0..9)
   int? _resumeComprehensionIndex;
 
+  bool _lastSlotFromRefiller = false;
+
   bool get hasPostponedNamingBlocks => _postponedNamingBlocks.isNotEmpty;
 
   int get comprehensionIndex => _comprehensionIndex;
 
   List<String> get comprehensionBlockUuids =>
       List<String>.unmodifiable(_comprehensionBlock);
+
+  void setComprehensionIndex(int idx) {
+    if (_comprehensionBlock.isEmpty) return;
+    _comprehensionIndex = idx.clamp(0, _comprehensionBlock.length - 1);
+  }
 
   List<String> get refillerQueueSnapshot =>
       List<String>.unmodifiable(_refillerQueue.toList());
@@ -138,6 +145,14 @@ class ItemPresentationPolicy {
       _activeNamingBlock != null && _activeNamingIndex < _activeNamingBlock!.length;
 
   PresentationMode get mode => isNamingActive ? PresentationMode.naming : PresentationMode.comprehension;
+
+  bool get isCurrentSlotFromRefiller {
+    if (mode != PresentationMode.comprehension) return false;
+    if (!_lastSlotFromRefiller) return false;
+    final lastIdx = config.comprehensionBlockSize - 1;
+    if (_comprehensionBlock.length <= lastIdx) return false;
+    return _comprehensionIndex == lastIdx;
+  }
 
   PresentationSlot get currentSlot {
     if (isNamingActive) {
@@ -173,6 +188,7 @@ class ItemPresentationPolicy {
     _activeNamingIndex = 0;
     _postponedNamingBlocks.clear();
     _resumeComprehensionIndex = null;
+    _lastSlotFromRefiller = false;
   }
 
   void setRefillerQueue(List<String> uuids) {
@@ -223,6 +239,9 @@ class ItemPresentationPolicy {
     final refill = _dequeueRefiller();
     if (refill != null) {
       _comprehensionBlock[lastIdx] = refill;
+      _lastSlotFromRefiller = true;
+    } else {
+      _lastSlotFromRefiller = false;
     }
 
     _comprehensionIndex = 0;
@@ -484,9 +503,20 @@ class ItemPresentationPolicy {
     if (enqueueToRefiller) {
       _enqueueRefiller(uuid);
     }
-    final replacement = (idx == config.comprehensionBlockSize - 1)
-        ? (_dequeueRefiller() ?? _takeNextCurriculum())
-        : _takeNextCurriculum();
+    final int lastIdx = config.comprehensionBlockSize - 1;
+    String replacement;
+    if (idx == lastIdx) {
+      final refill = _dequeueRefiller();
+      if (refill != null) {
+        replacement = refill;
+        _lastSlotFromRefiller = true;
+      } else {
+        replacement = _takeNextCurriculum();
+        _lastSlotFromRefiller = false;
+      }
+    } else {
+      replacement = _takeNextCurriculum();
+    }
     _comprehensionBlock[idx] = replacement;
   }
 

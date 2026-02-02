@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'paper_month_calendar.dart';
 import 'paper_week_calendar.dart';
+import '../logic/log_storage.dart';
 
 // Kalender-Widget: liest lokale Logs und zeigt 4 Wochen pro Seite.
 // Die Anzeige wird regelmaessig neu geladen, damit neue Logs sichtbar sind.
@@ -17,11 +17,13 @@ class TrainingCalendarPanel extends StatefulWidget {
     this.thresholdMinutes = 5,
     this.idleCapSeconds = 20,
     this.refreshInterval = const Duration(seconds: 30),
+    this.fallbackDatesUtc,
   });
 
   final int thresholdMinutes;
   final int idleCapSeconds;
   final Duration refreshInterval;
+  final List<DateTime>? fallbackDatesUtc;
 
   @override
   State<TrainingCalendarPanel> createState() => _TrainingCalendarPanelState();
@@ -62,6 +64,14 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant TrainingCalendarPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_sameFallbackDates(oldWidget.fallbackDatesUtc, widget.fallbackDatesUtc)) {
+      _loadData();
+    }
+  }
+
   Future<void> _loadData() async {
     if (_loading) return;
     _loading = true;
@@ -70,6 +80,7 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
       final data = await TrainingCalendarLoader.load(
         thresholdMinutes: widget.thresholdMinutes,
         idleCapSeconds: widget.idleCapSeconds,
+        fallbackDatesUtc: widget.fallbackDatesUtc,
       );
       if (!mounted) return;
       setState(() {
@@ -78,6 +89,15 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
     } finally {
       _loading = false;
     }
+  }
+
+  bool _sameFallbackDates(List<DateTime>? a, List<DateTime>? b) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    if (a.length != b.length) return false;
+    final aKeys = a.map(TrainingCalendarData.dayKey).toSet();
+    final bKeys = b.map(TrainingCalendarData.dayKey).toSet();
+    return setEquals(aKeys, bKeys);
   }
 
   int _todayIndexFromDays(DateTime today, List<DayStatus> days) {
@@ -186,51 +206,50 @@ class TrainingCalendarLoader {
     int thresholdMinutes = 5,
     int idleCapSeconds = 20,
     int? maxEventsPerSession,
+    List<DateTime>? fallbackDatesUtc,
   }) async {
     final Map<String, _SessionData> sessions = {};
+    final thresholdSeconds = thresholdMinutes * 60;
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/logs/events.ndjson');
-      if (await file.exists()) {
-        final lines = await file.readAsLines();
-        // Jede Zeile ist ein Event im NDJSON-Format.
-        for (final line in lines) {
-          final raw = line.trim();
-          if (raw.isEmpty) continue;
-          Map<String, dynamic> data;
-          try {
-            data = jsonDecode(raw) as Map<String, dynamic>;
-          } catch (_) {
-            continue;
-          }
-          final tsStr = data['ts'] as String?;
-          final session = data['session'] as String?;
-          if (tsStr == null ||
-              tsStr.isEmpty ||
-              session == null ||
-              session.isEmpty) {
-            continue;
-          }
-          final ts = _parseTs(tsStr);
-          if (ts == null) continue;
+      final storage = LogStorage();
+      final lines = await storage.readLines();
+      // Jede Zeile ist ein Event im NDJSON-Format.
+      for (final line in lines) {
+        final raw = line.trim();
+        if (raw.isEmpty) continue;
+        Map<String, dynamic> data;
+        try {
+          data = jsonDecode(raw) as Map<String, dynamic>;
+        } catch (_) {
+          continue;
+        }
+        final tsStr = data['ts'] as String?;
+        final session = data['session'] as String?;
+        if (tsStr == null ||
+            tsStr.isEmpty ||
+            session == null ||
+            session.isEmpty) {
+          continue;
+        }
+        final ts = _parseTs(tsStr);
+        if (ts == null) continue;
 
-          final sessionData = sessions.putIfAbsent(session, _SessionData.new);
-          sessionData.eventCount += 1;
-          if (maxEventsPerSession != null &&
-              sessionData.eventCount > maxEventsPerSession) {
-            sessionData.exceededMax = true;
-          }
-          sessionData.timestampsMs.add(ts.millisecondsSinceEpoch);
-          final type = data['type'] as String?;
-          if (type == 'session_start') {
-            final tsMs = ts.millisecondsSinceEpoch;
-            sessionData.sessionStartMs = sessionData.sessionStartMs == null
-                ? tsMs
-                : min(sessionData.sessionStartMs!, tsMs);
-          } else {
-            // Nur "echte" Events zaehlen als Aktivitaet.
-            sessionData.hasNonStart = true;
-          }
+        final sessionData = sessions.putIfAbsent(session, _SessionData.new);
+        sessionData.eventCount += 1;
+        if (maxEventsPerSession != null &&
+            sessionData.eventCount > maxEventsPerSession) {
+          sessionData.exceededMax = true;
+        }
+        sessionData.timestampsMs.add(ts.millisecondsSinceEpoch);
+        final type = data['type'] as String?;
+        if (type == 'session_start') {
+          final tsMs = ts.millisecondsSinceEpoch;
+          sessionData.sessionStartMs = sessionData.sessionStartMs == null
+              ? tsMs
+              : min(sessionData.sessionStartMs!, tsMs);
+        } else {
+          // Nur "echte" Events zaehlen als Aktivitaet.
+          sessionData.hasNonStart = true;
         }
       }
     } catch (_) {
@@ -239,9 +258,20 @@ class TrainingCalendarLoader {
 
     final activeByDay =
         _computeActiveByDay(sessions, idleCapSeconds, _startBonusSeconds);
+    if (activeByDay.isEmpty && fallbackDatesUtc != null && fallbackDatesUtc.isNotEmpty) {
+      final fallback = <DateTime, int>{};
+      for (final date in fallbackDatesUtc) {
+        final dayKey = TrainingCalendarData.dayKey(date);
+        fallback[dayKey] = thresholdSeconds;
+      }
+      return TrainingCalendarData(
+        activeSecondsByDay: fallback,
+        thresholdSeconds: thresholdSeconds,
+      );
+    }
     return TrainingCalendarData(
       activeSecondsByDay: activeByDay,
-      thresholdSeconds: thresholdMinutes * 60,
+      thresholdSeconds: thresholdSeconds,
     );
   }
 

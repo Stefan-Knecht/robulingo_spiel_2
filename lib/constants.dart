@@ -5,7 +5,12 @@
 // Tücken: Änderungen hier wirken überall – bei Worker-Umzug oder Track-Länge auch Logik prüfen.
 // ------------------------------------------------------------
 const String defaultWorkerHost = 'robulingo-api.knechtipad-aec.workers.dev';
+// Item-/Asset-Worker (JSON/WEBP/MP3).
+const String defaultFileHost = 'robulingo-worker.knechtipad-aec.workers.dev';
 const String defaultApiPrefix = '/api';
+// Remote uploads (R2/Worker). Disable to avoid creating remote log/delta files.
+const bool enableRemoteLogUpload = true;
+const bool enableRemoteUserDelta = false;
 // R2-Bucket (Cloudflare) – virtueller Host und Pfadvariante, beide probieren
 const String curriculumBucketVirtualHost =
     'https://curriculum.aec343e9a0970f4dcdf10224e7414efb.r2.cloudflarestorage.com';

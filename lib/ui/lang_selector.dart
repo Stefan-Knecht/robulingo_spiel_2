@@ -10,11 +10,23 @@ import 'package:flutter/material.dart';
 
 import '../constants.dart';
 
-class LangSelector extends StatelessWidget {
-  const LangSelector({super.key, required this.onSelect});
+class LangSelector extends StatefulWidget {
+  const LangSelector({
+    super.key,
+    required this.onSelect,
+    this.showHistoryButton = false,
+    this.onOpenHistory,
+  });
 
   final void Function(String lang) onSelect;
+  final bool showHistoryButton;
+  final VoidCallback? onOpenHistory;
 
+  @override
+  State<LangSelector> createState() => _LangSelectorState();
+}
+
+class _LangSelectorState extends State<LangSelector> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -25,70 +37,22 @@ class LangSelector extends StatelessWidget {
         isLandscape ? min(84.0, size.height * 0.2) : 96.0;
     final double flagFontSize = tileSize * 0.48;
     final double spacing = isLandscape ? 16.0 : 24.0;
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: isLandscape ? 16 : 32, horizontal: 24),
-      child: isLandscape
-          ? Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: logoWidth,
-                  child: Image.asset(
-                    'assets/icons/RL_logo.webp',
-                    width: logoWidth,
-                    height: logoHeight,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Center(
-                      child: Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: spacing,
-                        runSpacing: spacing,
-                        children: langChoices
-                            .map(
-                              (l) => GestureDetector(
-                                onTap: () => onSelect(l),
-                                child: Container(
-                                  width: tileSize,
-                                  height: tileSize,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    border: Border.all(color: Colors.black, width: 2),
-                                    borderRadius: BorderRadius.circular(18),
-                                    boxShadow: const [
-                                      BoxShadow(
-                                          color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))
-                                    ],
-                                  ),
-                                  child: Text(
-                                    langFlags[l] ?? '',
-                                    style: TextStyle(fontSize: flagFontSize),
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : Column(
-              children: [
-                Image.asset(
+    final Widget mainContent = isLandscape
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: logoWidth,
+                child: Image.asset(
                   'assets/icons/RL_logo.webp',
                   width: logoWidth,
                   height: logoHeight,
                   fit: BoxFit.contain,
                 ),
-                const SizedBox(height: 24),
-                Expanded(
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: SingleChildScrollView(
                   child: Center(
                     child: Wrap(
                       alignment: WrapAlignment.center,
@@ -97,18 +61,21 @@ class LangSelector extends StatelessWidget {
                       children: langChoices
                           .map(
                             (l) => GestureDetector(
-                              onTap: () => onSelect(l),
+                              onTap: () => widget.onSelect(l),
                               child: Container(
                                 width: tileSize,
                                 height: tileSize,
                                 alignment: Alignment.center,
                                 decoration: BoxDecoration(
                                   color: Colors.white,
-                                  border: Border.all(color: Colors.black, width: 2),
+                                  border:
+                                      Border.all(color: Colors.black, width: 2),
                                   borderRadius: BorderRadius.circular(18),
                                   boxShadow: const [
                                     BoxShadow(
-                                        color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))
+                                        color: Colors.black12,
+                                        blurRadius: 4,
+                                        offset: Offset(0, 2))
                                   ],
                                 ),
                                 child: Text(
@@ -122,8 +89,81 @@ class LangSelector extends StatelessWidget {
                     ),
                   ),
                 ),
-              ],
+              ),
+            ],
+          )
+        : Column(
+            children: [
+              Image.asset(
+                'assets/icons/RL_logo.webp',
+                width: logoWidth,
+                height: logoHeight,
+                fit: BoxFit.contain,
+              ),
+              const SizedBox(height: 24),
+              Expanded(
+                child: Center(
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: spacing,
+                    runSpacing: spacing,
+                    children: langChoices
+                        .map(
+                          (l) => GestureDetector(
+                            onTap: () => widget.onSelect(l),
+                            child: Container(
+                              width: tileSize,
+                              height: tileSize,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                border: Border.all(color: Colors.black, width: 2),
+                                borderRadius: BorderRadius.circular(18),
+                                boxShadow: const [
+                                  BoxShadow(
+                                      color: Colors.black12,
+                                      blurRadius: 4,
+                                      offset: Offset(0, 2))
+                                ],
+                              ),
+                              child: Text(
+                                langFlags[l] ?? '',
+                                style: TextStyle(fontSize: flagFontSize),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                      ),
+                ),
+              ),
+            ],
+          );
+
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: isLandscape ? 16 : 32, horizontal: 24),
+      child: Stack(
+        children: [
+          Positioned.fill(child: mainContent),
+          if (widget.showHistoryButton && widget.onOpenHistory != null)
+            Positioned(
+              bottom: 8,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: IconButton(
+                  icon: Image.asset(
+                    'assets/icons/eye.webp',
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.contain,
+                  ),
+                  onPressed: widget.onOpenHistory,
+                ),
+              ),
             ),
+        ],
+      ),
     );
   }
 }

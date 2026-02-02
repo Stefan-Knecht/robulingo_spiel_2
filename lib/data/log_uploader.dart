@@ -30,20 +30,37 @@ class LogUploader {
   Future<bool> upload({
     required String userId,
     required List<String> lines,
+    String? sessionId,
   }) async {
     if (lines.isEmpty) return true;
     final body = '${lines.join('\n')}\n';
-    final gz = gzip.encode(utf8.encode(body));
+    final rawBytes = utf8.encode(body);
+    List<int> payload = rawBytes;
+    String? contentEncoding;
+    if (!kIsWeb) {
+      try {
+        payload = gzip.encode(rawBytes);
+        contentEncoding = 'gzip';
+      } catch (e) {
+        debugPrint('[log-upload][compress-error] $e');
+        payload = rawBytes;
+        contentEncoding = null;
+      }
+    }
     try {
+      final headers = <String, String>{
+        'content-type': 'application/x-ndjson',
+        if (contentEncoding != null) 'content-encoding': contentEncoding,
+        'x-user-id': userId,
+      };
+      if (sessionId != null && sessionId.isNotEmpty) {
+        headers['x-session-id'] = sessionId;
+      }
       final res = await _http
           .post(
             _path(endpointPath),
-            headers: {
-              'content-type': 'application/x-ndjson',
-              'content-encoding': 'gzip',
-              'x-user-id': userId,
-            },
-            body: gz,
+            headers: headers,
+            body: payload,
           )
           .timeout(_timeout);
       final ok = res.statusCode >= 200 && res.statusCode < 300;

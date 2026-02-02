@@ -13,11 +13,20 @@ export default {
       if (path.endsWith('/hints')) {
         return await handleHints(request, env);
       }
+      if (path.endsWith('/start-curriculum')) {
+        return await handleStartCurriculum(request, env);
+      }
+      if (path.endsWith('/file')) {
+        return await handleCurriculumFile(request, env);
+      }
       if (path.endsWith('/log')) {
         return await handleLog(request, env);
       }
       if (path.endsWith('/audio-target-matches')) {
         return await handleAudioTargetMatches(request, env);
+      }
+      if (path.endsWith('/resume-state')) {
+        return await handleResumeState(request, env);
       }
       if (path.endsWith('/user-curriculum')) {
         return await handleCurriculum(request, env);
@@ -80,6 +89,80 @@ async function handleHints(request, env) {
   return new Response(obj.body, { status: 200, headers });
 }
 
+// ---------- /start-curriculum ----------
+async function handleStartCurriculum(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  if (!env.CURRICULUM) {
+    return new Response('missing CURRICULUM binding', {
+      status: 500,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key');
+  if (!key) {
+    return new Response('missing key', {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const obj = await env.CURRICULUM.get(key);
+  if (!obj) {
+    return new Response('not found', {
+      status: 404,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const headers = {
+    ...CORS_HEADERS,
+    'cache-control': 'public, max-age=300',
+    'content-type': obj.httpMetadata?.contentType || 'application/json',
+  };
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(obj.body, { status: 200, headers });
+}
+
+// ---------- /file (curriculum bucket) ----------
+async function handleCurriculumFile(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  if (!env.CURRICULUM) {
+    return new Response('missing CURRICULUM binding', {
+      status: 500,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key');
+  if (!key) {
+    return new Response('missing key', {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const obj = await env.CURRICULUM.get(key);
+  if (!obj) {
+    return new Response('not found', {
+      status: 404,
+      headers: { ...CORS_HEADERS, 'cache-control': 'no-store' },
+    });
+  }
+  const headers = {
+    ...CORS_HEADERS,
+    'cache-control': 'public, max-age=300',
+    'content-type': obj.httpMetadata?.contentType || 'application/octet-stream',
+  };
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(obj.body, { status: 200, headers });
+}
+
 function normalizeLang(raw) {
   if (!raw) return '';
   const trimmed = raw.trim().toLowerCase();
@@ -95,11 +178,15 @@ async function handleLog(request, env) {
     return new Response('method not allowed', { status: 405 });
   }
   const uid = request.headers.get('x-user-id');
+  const sessionId = request.headers.get('x-session-id');
   if (!uid) {
     return new Response('missing x-user-id', { status: 400 });
   }
+  if (!sessionId) {
+    return new Response('missing x-session-id', { status: 400 });
+  }
   const chunk = await request.arrayBuffer();
-  const key = `${uid}/log.ndjson.gz`;
+  const key = `${uid}/runs/${sessionId}.ndjson.gz`;
   const bucket = env.USERDATA;
 
   // Fetch existing log
@@ -114,7 +201,7 @@ async function handleLog(request, env) {
   if (total > LOG_MAX_BYTES) {
     // Rotate current to a dated backup, then start fresh with the new chunk
     const stamp = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').replace('Z', '');
-    const rotatedKey = `${uid}/log-${stamp}.ndjson.gz`;
+    const rotatedKey = `${uid}/runs/${sessionId}-${stamp}.ndjson.gz`;
     await bucket.copy(key, rotatedKey);
     await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
     return new Response('ok-rotated', { status: 200 });
@@ -136,11 +223,15 @@ async function handleAudioTargetMatches(request, env) {
     return new Response('method not allowed', { status: 405 });
   }
   const uid = request.headers.get('x-user-id');
+  const sessionId = request.headers.get('x-session-id');
   if (!uid) {
     return new Response('missing x-user-id', { status: 400 });
   }
+  if (!sessionId) {
+    return new Response('missing x-session-id', { status: 400 });
+  }
   const chunk = await request.arrayBuffer();
-  const key = `${uid}/audio_target_matches.ndjson.gz`;
+  const key = `${uid}/audio_target_matches/${sessionId}.ndjson.gz`;
   const bucket = env.USERDATA;
 
   const existing = await bucket.get(key);
@@ -153,7 +244,7 @@ async function handleAudioTargetMatches(request, env) {
   const total = oldBytes.byteLength + chunk.byteLength;
   if (total > AUDIO_MATCH_MAX_BYTES) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').replace('Z', '');
-    const rotatedKey = `${uid}/audio_target_matches-${stamp}.ndjson.gz`;
+    const rotatedKey = `${uid}/audio_target_matches/${sessionId}-${stamp}.ndjson.gz`;
     await bucket.copy(key, rotatedKey);
     await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
     return new Response('ok-rotated', { status: 200 });
@@ -199,4 +290,35 @@ async function handleCurriculum(request, env) {
   }
 
   return new Response('method not allowed', { status: 405 });
+}
+
+// ---------- /resume-state ----------
+async function handleResumeState(request, env) {
+  const uid = request.headers.get('x-user-id');
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400 });
+  }
+  const bucket = env.USERDATA;
+  const key = `${uid}/resume_state.json`;
+
+  if (request.method === 'GET') {
+    const obj = await bucket.get(key);
+    if (!obj) return new Response('not found', { status: 404, headers: CORS_HEADERS });
+    return new Response(obj.body, {
+      status: 200,
+      headers: { ...CORS_HEADERS, 'content-type': 'application/json' },
+    });
+  }
+
+  if (request.method === 'POST') {
+    const body = await request.json().catch(() => null);
+    if (!body) {
+      return new Response('invalid body', { status: 400, headers: CORS_HEADERS });
+    }
+    const payload = JSON.stringify(body);
+    await bucket.put(key, payload, { httpMetadata: { contentType: 'application/json' } });
+    return new Response('saved', { status: 200, headers: CORS_HEADERS });
+  }
+
+  return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
 }

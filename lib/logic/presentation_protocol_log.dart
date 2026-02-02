@@ -8,6 +8,7 @@ class _TimelineEntry {
   _TimelineEntry.comprehension({
     required this.ts,
     required this.label,
+    this.nativeLabel,
     required this.correct,
     this.phonetic,
   })  : kind = 'C',
@@ -17,6 +18,7 @@ class _TimelineEntry {
   _TimelineEntry.naming({
     required this.ts,
     required this.label,
+    this.nativeLabel,
     required this.heard,
     required this.correct,
     this.phonetic,
@@ -28,6 +30,7 @@ class _TimelineEntry {
     required this.note,
   })  : kind = 'Note',
         label = '',
+        nativeLabel = null,
         phonetic = null,
         correct = null,
         heard = null;
@@ -35,6 +38,7 @@ class _TimelineEntry {
   final DateTime ts;
   final String kind; // C | N | Note
   final String label;
+  final String? nativeLabel;
   final String? phonetic;
   final bool? correct;
   final String? heard;
@@ -53,13 +57,20 @@ class _TimelineEntry {
 class PresentationProtocolLog {
   DateTime? _sessionStartLocal;
   String _userId = 'unknown';
+  String _nativeLang = '';
 
   final List<_TimelineEntry> _timeline = <_TimelineEntry>[];
   bool _dirty = false;
+  String? _cursorLine;
 
-  Future<void> startSession(DateTime sessionStartUtc, {String? userId}) async {
+  Future<void> startSession(
+    DateTime sessionStartUtc, {
+    String? userId,
+    String? nativeLang,
+  }) async {
     _sessionStartLocal = sessionStartUtc.toLocal();
     _userId = _sanitizeUserId(userId ?? _userId);
+    _nativeLang = _sanitizeLang(nativeLang ?? _nativeLang);
     _timeline.clear();
     _dirty = true;
   }
@@ -71,14 +82,23 @@ class PresentationProtocolLog {
     _dirty = true;
   }
 
+  void setSessionContext({String? nativeLang}) {
+    final nextNative = _sanitizeLang(nativeLang ?? _nativeLang);
+    if (nextNative == _nativeLang) return;
+    _nativeLang = nextNative;
+    _dirty = true;
+  }
+
   void addComprehension({
     required String label,
+    String? nativeLabel,
     String? phonetic,
     required bool correct,
   }) {
     _timeline.add(_TimelineEntry.comprehension(
       ts: DateTime.now(),
       label: label,
+      nativeLabel: nativeLabel,
       phonetic: phonetic,
       correct: correct,
     ));
@@ -87,6 +107,7 @@ class PresentationProtocolLog {
 
   void addNaming({
     required String label,
+    String? nativeLabel,
     String? phonetic,
     required String heard,
     required bool correct,
@@ -94,6 +115,7 @@ class PresentationProtocolLog {
     _timeline.add(_TimelineEntry.naming(
       ts: DateTime.now(),
       label: label,
+      nativeLabel: nativeLabel,
       phonetic: phonetic,
       heard: heard,
       correct: correct,
@@ -104,6 +126,11 @@ class PresentationProtocolLog {
   void addNote(String text) {
     final cleaned = text.trim();
     if (cleaned.isEmpty) return;
+    if (cleaned.startsWith('Cursor:')) {
+      _cursorLine = cleaned;
+      _dirty = true;
+      return;
+    }
     _timeline.add(_TimelineEntry.note(ts: DateTime.now(), note: cleaned));
     _dirty = true;
   }
@@ -114,9 +141,15 @@ class PresentationProtocolLog {
     return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
   }
 
+  String _sanitizeLang(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+  }
+
   String _fmt2(int v) => v < 10 ? '0$v' : '$v';
 
-  String _formatHeader(DateTime ts) {
+  String _formatDateLine(DateTime ts) {
     final d = '${_fmt2(ts.day)}.${_fmt2(ts.month)}.${ts.year}';
     final t = '${_fmt2(ts.hour)}:${_fmt2(ts.minute)}:${_fmt2(ts.second)}';
     return 'Datum: $d; Uhrzeit: $t';
@@ -163,29 +196,37 @@ class PresentationProtocolLog {
     return false;
   }
 
-  String _formatLabel(String label, String? phonetic) {
+  String _formatLabel(String label, String? phonetic, String? nativeLabel) {
     final cleaned = label.trim().isNotEmpty ? label.trim() : '—';
     final p = phonetic?.trim();
-    if (p == null || p.isEmpty) return cleaned;
-    if (_containsNonLatinScript(cleaned)) {
-      return '$cleaned ($p)';
+    final hasNative = nativeLabel != null && nativeLabel.trim().isNotEmpty;
+    final base = (p == null || p.isEmpty)
+        ? cleaned
+        : (_containsNonLatinScript(cleaned) ? '$cleaned ($p)' : cleaned);
+    if (hasNative) {
+      final native = nativeLabel!.trim();
+      return '$native / $base';
     }
-    return cleaned;
+    return base;
   }
 
   String buildText() {
     final start = _sessionStartLocal ?? DateTime.now();
     final buf = StringBuffer();
-    buf.writeln(_formatHeader(start));
+    buf.writeln('User ID: $_userId');
+    buf.writeln(_formatDateLine(start));
+    if (_cursorLine != null && _cursorLine!.isNotEmpty) {
+      buf.writeln(_cursorLine);
+    }
     buf.writeln();
     buf.writeln('Timeline:');
     for (final e in _timeline) {
       final time = _formatTime(e.ts);
       if (e.kind == 'C') {
-        final label = _formatLabel(e.label, e.phonetic);
+        final label = _formatLabel(e.label, e.phonetic, e.nativeLabel);
         buf.writeln('- $time C $label: ${(e.correct ?? false) ? 'r' : 'f'}');
       } else if (e.kind == 'N') {
-        final label = _formatLabel(e.label, e.phonetic);
+        final label = _formatLabel(e.label, e.phonetic, e.nativeLabel);
         final heard = (e.heard ?? '').replaceAll('\n', ' ').trim();
         buf.writeln(
             '- $time N $label: \"$heard\" - $label: ${(e.correct ?? false) ? 'r' : 'f'}');
@@ -201,7 +242,11 @@ class PresentationProtocolLog {
       return 'Protokoll ist leer.';
     }
     final content = buildText();
-    final fileName = 'audio_target_matches_json_by_user__$_userId.txt';
+    final start = _sessionStartLocal ?? DateTime.now();
+    final dateStamp =
+        '${start.year}${_fmt2(start.month)}${_fmt2(start.day)}_${_fmt2(start.hour)}${_fmt2(start.minute)}${_fmt2(start.second)}';
+    final fileName =
+        kIsWeb ? 'RobuLingo.txt' : 'RobuLingo_${dateStamp}.txt';
 
     if (kIsWeb) {
       await downloadTextFile(filename: fileName, contents: content);
@@ -227,4 +272,3 @@ class PresentationProtocolLog {
     return 'Gespeichert: ${dir.path}/$fileName';
   }
 }
-

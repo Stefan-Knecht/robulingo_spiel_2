@@ -4,11 +4,11 @@
 // Tücken: NDJSON-Logs müssen existieren; Asset-Pfade für Rival/Therapist hängen von Wins/ViewCount ab.
 // ------------------------------------------------------------
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
+import '../../logic/log_storage.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String focus;
@@ -24,7 +24,10 @@ class DashboardScreen extends StatefulWidget {
   final Map<String, int> namingAttempts;
   final Map<String, int> namingCorrect;
   final VoidCallback? onExitToOpeningPanel;
+  final Future<void> Function()? onExitToResumePanel;
+  final VoidCallback? onExitApp;
   final Future<String> Function()? onExportProtocol;
+  final VoidCallback? onReturnToGame;
 
   const DashboardScreen({
     super.key,
@@ -41,7 +44,10 @@ class DashboardScreen extends StatefulWidget {
     required this.namingAttempts,
     required this.namingCorrect,
     this.onExitToOpeningPanel,
+    this.onExitToResumePanel,
+    this.onExitApp,
     this.onExportProtocol,
+    this.onReturnToGame,
   });
 
   @override
@@ -50,6 +56,9 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   late Future<_DashboardData> _dataFuture;
+  static const String _cliCommandsText = '''←    →
+F     J
+''';
 
   @override
   void initState() {
@@ -117,7 +126,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           rivalWins: widget.rivalWins,
                           rivalAssetPath: rivalAssetPath,
                           therapistAssetPath: therapistAssetPath,
-                          onExportProtocol: widget.onExportProtocol,
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -139,21 +147,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 Positioned(
                   top: 8,
-                  right: 8,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.onExportProtocol != null)
-                        IconButton(
-                          icon: Icon(
-                            Icons.download,
-                            size: 38,
-                            color: Colors.green.shade700,
-                            weight: 800,
-                          ),
-                          onPressed: () async {
+                  left: 8,
+                  child: IconButton(
+                    tooltip: 'Protokoll exportieren',
+                    icon: Icon(
+                      Icons.download,
+                      size: 38,
+                      color: Colors.green.shade700,
+                      weight: 800,
+                    ),
+                    onPressed: widget.onExportProtocol == null
+                        ? null
+                        : () async {
                             try {
-                              final msg = await widget.onExportProtocol!.call();
+                              final msg =
+                                  await widget.onExportProtocol!.call();
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(content: Text(msg)),
@@ -161,29 +169,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             } catch (e) {
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Export fehlgeschlagen: $e')),
+                                SnackBar(
+                                    content:
+                                        Text('Export fehlgeschlagen: $e')),
                               );
                             }
                           },
-                        ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.refresh,
-                          size: 40,
-                          color: Colors.green.shade700,
-                          weight: 800,
-                        ),
-                        onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ),
+                if (kIsWeb)
+                  Positioned(
+                    top: 8,
+                    left: 64,
+                    child: IconButton(
+                      tooltip: 'CLI commands',
+                      icon: Icon(
+                        Icons.code,
+                        size: 34,
+                        color: Colors.green.shade700,
+                        weight: 800,
                       ),
-                    ],
+                      onPressed: _showCliCommandsDialog,
+                    ),
+                  ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.refresh,
+                      size: 40,
+                      color: Colors.green.shade700,
+                      weight: 800,
+                    ),
+                    onPressed: () {
+                      widget.onReturnToGame?.call();
+                      Navigator.of(context).pop();
+                    },
                   ),
                 ),
                 Positioned(
                   bottom: 16,
                   right: 16,
                   child: GestureDetector(
-                    onTap: () {
+                    onTap: () async {
                       Navigator.of(context).popUntil((route) => route.isFirst);
+                      if (widget.onExitToResumePanel != null) {
+                        await widget.onExitToResumePanel!.call();
+                        return;
+                      }
+                      if (widget.onExitApp != null) {
+                        widget.onExitApp!.call();
+                        return;
+                      }
                       widget.onExitToOpeningPanel?.call();
                     },
                     child: Image.asset(
@@ -198,6 +236,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
             );
           },
         ),
+      ),
+    );
+  }
+
+  void _showCliCommandsDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                SelectableText(
+                  _cliCommandsText,
+                  style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }
@@ -220,25 +287,22 @@ class DashboardDataLoader {
   static Future<List<int>> loadWeekMinutes(
       {int currentSessionMinutes = 0}) async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/logs/events.ndjson');
       final Map<String, _SessionSpan> spans = {};
-      if (await file.exists()) {
-        final lines = await file.readAsLines();
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          try {
-            final data = jsonDecode(line) as Map<String, dynamic>;
-            final tsStr = data['ts'] as String?;
-            final session = data['session'] as String? ?? 'unknown';
-            if (tsStr == null) continue;
-            final ts = DateTime.tryParse(tsStr)?.toUtc();
-            if (ts == null) continue;
-            final span = spans.putIfAbsent(session, () => _SessionSpan());
-            span.update(ts);
-          } catch (_) {
-            // ignore malformed line
-          }
+      final storage = LogStorage();
+      final lines = await storage.readLines();
+      for (final line in lines) {
+        if (line.trim().isEmpty) continue;
+        try {
+          final data = jsonDecode(line) as Map<String, dynamic>;
+          final tsStr = data['ts'] as String?;
+          final session = data['session'] as String? ?? 'unknown';
+          if (tsStr == null) continue;
+          final ts = DateTime.tryParse(tsStr)?.toUtc();
+          if (ts == null) continue;
+          final span = spans.putIfAbsent(session, () => _SessionSpan());
+          span.update(ts);
+        } catch (_) {
+          // ignore malformed line
         }
       }
 
@@ -407,53 +471,49 @@ class SuccessSeriesLoader {
     final Map<String, _SessionAccumulator> sessions = {};
     DateTime? earliestStart;
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/logs/events.ndjson');
-      if (await file.exists()) {
-        final lines = await file.readAsLines();
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          Map<String, dynamic> data;
-          try {
-            data = jsonDecode(line) as Map<String, dynamic>;
-          } catch (_) {
-            continue;
-          }
-          final type = data['type'] as String?;
-          final sessionId = data['session'] as String? ?? 'unknown';
-          final tsStr = data['ts'] as String?;
-          final ts = tsStr == null ? null : DateTime.tryParse(tsStr)?.toUtc();
-          if (ts != null) {
-            earliestStart = earliestStart == null || ts.isBefore(earliestStart)
-                ? ts
-                : earliestStart;
-          }
-          final acc =
-              sessions.putIfAbsent(sessionId, () => _SessionAccumulator());
-          switch (type) {
-            case 'session_start':
-              acc.start = ts;
-              break;
-            case 'session_end':
-              acc.end = ts;
-              break;
-            case 'trial_result':
-              final uuid = data['uuid'] as String?;
-              final correct = data['correct'] == true;
-              if (uuid == null) break;
-              acc.ensureItem(uuid);
-              acc.items[uuid]!.addComp(correct);
-              break;
-            case 'naming_result':
-              final uuid = data['uuid'] as String?;
-              final correct = data['correct'] == true;
-              if (uuid == null) break;
-              acc.ensureItem(uuid);
-              acc.items[uuid]!.addNaming(correct);
-              break;
-            default:
-              break;
-          }
+      final storage = LogStorage();
+      final lines = await storage.readLines();
+      for (final line in lines) {
+        if (line.trim().isEmpty) continue;
+        Map<String, dynamic> data;
+        try {
+          data = jsonDecode(line) as Map<String, dynamic>;
+        } catch (_) {
+          continue;
+        }
+        final type = data['type'] as String?;
+        final sessionId = data['session'] as String? ?? 'unknown';
+        final tsStr = data['ts'] as String?;
+        final ts = tsStr == null ? null : DateTime.tryParse(tsStr)?.toUtc();
+        if (ts != null) {
+          earliestStart = earliestStart == null || ts.isBefore(earliestStart)
+              ? ts
+              : earliestStart;
+        }
+        final acc = sessions.putIfAbsent(sessionId, () => _SessionAccumulator());
+        switch (type) {
+          case 'session_start':
+            acc.start = ts;
+            break;
+          case 'session_end':
+            acc.end = ts;
+            break;
+          case 'trial_result':
+            final uuid = data['uuid'] as String?;
+            final correct = data['correct'] == true;
+            if (uuid == null) break;
+            acc.ensureItem(uuid);
+            acc.items[uuid]!.addComp(correct);
+            break;
+          case 'naming_result':
+            final uuid = data['uuid'] as String?;
+            final correct = data['correct'] == true;
+            if (uuid == null) break;
+            acc.ensureItem(uuid);
+            acc.items[uuid]!.addNaming(correct);
+            break;
+          default:
+            break;
         }
       }
     } catch (_) {
@@ -574,7 +634,6 @@ class VictoryPanel extends StatelessWidget {
   final String rivalAssetPath;
   final String therapistAssetPath;
   final Color? backgroundColor;
-  final Future<String> Function()? onExportProtocol;
 
   const VictoryPanel({
     super.key,
@@ -583,7 +642,6 @@ class VictoryPanel extends StatelessWidget {
     required this.rivalAssetPath,
     required this.therapistAssetPath,
     this.backgroundColor,
-    this.onExportProtocol,
   });
 
   @override
@@ -597,34 +655,6 @@ class VictoryPanel extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          if (onExportProtocol != null)
-            Positioned(
-              top: 8,
-              left: 8,
-              child: IconButton(
-                tooltip: 'Protokoll exportieren',
-                icon: Icon(
-                  Icons.download,
-                  size: 32,
-                  color: Colors.green.shade700,
-                  weight: 800,
-                ),
-                onPressed: () async {
-                  try {
-                    final msg = await onExportProtocol!.call();
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(msg)),
-                    );
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Export fehlgeschlagen: $e')),
-                    );
-                  }
-                },
-              ),
-            ),
           Positioned.fill(
             child: Align(
               alignment: _trophyAlignment(),
@@ -782,7 +812,10 @@ class _WiggleTrophyState extends State<_WiggleTrophy>
 
 class CalendarPanel extends StatelessWidget {
   final List<int> weekMinutes;
-  const CalendarPanel({super.key, required this.weekMinutes});
+  const CalendarPanel({
+    super.key,
+    required this.weekMinutes,
+  });
 
   @override
   Widget build(BuildContext context) {
