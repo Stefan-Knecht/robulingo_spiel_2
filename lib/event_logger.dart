@@ -114,14 +114,15 @@ class EventLogger {
     final line = jsonEncode(payload);
     try {
       await _storage!.appendLine(line);
-      _pendingUpload.add(line);
-      _scheduleUpload();
-      if (type == 'audio_target_match') {
-        _pendingAudioMatchUpload.add(line);
-        _scheduleAudioMatchUpload();
-      }
     } catch (_) {
       // swallow logging errors
+    }
+    // Always queue for remote upload, even if local storage failed (e.g. web storage blocked).
+    _pendingUpload.add(line);
+    _scheduleUpload();
+    if (type == 'audio_target_match') {
+      _pendingAudioMatchUpload.add(line);
+      _scheduleAudioMatchUpload();
     }
   }
 

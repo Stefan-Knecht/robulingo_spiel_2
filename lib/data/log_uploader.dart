@@ -34,11 +34,23 @@ class LogUploader {
   }) async {
     if (lines.isEmpty) return true;
     final body = '${lines.join('\n')}\n';
-    final gz = gzip.encode(utf8.encode(body));
+    final rawBytes = utf8.encode(body);
+    List<int> payload = rawBytes;
+    String? contentEncoding;
+    if (!kIsWeb) {
+      try {
+        payload = gzip.encode(rawBytes);
+        contentEncoding = 'gzip';
+      } catch (e) {
+        debugPrint('[log-upload][compress-error] $e');
+        payload = rawBytes;
+        contentEncoding = null;
+      }
+    }
     try {
       final headers = <String, String>{
         'content-type': 'application/x-ndjson',
-        'content-encoding': 'gzip',
+        if (contentEncoding != null) 'content-encoding': contentEncoding,
         'x-user-id': userId,
       };
       if (sessionId != null && sessionId.isNotEmpty) {
@@ -48,7 +60,7 @@ class LogUploader {
           .post(
             _path(endpointPath),
             headers: headers,
-            body: gz,
+            body: payload,
           )
           .timeout(_timeout);
       final ok = res.statusCode >= 200 && res.statusCode < 300;

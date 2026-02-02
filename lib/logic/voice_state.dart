@@ -48,6 +48,26 @@ class VoiceController {
   final AnimationController micController;
   final VoiceState state;
   final VoidCallback onStateChanged;
+  bool _micControllerFailed = false;
+
+  void _safeMicStop() {
+    if (_micControllerFailed) return;
+    try {
+      micController.stop();
+    } catch (_) {
+      _micControllerFailed = true;
+    }
+  }
+
+  void _safeMicForward(Duration total) {
+    if (_micControllerFailed) return;
+    try {
+      micController.duration = total;
+      micController.forward(from: 0);
+    } catch (_) {
+      _micControllerFailed = true;
+    }
+  }
 
   bool _permissionsGranted(dynamic res) {
     try {
@@ -108,7 +128,7 @@ class VoiceController {
     state.namingInProgress = false;
     state.micOn = false;
     state.micStage = -1;
-    micController.stop();
+    _safeMicStop();
     onStateChanged();
   }
 
@@ -173,8 +193,7 @@ class VoiceController {
     onStateChanged();
     final totalSeconds =
         firstWindow.inSeconds + (allowRepeat ? repeatWindow.inSeconds : 0) + 2;
-    micController.duration = Duration(seconds: totalSeconds);
-    micController.forward(from: 0);
+    _safeMicForward(Duration(seconds: totalSeconds));
 
     if (!await ensureMicReady(onPermanentDisable: onPermanentDisable)) {
       state.namingStatus = 'Mic nicht verfügbar. Tippe Weiter.';
@@ -183,7 +202,7 @@ class VoiceController {
       state.micStage = -1;
       state.micDenied = true;
       state.namingInProgress = false;
-      micController.stop();
+      _safeMicStop();
       onStateChanged();
       return null;
     }
@@ -240,7 +259,7 @@ class VoiceController {
     state.namingInProgress = false;
     state.micOn = false;
     state.micStage = -1;
-    micController.stop();
+    _safeMicStop();
     if (result == null) {
       state.namingOutcome = null;
       state.namingStatus = '';

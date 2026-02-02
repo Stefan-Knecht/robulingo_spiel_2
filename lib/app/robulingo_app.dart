@@ -110,6 +110,7 @@ class _RestartGratisInfo {
 
 class _RobuLingoAppState extends State<RobuLingoApp>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  bool _disposed = false;
   static const int cachedItemCount = 12; // TODO: 500 im Zielzustand
   static const int namingMinUniqueItems = 5;
   // Tunable: spacing between naming reward steps/beeps.
@@ -279,6 +280,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   int _restartPanelInfoRequest = 0;
   bool _lifecyclePersisting = false;
   final FocusNode _keyboardFocusNode = FocusNode(debugLabel: 'AppKeyboard');
+  bool _micControllerDisposed = false;
 
   @override
   void initState() {
@@ -319,7 +321,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       micController: micController,
       state: voiceState,
       onStateChanged: () {
-        if (mounted) setState(() {});
+        if (_disposed || !mounted) return;
+        // Avoid setState during build/async mic callbacks.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_disposed || !mounted) return;
+          setState(() {});
+        });
       },
     );
     ladderController = HexagonController(
@@ -2101,7 +2108,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     namingInProgress = false;
     micOn = false;
     micStage = -1;
-    micController.stop();
+    if (!_micControllerDisposed) {
+      try {
+        micController.stop();
+      } catch (_) {}
+    }
     if (moves > 0) {
       unawaited(_runNamingRewardSteps(token: token, steps: moves));
     }
@@ -2366,6 +2377,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _gotoNextTrial() {
+    if (_disposed || !mounted) return;
     if (namingInProgress) {
       debugPrint(
           '[trial][next-blocked] namingInProgress=true token=$currentTrialToken idx=$trialIndex');
@@ -2416,6 +2428,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (micGateToken == token) return false;
     micGateToken = token;
     micGateActive = true;
+    if (_keyboardFocusNode.hasFocus) {
+      _keyboardFocusNode.unfocus();
+    }
     debugPrint(
         '[naming][gate-open] token=$token trialIdx=$trialIndex block=$namingBlockRemaining');
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2554,13 +2569,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (event is! RawKeyDownEvent) return false;
     final focusWidget = FocusManager.instance.primaryFocus?.context?.widget;
     if (focusWidget is EditableText) return false;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
-      if (micGateActive) {
-        Navigator.of(context).pop('allow');
-        return true;
-      }
       if (showRestartSplash) {
         unawaited(_startFromSplash());
         return true;
@@ -2580,9 +2593,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Widget _wrapWithKeyboardShortcuts(Widget child) {
-    if (!_keyboardFocusNode.hasFocus) {
+    if (!micGateActive && !_keyboardFocusNode.hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_keyboardFocusNode.hasFocus) {
+        if (mounted && !micGateActive && !_keyboardFocusNode.hasFocus) {
           _keyboardFocusNode.requestFocus();
         }
       });
@@ -2590,7 +2603,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTapDown: (_) {
-        if (!_keyboardFocusNode.hasFocus) {
+        if (!micGateActive && !_keyboardFocusNode.hasFocus) {
           _keyboardFocusNode.requestFocus();
         }
       },
@@ -2604,6 +2617,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   @override
   void dispose() {
+    _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     playbackSub?.cancel();
     player.dispose();
@@ -2615,6 +2629,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     namingBeepPlayer2.dispose();
     voiceController.cancelActive();
     ladderController.dispose();
+    _micControllerDisposed = true;
     micController.dispose();
     nativeSelectTimer?.cancel();
     _keyboardFocusNode.dispose();
