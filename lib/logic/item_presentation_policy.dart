@@ -110,8 +110,7 @@ class ItemPresentationPolicy {
   final Set<String> _blockedFromNaming = {};
 
   // Active naming block
-  List<String>? _activeNamingBlock;
-  int _activeNamingIndex = 0;
+  Queue<String>? _activeNamingQueue;
 
   // Resume point in comprehension (block index 0..9)
   int? _resumeComprehensionIndex;
@@ -131,8 +130,7 @@ class ItemPresentationPolicy {
   List<String> get refillerQueueSnapshot =>
       List<String>.unmodifiable(_refillerQueue.toList());
 
-  bool get isNamingActive =>
-      _activeNamingBlock != null && _activeNamingIndex < _activeNamingBlock!.length;
+  bool get isNamingActive => _activeNamingQueue != null && _activeNamingQueue!.isNotEmpty;
 
   bool get hasNamingPool => _namingPool.isNotEmpty;
 
@@ -150,7 +148,7 @@ class ItemPresentationPolicy {
     if (isNamingActive) {
       return PresentationSlot(
         mode: PresentationMode.naming,
-        targetUuid: _activeNamingBlock![_activeNamingIndex],
+        targetUuid: _activeNamingQueue!.first,
       );
     }
     if (_comprehensionBlock.isEmpty) {
@@ -165,11 +163,12 @@ class ItemPresentationPolicy {
   bool ensureNamingBlock({required bool namingDisabled}) {
     if (namingDisabled) return false;
     if (isNamingActive) return false;
+    if (readyToName.length < config.minQualifiedItemsToStart) return false;
     if (_namingPool.isEmpty) return false;
+    _resumeComprehensionIndex ??= _comprehensionIndex;
     final blockSize = _nextNamingBlockSize();
     if (blockSize <= 0) return false;
-    _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
-    _activeNamingIndex = 0;
+    _activeNamingQueue = Queue<String>.of(_buildNextNamingBlock(blockSize: blockSize));
     return true;
   }
 
@@ -187,8 +186,7 @@ class ItemPresentationPolicy {
     _namingPool.clear();
     _poolCursor = 0;
     _blockedFromNaming.clear();
-    _activeNamingBlock = null;
-    _activeNamingIndex = 0;
+    _activeNamingQueue = null;
     _resumeComprehensionIndex = null;
     _lastSlotFromRefiller = false;
   }
@@ -348,8 +346,8 @@ class ItemPresentationPolicy {
       _resumeComprehensionIndex ??= _comprehensionIndex;
       final blockSize = _nextNamingBlockSize();
       if (blockSize > 0) {
-        _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
-        _activeNamingIndex = 0;
+        _activeNamingQueue =
+            Queue<String>.of(_buildNextNamingBlock(blockSize: blockSize));
       }
     }
 
@@ -361,8 +359,7 @@ class ItemPresentationPolicy {
   /// Cancel the current naming block and resume comprehension.
   PresentationSlot cancelActiveNamingBlock() {
     if (!isNamingActive) return currentSlot;
-    _activeNamingBlock = null;
-    _activeNamingIndex = 0;
+    _activeNamingQueue = null;
     final resume = _resumeComprehensionIndex;
     _resumeComprehensionIndex = null;
     if (resume != null) {
@@ -380,11 +377,14 @@ class ItemPresentationPolicy {
     bool refillerDirty = false;
 
     if (!isNamingActive) {
-      if (!namingDisabled && _namingPool.isNotEmpty) {
+      if (!namingDisabled &&
+          readyToName.length >= config.minQualifiedItemsToStart &&
+          _namingPool.isNotEmpty) {
+        _resumeComprehensionIndex ??= _comprehensionIndex;
         final blockSize = _nextNamingBlockSize();
         if (blockSize > 0) {
-          _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
-          _activeNamingIndex = 0;
+          _activeNamingQueue =
+              Queue<String>.of(_buildNextNamingBlock(blockSize: blockSize));
         }
         final slot = currentSlot;
         refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
@@ -393,24 +393,37 @@ class ItemPresentationPolicy {
       return NamingAdvanceDecision(nextSlot: currentSlot, refillerQueueDirty: false);
     }
 
-    if (_activeNamingIndex < _activeNamingBlock!.length &&
-        _activeNamingBlock![_activeNamingIndex] == currentUuid) {
-      _activeNamingIndex++;
-    }
-    while (_activeNamingIndex < _activeNamingBlock!.length &&
-        !readyToName.contains(_activeNamingBlock![_activeNamingIndex])) {
-      _activeNamingIndex++;
+    final q = _activeNamingQueue!;
+
+    // Rotate the queue *once per finished naming trial*.
+    //
+    // Important: removal (mastery/max-attempts) may happen before this callback
+    // runs (e.g., per-attempt updates during the trial). In that case the queue
+    // may already have advanced, so we only rotate if the head matches.
+    if (q.isNotEmpty && q.first == currentUuid) {
+      final u = q.removeFirst();
+      if (readyToName.contains(u)) {
+        q.addLast(u);
+      }
     }
 
-    if (_activeNamingIndex >= _activeNamingBlock!.length) {
-      _activeNamingBlock = null;
-      _activeNamingIndex = 0;
+    // Drop any stale head that is no longer eligible (e.g., removed mid-trial).
+    while (q.isNotEmpty && !readyToName.contains(q.first)) {
+      q.removeFirst();
+    }
 
-      if (!namingDisabled && _namingPool.isNotEmpty) {
+    if (q.isEmpty) {
+      _activeNamingQueue = null;
+
+      // Optional chaining: if there are still enough qualified items, continue
+      // naming with a fresh block; otherwise resume comprehension.
+      if (!namingDisabled &&
+          readyToName.length >= config.minQualifiedItemsToStart &&
+          _namingPool.isNotEmpty) {
         final blockSize = _nextNamingBlockSize();
         if (blockSize > 0) {
-          _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
-          _activeNamingIndex = 0;
+          _activeNamingQueue =
+              Queue<String>.of(_buildNextNamingBlock(blockSize: blockSize));
         }
         final slot = currentSlot;
         refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
@@ -420,12 +433,9 @@ class ItemPresentationPolicy {
       final resume = _resumeComprehensionIndex;
       _resumeComprehensionIndex = null;
       if (resume != null) {
-        _comprehensionIndex = resume.clamp(0, max(0, _comprehensionBlock.length - 1));
+        _comprehensionIndex =
+            resume.clamp(0, max(0, _comprehensionBlock.length - 1));
       }
-
-      final slot = currentSlot;
-      refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
-      return NamingAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
     }
 
     final slot = currentSlot;
@@ -439,6 +449,9 @@ class ItemPresentationPolicy {
     required int namingAttempts,
     required int namingCorrect,
   }) {
+    // Idempotency: if we've already removed/blocked this item from naming,
+    // do not enqueue it again or mutate state repeatedly.
+    if (_blockedFromNaming.contains(uuid)) return false;
     final shouldRemove = namingCorrect > config.namingMasteryCorrectThreshold ||
         namingAttempts > config.namingDownFromNamingMaxAttempts;
     if (!shouldRemove) return false;
@@ -449,10 +462,11 @@ class ItemPresentationPolicy {
     // reappears via refiller/comprehension, it can immediately re-qualify for naming
     // based on stale 4/4 history, causing "more than 3 correct namings" within a session.
     _compLast.remove(uuid);
-    if (isNamingActive && _activeNamingBlock != null) {
-      _activeNamingBlock = _activeNamingBlock!.where((u) => u != uuid).toList();
-      if (_activeNamingIndex > _activeNamingBlock!.length) {
-        _activeNamingIndex = _activeNamingBlock!.length;
+    if (_activeNamingQueue != null && _activeNamingQueue!.isNotEmpty) {
+      final filtered = _activeNamingQueue!.where((u) => u != uuid).toList();
+      _activeNamingQueue = filtered.isEmpty ? Queue<String>() : Queue<String>.of(filtered);
+      if (_activeNamingQueue!.isEmpty) {
+        _activeNamingQueue = null;
       }
     }
     _enqueueRefiller(uuid);

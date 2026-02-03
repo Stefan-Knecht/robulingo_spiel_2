@@ -23,11 +23,17 @@ class NamingFlowOutcome {
     required this.correct,
     required this.moves,
     required this.transcript,
+    required this.attempts,
+    required this.correctCount,
+    required this.usedHint,
   });
 
   final bool correct;
   final int moves;
   final String transcript;
+  final int attempts;
+  final int correctCount;
+  final bool usedHint;
 }
 
 class MicInitResult {
@@ -128,9 +134,7 @@ class NamingController {
           onStatus: (s) {
             if (onStatus != null) onStatus!(s);
           },
-          onError: (e) {
-            if (onError != null) onError!(e.errorMsg);
-          },
+          onError: (e) => _handleInitializeError(e),
         );
         final hasSpeechPerm = await speech.hasPermission;
         _log(
@@ -196,7 +200,6 @@ class NamingController {
     required Future<void> Function() playHint,
     required void Function(NamingPhase phase) onPhase,
     required void Function(String transcript) onTranscript,
-    void Function(String transcript, bool correct, bool isRepeat)? onAttemptScored,
     Duration firstWindow = const Duration(seconds: 5),
     Duration repeatWindow = const Duration(seconds: 5),
     bool allowRepeat = true,
@@ -210,6 +213,10 @@ class NamingController {
     print('_liveTranscript: $_liveTranscript');
     print('localeID: $localeId');
 
+    // Run semantics: one outcome per slot/uuid.
+    // Optionally allow exactly one hint+repeat listen (listen -> hint -> listen).
+    if (!_isValid(localFlow, sessionId, isCurrent)) return null;
+
     onPhase(NamingPhase.listeningFirst);
     final firstCorrect = await _listenAndScore(
       duration: firstWindow,
@@ -219,30 +226,25 @@ class NamingController {
       isCurrent: isCurrent,
       scorer: scorer,
       onTranscript: onTranscript,
-      onScored: (transcript, correct) {
-        onAttemptScored?.call(transcript, correct, false);
-      },
       localeId: localeId,
     );
-    if (!_isValid(localFlow, sessionId, isCurrent)) {
-      return null;
-    }
-    // Always play the (double) audio hint after the first attempt, regardless of correctness.
-    // If the first attempt was correct, we still play the two hints back-to-back, but skip the
-    // second recording window.
-    onPhase(NamingPhase.playingHint);
-    await playHint();
     if (!_isValid(localFlow, sessionId, isCurrent)) return null;
 
     if (firstCorrect || !allowRepeat) {
       onPhase(NamingPhase.finished);
       return NamingFlowOutcome(
         correct: firstCorrect,
-        // Game rule: correct naming (first attempt) advances 2 steps.
         moves: firstCorrect ? 2 : 0,
         transcript: _liveTranscript,
+        attempts: 1,
+        correctCount: firstCorrect ? 1 : 0,
+        usedHint: false,
       );
     }
+
+    onPhase(NamingPhase.playingHint);
+    await playHint();
+    if (!_isValid(localFlow, sessionId, isCurrent)) return null;
 
     onPhase(NamingPhase.listeningRepeat);
     final repeatCorrect = await _listenAndScore(
@@ -253,22 +255,34 @@ class NamingController {
       isCurrent: isCurrent,
       scorer: scorer,
       onTranscript: onTranscript,
-      onScored: (transcript, correct) {
-        onAttemptScored?.call(transcript, correct, true);
-      },
       localeId: localeId,
     );
-    if (!_isValid(localFlow, sessionId, isCurrent)) {
-      return null;
-    }
+    if (!_isValid(localFlow, sessionId, isCurrent)) return null;
 
+    final correct = repeatCorrect;
     onPhase(NamingPhase.finished);
     return NamingFlowOutcome(
-      correct: repeatCorrect,
-      // Game rule: correct repetition (after hint) advances 1 step.
-      moves: repeatCorrect ? 1 : 0,
+      correct: correct,
+      moves: correct ? 1 : 0,
       transcript: _liveTranscript,
+      attempts: 1,
+      correctCount: correct ? 1 : 0,
+      usedHint: true,
     );
+  }
+
+  void _handleInitializeError(dynamic error) {
+    if (onError == null) return;
+    String? msg;
+    try {
+      msg = (error as dynamic).errorMsg as String?;
+    } catch (_) {
+      msg = null;
+    }
+    final message = (msg != null && msg.trim().isNotEmpty)
+        ? msg
+        : (error?.toString() ?? 'speech-init-error');
+    onError!(message);
   }
 
   Future<bool> _listenAndScore({
@@ -416,4 +430,30 @@ class NamingController {
     // ignore: avoid_print
     print(msg);
   }
+}
+
+@visibleForTesting
+NamingFlowOutcome simulateNamingRunOutcome({
+  required bool firstCorrect,
+  required bool repeatCorrect,
+  bool allowRepeat = true,
+}) {
+  if (firstCorrect || !allowRepeat) {
+    return NamingFlowOutcome(
+      correct: firstCorrect,
+      moves: firstCorrect ? 2 : 0,
+      transcript: '',
+      attempts: 1,
+      correctCount: firstCorrect ? 1 : 0,
+      usedHint: false,
+    );
+  }
+  return NamingFlowOutcome(
+    correct: repeatCorrect,
+    moves: repeatCorrect ? 1 : 0,
+    transcript: '',
+    attempts: 1,
+    correctCount: repeatCorrect ? 1 : 0,
+    usedHint: true,
+  );
 }

@@ -30,7 +30,6 @@ class VoiceState {
   bool micGateGranted = false;
   bool micOn = false;
   int micStage = -1;
-  int lastNamingAutoToken = -1;
 }
 
 /// Encapsulates the speech/naming flow and mic readiness logic.
@@ -138,7 +137,6 @@ class VoiceController {
     required bool Function(String transcript, String targetText) scorer,
     required Future<void> Function() playHint,
     required void Function(String transcript) onTranscript,
-    void Function(String transcript, bool correct, bool isRepeat)? onAttemptScored,
     required bool Function() isCurrent,
     VoidCallback? onPermanentDisable,
     bool userInitiated = false,
@@ -249,7 +247,6 @@ class VoiceController {
         onStateChanged();
         onTranscript(text);
       },
-      onAttemptScored: onAttemptScored,
       firstWindow: firstWindow,
       repeatWindow: repeatWindow,
       allowRepeat: allowRepeat,

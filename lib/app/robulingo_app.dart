@@ -64,6 +64,34 @@ import 'package:robulingo_flutter/utils/text_utils.dart';
 // Note: compare against normalized base codes (e.g. "ja-JP" -> "ja").
 const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
 
+@visibleForTesting
+bool shouldSkipComprehensionAutoAdvance({
+  required bool namingHold,
+  required bool namingInProgress,
+  required bool inNamingSlot,
+}) {
+  return namingHold ||
+      namingInProgress ||
+      inNamingSlot;
+}
+
+@visibleForTesting
+bool shouldRenderNamingView({
+  required PresentationMode slotMode,
+  required bool namingInProgress,
+  required bool hasNamingOutcome,
+  required bool policyNamingActive,
+  required bool namingTransition,
+}) {
+  // Rendering is driven by the phase/slot, not by whether the Trial is already built.
+  // This prevents a "comprehension-looking" frame during naming-slot loading.
+  return slotMode == PresentationMode.naming ||
+      namingInProgress ||
+      hasNamingOutcome ||
+      policyNamingActive ||
+      namingTransition;
+}
+
 // ------------------------------------------------------------
 // RobuLingo Viewer – Überblick für Laien
 // ------------------------------------------------------------
@@ -186,8 +214,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   set micOn(bool value) => voiceState.micOn = value;
   int get micStage => voiceState.micStage;
   set micStage(int value) => voiceState.micStage = value;
-  int get lastNamingAutoToken => voiceState.lastNamingAutoToken;
-  set lastNamingAutoToken(int value) => voiceState.lastNamingAutoToken = value;
   late AnimationController micController;
   late Animation<double> micAnimation;
   final List<bool> lastTenResults =
@@ -2095,7 +2121,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       micPromptActive = false;
       namingStatus = '';
     });
-    lastNamingAutoToken = -1; // nächsten Naming-Autostart erlauben
     await _startNamingFlow(token, skipGate: skipGate, userInitiated: true);
   }
 
@@ -2150,6 +2175,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       namingDisabled: namingDisabled,
       namingInProgress: namingInProgress,
     );
+    if (kDebugMode) {
+      debugPrint(
+          '[naming][advance] current=$currentUuid -> next=${decision.nextSlot.mode}:${decision.nextSlot.targetUuid} policyActive=${presentationPolicy.isNamingActive}');
+    }
     if (decision.refillerQueueDirty) {
       unawaited(_persistRefillerQueue());
     }
@@ -2202,16 +2231,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           _liveTranscript = text;
         });
       },
-      onAttemptScored: (heard, correct, isRepeat) {
-        if (!isCurrent()) return;
-        protocolLog.addNaming(
-          label: trial.target.text,
-          nativeLabel: trial.target.nativeText,
-          phonetic: trial.target.phonetic,
-          heard: heard,
-          correct: correct,
-        );
-      },
       userInitiated: userInitiated,
       firstWindow: const Duration(seconds: windowFirst),
       repeatWindow: const Duration(seconds: windowRepeat),
@@ -2231,14 +2250,23 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final uuid = trial.target.uuid;
     debugPrint(
         '[naming][scored] uuid=$uuid transcript="${result.transcript}" target="${trial.target.text}" correct=$wasCorrect moves=${result.moves}');
+    protocolLog.addNaming(
+      label: trial.target.text,
+      nativeLabel: trial.target.nativeText,
+      phonetic: trial.target.phonetic,
+      heard: result.transcript,
+      correct: wasCorrect,
+    );
     _lastAnsweredCursorUuid = uuid;
     _lastNonRefillerCursorUuid = uuid;
-    itemStats.addNaming(uuid, wasCorrect);
     if (loggerReady) {
       unawaited(logger.log('naming_result',
           {'lang': lang, 'uuid': uuid, 'correct': wasCorrect}));
     }
     namingHistory.add(wasCorrect);
+    // Run semantics: one outcome per naming slot; repeats happen via the naming block.
+    // Therefore removal thresholds (mastery/overuse) must be applied across runs.
+    itemStats.addNaming(uuid, wasCorrect);
     final stats = itemStats.statsFor(uuid);
     final removedFromNaming = presentationPolicy.onNamingStatsUpdated(
       uuid: uuid,
@@ -2247,9 +2275,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     );
     if (removedFromNaming) {
       final byCorrect =
-          stats.namingCorrect > presentationPolicy.config.namingMasteryCorrectThreshold;
+          stats.namingCorrect >
+              presentationPolicy.config.namingMasteryCorrectThreshold;
       final byAttempts =
-          stats.namingAttempts > presentationPolicy.config.namingDownFromNamingMaxAttempts;
+          stats.namingAttempts >
+              presentationPolicy.config.namingDownFromNamingMaxAttempts;
       final reason = byCorrect && byAttempts
           ? 'mastery+max_attempts'
           : (byCorrect ? 'mastery' : 'max_attempts');
@@ -2361,14 +2391,23 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   void _advanceToNext(int epoch, {int? token}) {
     final t = token ?? currentTrialToken;
-    // Im Benennen-Modus nie auto-advance; nur Weiter-Button darf wechseln.
-    final bool namingActive = _isNamingTrial() || namingInProgress;
-    if (namingHold || namingActive) return;
+    final bool initialSkip = shouldSkipComprehensionAutoAdvance(
+      namingHold: namingHold,
+      namingInProgress: namingInProgress,
+      inNamingSlot: currentSlot.mode == PresentationMode.naming,
+    );
+    if (initialSkip) return;
     Future.delayed(const Duration(milliseconds: 700), () {
       if (!mounted || epoch != selectionEpoch) return;
       if (t != currentTrialToken) return;
-      final bool namingActiveInner = _isNamingTrial() || namingInProgress;
-      if (namingHold || namingActiveInner) return;
+      final bool delayedSkip = shouldSkipComprehensionAutoAdvance(
+        namingHold: namingHold,
+        namingInProgress: namingInProgress,
+        inNamingSlot: currentSlot.mode == PresentationMode.naming,
+      );
+      if (delayedSkip) {
+        return;
+      }
       _gotoNextTrial();
     });
   }
@@ -2406,10 +2445,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         micGateToken = -1;
       }
     }
-    if (presentationPolicy.ensureNamingBlock(namingDisabled: namingDisabled)) {
-      pendingNextSlot = presentationPolicy.currentSlot;
-    }
     final nextSlot = pendingNextSlot ?? presentationPolicy.currentSlot;
+    assert(() {
+      if (presentationPolicy.isNamingActive &&
+          nextSlot.mode != PresentationMode.naming) {
+        debugPrint(
+            '[flow][invariant] namingActive=true but nextSlot=${nextSlot.mode} currentSlot=${currentSlot.mode} pendingNextSlot=${pendingNextSlot?.mode} policySlot=${presentationPolicy.currentSlot.mode}');
+        return false;
+      }
+      return true;
+    }());
     pendingNextSlot = null;
     unawaited(_applySlot(nextSlot));
     debugPrint(
@@ -2816,12 +2861,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             : trial.targetImageBytes;
         final size = MediaQuery.of(context).size;
         final bool isLandscape = size.width > size.height;
-        final bool isNamingTrial = currentTrial != null && _isNamingTrial();
-      final bool isNamingView = isNamingTrial ||
-          namingInProgress ||
-          namingOutcome != null ||
-          (namingBlockActive && !hasAnswered) ||
-          _namingTransition;
+        final bool isNamingView = shouldRenderNamingView(
+          slotMode: currentSlot.mode,
+          namingInProgress: namingInProgress,
+          hasNamingOutcome: namingOutcome != null,
+          policyNamingActive: namingBlockActive,
+          namingTransition: _namingTransition,
+        );
         final double baseImageHeight = isLandscape
             ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
             : min(size.height * 0.38, 320.0);
@@ -2831,22 +2877,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         final bool showDashboardButton =
             ladder.hasFlagAppeared || ladder.winsYou > 0 || ladder.winsRival > 0;
         final bool showHourglass = namingInProgress || batchLoading || loading;
-        if (isNamingTrial) {
-          _showMicGateIfNeeded(currentTrialToken);
-          if (micGateGranted &&
-              micPrimed &&
-              !namingHold &&
-              !namingInProgress &&
-              namingOutcome == null &&
-              lastNamingAutoToken != currentTrialToken) {
-            lastNamingAutoToken = currentTrialToken;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              _startNamingFlow(currentTrialToken, skipGate: true);
-            });
+        assert(() {
+          if (currentSlot.mode == PresentationMode.naming && !isNamingView) {
+            debugPrint(
+                '[flow][invariant] slot=naming but isNamingView=false (trialLoading=$trialIsLoading policyNamingActive=$namingBlockActive namingInProgress=$namingInProgress namingOutcome=${namingOutcome != null} transition=$_namingTransition)');
+            return false;
           }
-        }
-
+          return true;
+        }());
         final String phoneticLang = HintsService.normalizeLangCode(lang);
         final bool hasPhoneticData = trial.target.phonetic != null &&
             trial.target.phonetic!.isNotEmpty &&

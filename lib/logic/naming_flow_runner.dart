@@ -16,8 +16,6 @@ Future<NamingFlowOutcome?> runNamingFlow({
   required bool Function(String transcript, String targetText) scorer,
   required Future<void> Function(ItemData item) playHintAudioForItem,
   required void Function(String transcript) onTranscript,
-  required void Function(String heard, bool correct, bool isRepeat)
-      onAttemptScored,
   required bool userInitiated,
   Duration firstWindow = const Duration(seconds: 4),
   Duration repeatWindow = const Duration(seconds: 6),
@@ -43,10 +41,6 @@ Future<NamingFlowOutcome?> runNamingFlow({
     onTranscript: (text) {
       if (!isCurrent()) return;
       onTranscript(text);
-    },
-    onAttemptScored: (heard, correct, isRepeat) {
-      if (!isCurrent()) return;
-      onAttemptScored(heard, correct, isRepeat);
     },
     isCurrent: isCurrent,
     userInitiated: userInitiated,
