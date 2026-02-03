@@ -364,7 +364,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     resumeStateService =
         ResumeStateService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateController = ResumeStateController(service: resumeStateService);
-    voiceController.initSpeech();
     _initLogger();
     _initUserId();
     _loadSavedOnboarding();
@@ -2054,13 +2053,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (namingHold) return; // Benennen wartet auf Button (nur für 2AFC)
     unawaited(_persistSessionCache());
     if (_isNamingTrial()) {
-      if (!micPrimed) {
-        setState(() {
-          micPromptActive = true;
-          namingStatus = 'Tippe das Mikro, um Benennen zu starten.';
-        });
-        return;
-      }
       debugPrint('[trial][start] idx=$trialIndex token=$token naming=true');
       return _startNamingFlow(token);
     } else {
@@ -2071,7 +2063,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   Future<void> _openMicSettings() async {
     setState(() {
-      namingStatus = 'Einstellungen öffnen...';
+      namingStatus = '';
     });
     await openAppSettings();
     if (!mounted) return;
@@ -2085,10 +2077,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       if (ready) {
         namingStatus = '';
       } else if (micPermanentlyDenied || speechPermanentlyDenied) {
-        namingStatus =
-            'Bitte erlaube Mikrofon/Spracherkennung in den Einstellungen.';
+        namingStatus = '';
       } else {
-        namingStatus = 'Mic/Sprache nicht erlaubt. Tippe Aufnehmen erneut.';
+        namingStatus = '';
       }
     });
   }
@@ -2108,12 +2099,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     })) {
       setState(() {
         micDenied = true;
-        if (namingStatus.isEmpty) {
-          namingStatus = micPermanentlyDenied || speechPermanentlyDenied
-              ? 'Mikro dauerhaft gesperrt. Öffne die Einstellungen.'
-              : 'Mikro gesperrt.';
-        }
+        namingStatus = '';
+        micPrimed = false;
+        micGateGranted = false;
+        namingBlockRemaining = 20;
       });
+      final hadActiveBlock = presentationPolicy.mode == PresentationMode.naming;
+      if (hadActiveBlock) {
+        _cancelActiveNamingBlock();
+      } else {
+        _gotoNextTrial();
+      }
       return;
     }
     setState(() {
@@ -2196,7 +2192,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (!micPrimed) {
       setState(() {
         micPromptActive = true;
-        namingStatus = 'Tippe das Mikro, um Benennen zu starten.';
+        namingStatus = '';
       });
       return;
     }
@@ -2619,6 +2615,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
+      if (_isNamingTrial() && !namingInProgress && !micGateActive) {
+        unawaited(_startNamingFlow(currentTrialToken, userInitiated: true));
+        return true;
+      }
       if (showRestartSplash) {
         unawaited(_startFromSplash());
         return true;

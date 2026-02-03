@@ -260,11 +260,7 @@ class NamingView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isWeb = kIsWeb;
-    final double gapAfterStatus = isWeb ? 2 : 8;
     final double gapHourglass = isWeb ? 2 : 6;
-    final double gapButton = isWeb ? 4 : 8;
-    final double gapSettings = isWeb ? 2 : 6;
-    final double gapTranscript = isWeb ? 2 : 4;
     final double cardMargin = isWeb ? 4 : 8;
     final double cardPadding = isWeb ? 8 : 12;
     final bool isCorrect = namingOutcome == true;
@@ -274,18 +270,6 @@ class NamingView extends StatelessWidget {
     final Color? cardFill = namingOutcome == null
         ? null
         : (isCorrect ? Colors.green.shade200 : Colors.red.shade200);
-    final bool suppressDuringRepeat =
-        namingStatus == 'Hör zu...' || namingStatus == 'Wiederhole...';
-    final bool showRepeatIcon = namingStatus == 'Wiederhole...';
-    final statusText = suppressDuringRepeat
-        ? ''
-        : (namingStatus.isEmpty
-            ? (!micPrimed ? 'Tippe das Mikro, um zu benennen.' : '')
-            : namingStatus);
-    final bool showTranscript =
-        namingOutcome != null || liveTranscript.isNotEmpty;
-    final String transcriptText =
-        liveTranscript.isEmpty ? 'Keine ASR-Erkennung' : liveTranscript;
     final Uint8List targetImageBytes =
         targetOnLeft ? leftImageBytes : rightImageBytes;
     final Uint8List otherImageBytes =
@@ -415,99 +399,32 @@ class NamingView extends StatelessWidget {
             ],
           ),
         ),
-        if (statusText.isNotEmpty || showRepeatIcon) ...[
-          SizedBox(height: gapAfterStatus),
-          if (showRepeatIcon)
-            const CircleAvatar(
-              radius: 16,
-              backgroundColor: Colors.green,
-              child: Icon(Icons.refresh, color: Colors.white, size: 18),
-            )
-          else
-            Text(statusText, style: const TextStyle(fontSize: 14)),
-        ],
         if (showHourglass && !isWeb)
           Padding(
             padding: EdgeInsets.only(top: gapHourglass),
             child: Icon(Icons.hourglass_top,
                 size: 18, color: Colors.grey.shade700),
           ),
-        Padding(
-          padding: EdgeInsets.only(top: gapButton),
-          child: ElevatedButton.icon(
-            onPressed: namingInProgress ? null : onStartNaming,
-            icon: const Icon(Icons.mic),
-            label: const Text('Aufnehmen'),
-          ),
-        ),
-        if (micDenied || namingHold)
+        if (liveTranscript.isNotEmpty)
           Padding(
-            padding: EdgeInsets.only(top: gapButton),
-            child: OutlinedButton.icon(
-              onPressed: () => onSkip('mic-denied'),
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text('Weiter'),
-            ),
-          ),
-        if (micDenied || micPermanentlyDenied || speechPermanentlyDenied)
-          Padding(
-            padding: EdgeInsets.only(top: gapSettings),
-            child: OutlinedButton.icon(
-              onPressed: onOpenSettings,
-              icon: const Icon(Icons.settings),
-              label: const Text('Einstellungen öffnen'),
-            ),
-          ),
-        IconButton(
-          onPressed: () => onSkip('user-skip'),
-          padding: isWeb ? EdgeInsets.zero : null,
-          constraints:
-              isWeb ? const BoxConstraints(minWidth: 32, minHeight: 32) : null,
-          icon: const Icon(Icons.refresh,
-              color: Colors.red, size: 28, opticalSize: 28),
-          tooltip: 'Überspringen',
-        ),
-        if (showTranscript) ...[
-          SizedBox(height: gapTranscript),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: namingOutcome == null
-                  ? Colors.grey.shade200
-                  : (isCorrect ? Colors.green.shade50 : Colors.red.shade50),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: borderColor),
-            ),
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 6,
-              runSpacing: 4,
-              children: [
-                if (namingOutcome != null)
-                  Icon(
-                    isCorrect ? Icons.check : Icons.close,
-                    size: 16,
-                    color:
-                        isCorrect ? Colors.green.shade700 : Colors.red.shade700,
-                  ),
-                Text(
-                  'ASR: $transcriptText',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: namingOutcome == null
-                        ? Colors.grey.shade800
-                        : (isCorrect
-                            ? Colors.green.shade800
-                            : Colors.red.shade800),
-                  ),
-                  textAlign: TextAlign.center,
+            padding: const EdgeInsets.only(top: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.black12),
+              ),
+              child: Text(
+                liveTranscript,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
                 ),
-              ],
+                textAlign: TextAlign.center,
+              ),
             ),
           ),
-        ],
       ],
     );
   }

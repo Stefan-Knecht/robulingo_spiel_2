@@ -77,18 +77,8 @@ class VoiceController {
   }
 
   Future<void> initSpeech() async {
-    try {
-      final res = await namingController.ensureMicReadyDetailed();
-      state.micReady = res.ready;
-      state.micPermanentlyDenied = res.isMicPermanentlyDenied;
-      state.speechPermanentlyDenied = res.isSpeechPermanentlyDenied;
-      onStateChanged();
-    } catch (_) {
-      state.micReady = false;
-      state.micPermanentlyDenied = false;
-      state.speechPermanentlyDenied = false;
-      onStateChanged();
-    }
+    // No-op by default: do not prompt for permissions implicitly.
+    // Mic permission should be requested only via explicit user action.
   }
 
   Future<bool> ensureMicReady({VoidCallback? onPermanentDisable}) async {
@@ -98,13 +88,7 @@ class VoiceController {
     state.speechPermanentlyDenied = res.isSpeechPermanentlyDenied;
     if (!res.ready) {
       if (res.isMicPermanentlyDenied || res.isSpeechPermanentlyDenied) {
-        state.namingStatus =
-            'Mikro/Spracherkennung sind dauerhaft gesperrt. Öffne die Einstellungen und erlaube den Zugriff.';
         onPermanentDisable?.call();
-      } else {
-        state.namingStatus = _permissionsGranted(res)
-            ? 'Mic/ASR nicht verfügbar (${res.platform}).'
-            : 'Mic/Sprache nicht erlaubt. Bitte erlauben und Weiter tippen.';
       }
       state.namingHold = true;
       state.micDenied = true;
@@ -145,21 +129,8 @@ class VoiceController {
     bool allowRepeat = false,
     String? localeId,
   }) async {
-    // Immer neu initialisieren, auch wenn micReady bereits true war.
-    final init = await namingController.ensureMicReadyDetailed();
-    state.micReady = init.ready;
-    state.micPermanentlyDenied = init.isMicPermanentlyDenied;
-    state.speechPermanentlyDenied = init.isSpeechPermanentlyDenied;
-    if (!init.ready) {
-      if (init.isMicPermanentlyDenied || init.isSpeechPermanentlyDenied) {
-        state.namingStatus =
-            'Mikro/Spracherkennung sind dauerhaft gesperrt. Öffne die Einstellungen.';
-        onPermanentDisable?.call();
-      } else {
-        state.namingStatus = _permissionsGranted(init)
-            ? 'Mic/ASR nicht verfügbar (${init.platform}).'
-            : 'Mic/Sprache nicht erlaubt. Bitte erlauben und Weiter tippen.';
-      }
+    // Do not request permissions here (run should have been initiated explicitly).
+    if (!state.micReady) {
       state.namingHold = true;
       state.micDenied = true;
       onStateChanged();
@@ -174,7 +145,7 @@ class VoiceController {
         state.micPromptActive = false;
       } else {
       state.micPromptActive = true;
-      state.namingStatus = 'Tippe das Mikro, um Benennen zu starten.';
+      state.namingStatus = '';
       onStateChanged();
       return null;
       }
@@ -184,7 +155,7 @@ class VoiceController {
     state.micPromptActive = false;
     state.namingHold = false;
     state.namingOutcome = null;
-    state.namingStatus = 'Benennen...';
+    state.namingStatus = '';
     state.micStage = 0;
     state.micOn = true;
     state.liveTranscript = '';
@@ -193,18 +164,6 @@ class VoiceController {
         firstWindow.inSeconds + (allowRepeat ? repeatWindow.inSeconds : 0) + 2;
     _safeMicForward(Duration(seconds: totalSeconds));
 
-    if (!await ensureMicReady(onPermanentDisable: onPermanentDisable)) {
-      state.namingStatus = 'Mic nicht verfügbar. Tippe Weiter.';
-      state.namingHold = true;
-      state.micOn = false;
-      state.micStage = -1;
-      state.micDenied = true;
-      state.namingInProgress = false;
-      _safeMicStop();
-      onStateChanged();
-      return null;
-    }
-
     final result = await namingController.runFlow(
       trialToken: token,
       targetText: targetText,
@@ -212,7 +171,7 @@ class VoiceController {
       scorer: scorer,
       playHint: () async {
         if (!isCurrent()) return;
-        state.namingStatus = 'Hör zu...';
+        state.namingStatus = '';
         state.micStage = 1;
         state.micOn = false;
         onStateChanged();
@@ -224,13 +183,13 @@ class VoiceController {
           case NamingPhase.idle:
             break;
           case NamingPhase.listeningFirst:
-            state.namingStatus = 'Benennen...';
+            state.namingStatus = '';
             state.micStage = 0;
             state.micOn = true;
             state.namingOutcome = null;
             break;
           case NamingPhase.listeningRepeat:
-            state.namingStatus = 'Wiederhole...';
+            state.namingStatus = '';
             state.micStage = 2;
             state.micOn = true;
             break;

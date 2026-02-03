@@ -108,11 +108,11 @@ class _MicGateState extends State<MicGate> with SingleTickerProviderStateMixin {
                 ],
               ),
             ),
-            Positioned(
-              bottom: 20,
-              right: 20,
-              child: IconButton(
-                tooltip: 'Abbrechen',
+              Positioned(
+                bottom: 20,
+                right: 20,
+                child: IconButton(
+                tooltip: '',
                 icon: const Icon(Icons.close, size: 28),
                 onPressed: () {
                   if (_handled) return;
