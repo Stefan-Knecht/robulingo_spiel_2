@@ -652,6 +652,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       curriculumStartOffset = 0;
       curriculum.clear();
       trialBuffer.reset();
+      itemByUuid.clear();
       trialIndex = 0;
       currentTrial = null;
       _lastDisplayTrial = null;
@@ -794,7 +795,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final restored = await readSessionCache(sessionCacheStore);
     if (restored == null) return false;
     try {
+      itemByUuid.clear();
       trialBuffer.replaceAll(restored.items);
+      for (final it in restored.items) {
+        itemByUuid[it.uuid] = it;
+      }
       ladderController.reset(clearWins: false);
       setState(() {
         lang = restored.lang;
@@ -1300,6 +1305,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final bool explicitStartRequested = prep.explicitStartRequested;
     final resetDeps = SessionResetDeps(
       trialBuffer: trialBuffer,
+      itemByUuid: itemByUuid,
       presentationPolicy: presentationPolicy,
       itemStats: itemStats,
       comprehensionHistory: comprehensionHistory,
