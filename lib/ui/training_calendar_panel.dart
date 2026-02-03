@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 
 import 'paper_month_calendar.dart';
 import 'paper_week_calendar.dart';
+import '../constants.dart';
+import '../data/user_log_service.dart';
+import '../data/user_summary_service.dart';
 import '../logic/log_storage.dart';
 
 // Kalender-Widget: liest lokale Logs und zeigt 4 Wochen pro Seite.
@@ -14,16 +17,24 @@ import '../logic/log_storage.dart';
 class TrainingCalendarPanel extends StatefulWidget {
   const TrainingCalendarPanel({
     super.key,
-    this.thresholdMinutes = 5,
+    this.thresholdMinutes = 1,
     this.idleCapSeconds = 20,
     this.refreshInterval = const Duration(seconds: 30),
     this.fallbackDatesUtc,
+    this.userId,
+    this.workerHost,
+    this.apiPrefix,
+    this.thresholdRuns = 10,
   });
 
   final int thresholdMinutes;
   final int idleCapSeconds;
   final Duration refreshInterval;
   final List<DateTime>? fallbackDatesUtc;
+  final String? userId;
+  final String? workerHost;
+  final String? apiPrefix;
+  final int? thresholdRuns;
 
   @override
   State<TrainingCalendarPanel> createState() => _TrainingCalendarPanelState();
@@ -67,7 +78,13 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
   @override
   void didUpdateWidget(covariant TrainingCalendarPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_sameFallbackDates(oldWidget.fallbackDatesUtc, widget.fallbackDatesUtc)) {
+    if (!_sameFallbackDates(
+            oldWidget.fallbackDatesUtc, widget.fallbackDatesUtc) ||
+        oldWidget.userId != widget.userId ||
+        oldWidget.workerHost != widget.workerHost ||
+        oldWidget.apiPrefix != widget.apiPrefix ||
+        oldWidget.thresholdMinutes != widget.thresholdMinutes ||
+        oldWidget.thresholdRuns != widget.thresholdRuns) {
       _loadData();
     }
   }
@@ -81,6 +98,10 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
         thresholdMinutes: widget.thresholdMinutes,
         idleCapSeconds: widget.idleCapSeconds,
         fallbackDatesUtc: widget.fallbackDatesUtc,
+        userId: widget.userId,
+        workerHost: widget.workerHost,
+        apiPrefix: widget.apiPrefix,
+        thresholdRuns: widget.thresholdRuns,
       );
       if (!mounted) return;
       setState(() {
@@ -207,58 +228,73 @@ class TrainingCalendarLoader {
     int idleCapSeconds = 20,
     int? maxEventsPerSession,
     List<DateTime>? fallbackDatesUtc,
+    String? userId,
+    String? workerHost,
+    String? apiPrefix,
+    int? thresholdRuns = 10,
+    int rangeDays = 60,
   }) async {
     final Map<String, _SessionData> sessions = {};
     final thresholdSeconds = thresholdMinutes * 60;
-    try {
-      final storage = LogStorage();
-      final lines = await storage.readLines();
-      // Jede Zeile ist ein Event im NDJSON-Format.
-      for (final line in lines) {
-        final raw = line.trim();
-        if (raw.isEmpty) continue;
-        Map<String, dynamic> data;
-        try {
-          data = jsonDecode(raw) as Map<String, dynamic>;
-        } catch (_) {
-          continue;
+    if (userId != null && userId.isNotEmpty) {
+      final now = DateTime.now().toUtc();
+      final from = now.subtract(Duration(days: max(1, rangeDays) - 1));
+      final summaryService = UserSummaryService(
+        workerHost: (workerHost ?? defaultWorkerHost),
+        apiPrefix: (apiPrefix ?? defaultApiPrefix),
+      );
+      final summary = await summaryService.fetchSummary(
+        userId: userId,
+        from: from,
+        to: now,
+      );
+      if (summary.isNotEmpty) {
+        final activeByDay = <DateTime, int>{};
+        final runsByDay = <DateTime, int>{};
+        for (final entry in summary.entries) {
+          final key = TrainingCalendarData.dayKey(entry.key);
+          activeByDay[key] = entry.value.seconds;
+          if (entry.value.runs > 0) {
+            runsByDay[key] = entry.value.runs;
+          }
         }
-        final tsStr = data['ts'] as String?;
-        final session = data['session'] as String?;
-        if (tsStr == null ||
-            tsStr.isEmpty ||
-            session == null ||
-            session.isEmpty) {
-          continue;
-        }
-        final ts = _parseTs(tsStr);
-        if (ts == null) continue;
-
-        final sessionData = sessions.putIfAbsent(session, _SessionData.new);
-        sessionData.eventCount += 1;
-        if (maxEventsPerSession != null &&
-            sessionData.eventCount > maxEventsPerSession) {
-          sessionData.exceededMax = true;
-        }
-        sessionData.timestampsMs.add(ts.millisecondsSinceEpoch);
-        final type = data['type'] as String?;
-        if (type == 'session_start') {
-          final tsMs = ts.millisecondsSinceEpoch;
-          sessionData.sessionStartMs = sessionData.sessionStartMs == null
-              ? tsMs
-              : min(sessionData.sessionStartMs!, tsMs);
-        } else {
-          // Nur "echte" Events zaehlen als Aktivitaet.
-          sessionData.hasNonStart = true;
-        }
+        return TrainingCalendarData(
+          activeSecondsByDay: activeByDay,
+          runsByDay: runsByDay,
+          thresholdSeconds: thresholdSeconds,
+          thresholdRuns: thresholdRuns,
+        );
       }
-    } catch (_) {
-      // ignore log errors
+
+      try {
+        final remoteLines = await _fetchRemoteLogLines(
+          userId: userId,
+          workerHost: workerHost ?? defaultWorkerHost,
+          apiPrefix: apiPrefix ?? defaultApiPrefix,
+        );
+        if (remoteLines.isNotEmpty) {
+          _accumulateSessionLines(sessions, remoteLines, maxEventsPerSession);
+        }
+      } catch (_) {
+        // ignore remote log errors
+      }
     }
 
-    final activeByDay =
-        _computeActiveByDay(sessions, idleCapSeconds, _startBonusSeconds);
-    if (activeByDay.isEmpty && fallbackDatesUtc != null && fallbackDatesUtc.isNotEmpty) {
+    if (sessions.isEmpty) {
+      try {
+        final storage = LogStorage();
+        final lines = await storage.readLines();
+        _accumulateSessionLines(sessions, lines, maxEventsPerSession);
+      } catch (_) {
+        // ignore log errors
+      }
+    }
+
+    final aggregates =
+        _computeDailyAggregates(sessions, idleCapSeconds, _startBonusSeconds);
+    if (aggregates.activeByDay.isEmpty &&
+        fallbackDatesUtc != null &&
+        fallbackDatesUtc.isNotEmpty) {
       final fallback = <DateTime, int>{};
       for (final date in fallbackDatesUtc) {
         final dayKey = TrainingCalendarData.dayKey(date);
@@ -266,13 +302,74 @@ class TrainingCalendarLoader {
       }
       return TrainingCalendarData(
         activeSecondsByDay: fallback,
+        runsByDay: const {},
         thresholdSeconds: thresholdSeconds,
+        thresholdRuns: thresholdRuns,
       );
     }
     return TrainingCalendarData(
-      activeSecondsByDay: activeByDay,
+      activeSecondsByDay: aggregates.activeByDay,
+      runsByDay: aggregates.runsByDay,
       thresholdSeconds: thresholdSeconds,
+      thresholdRuns: thresholdRuns,
     );
+  }
+
+  static Future<List<String>> _fetchRemoteLogLines({
+    required String userId,
+    required String workerHost,
+    required String apiPrefix,
+  }) async {
+    final service =
+        UserLogService(workerHost: workerHost, apiPrefix: apiPrefix);
+    return await service.fetchLines(userId: userId);
+  }
+
+  static void _accumulateSessionLines(
+    Map<String, _SessionData> sessions,
+    Iterable<String> lines,
+    int? maxEventsPerSession,
+  ) {
+    for (final line in lines) {
+      final raw = line.trim();
+      if (raw.isEmpty) continue;
+      Map<String, dynamic> data;
+      try {
+        data = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {
+        continue;
+      }
+      final tsStr = data['ts'] as String?;
+      final session = data['session'] as String?;
+      if (tsStr == null ||
+          tsStr.isEmpty ||
+          session == null ||
+          session.isEmpty) {
+        continue;
+      }
+      final ts = _parseTs(tsStr);
+      if (ts == null) continue;
+
+      final sessionData = sessions.putIfAbsent(session, _SessionData.new);
+      sessionData.eventCount += 1;
+      if (maxEventsPerSession != null &&
+          sessionData.eventCount > maxEventsPerSession) {
+        sessionData.exceededMax = true;
+      }
+      sessionData.timestampsMs.add(ts.millisecondsSinceEpoch);
+      final type = data['type'] as String?;
+      if (type == 'session_start') {
+        final tsMs = ts.millisecondsSinceEpoch;
+        sessionData.sessionStartMs = sessionData.sessionStartMs == null
+            ? tsMs
+            : min(sessionData.sessionStartMs!, tsMs);
+      } else if (type == 'trial_result' || type == 'naming_result') {
+        sessionData.runCount += 1;
+      } else {
+        // Nur "echte" Events zaehlen als Aktivitaet.
+        sessionData.hasNonStart = true;
+      }
+    }
   }
 
   static DateTime? _parseTs(String tsStr) {
@@ -305,12 +402,13 @@ class TrainingCalendarLoader {
     return active.toInt();
   }
 
-  static Map<DateTime, int> _computeActiveByDay(
+  static _DailyAggregates _computeDailyAggregates(
     Map<String, _SessionData> sessions,
     int idleCapSeconds,
     int startBonusSeconds,
   ) {
     final Map<DateTime, int> activeByDay = {};
+    final Map<DateTime, int> runsByDay = {};
     for (final session in sessions.values) {
       if (session.timestampsMs.isEmpty) continue;
       final activeSeconds = _computeActiveSeconds(
@@ -327,8 +425,11 @@ class TrainingCalendarLoader {
       // Wir ordnen die gesamte Session dem Tag des Session-Starts zu.
       final dayKey = TrainingCalendarData.dayKey(startDate);
       activeByDay[dayKey] = (activeByDay[dayKey] ?? 0) + activeSeconds;
+      if (session.runCount > 0) {
+        runsByDay[dayKey] = (runsByDay[dayKey] ?? 0) + session.runCount;
+      }
     }
-    return activeByDay;
+    return _DailyAggregates(activeByDay: activeByDay, runsByDay: runsByDay);
   }
 }
 
@@ -336,20 +437,26 @@ class TrainingCalendarLoader {
 // Enthalten ist auch eine "Rival"-Logik fuer die Anzeige.
 class TrainingCalendarData {
   final Map<DateTime, int> activeSecondsByDay;
+  final Map<DateTime, int> runsByDay;
   final int thresholdSeconds;
+  final int? thresholdRuns;
   // Rival soll in einem 14-Tage-Fenster 9 Tage erreichen.
   static const int rollingWindowDays = 14;
   static const int rollingQualifiedTarget = 9;
 
   TrainingCalendarData({
     required this.activeSecondsByDay,
+    required this.runsByDay,
     required this.thresholdSeconds,
+    required this.thresholdRuns,
   });
 
   static TrainingCalendarData empty({required int thresholdSeconds}) {
     return TrainingCalendarData(
       activeSecondsByDay: const {},
+      runsByDay: const {},
       thresholdSeconds: thresholdSeconds,
+      thresholdRuns: null,
     );
   }
 
@@ -368,7 +475,7 @@ class TrainingCalendarData {
     final todayKey = dayKey(nowUtc);
     DateTime? lastQualified;
     for (final entry in activeSecondsByDay.entries) {
-      if (entry.value < thresholdSeconds) continue;
+      if (!_isQualified(entry.key)) continue;
       if (lastQualified == null) {
         lastQualified = entry.key;
       } else if (entry.key.isAfter(lastQualified)) {
@@ -397,7 +504,7 @@ class TrainingCalendarData {
       final date = base.add(Duration(days: i));
       final dateKey = dayKey(date);
       final activeSeconds = activeSecondsByDay[dateKey] ?? 0;
-      final qualified = activeSeconds >= thresholdSeconds;
+      final qualified = _isQualified(dateKey);
       dateKeys.add(dateKey);
       activeSecondsList.add(activeSeconds);
       playerQualified.add(qualified);
@@ -460,11 +567,20 @@ class TrainingCalendarData {
         continue;
       }
       final activeSeconds = activeSecondsByDay[key] ?? 0;
-      if (activeSeconds >= thresholdSeconds) {
+      if (_isQualified(key)) {
         qualifiedCount += 1;
       }
     }
     return qualifiedCount;
+  }
+
+  bool _isQualified(DateTime dateKey) {
+    final activeSeconds = activeSecondsByDay[dateKey] ?? 0;
+    if (activeSeconds >= thresholdSeconds) return true;
+    final runTarget = thresholdRuns;
+    if (runTarget == null || runTarget <= 0) return false;
+    final runs = runsByDay[dateKey] ?? 0;
+    return runs >= runTarget;
   }
 }
 
@@ -474,4 +590,15 @@ class _SessionData {
   bool hasNonStart = false;
   int eventCount = 0;
   bool exceededMax = false;
+  int runCount = 0;
+}
+
+class _DailyAggregates {
+  const _DailyAggregates({
+    required this.activeByDay,
+    required this.runsByDay,
+  });
+
+  final Map<DateTime, int> activeByDay;
+  final Map<DateTime, int> runsByDay;
 }

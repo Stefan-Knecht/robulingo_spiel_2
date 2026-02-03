@@ -109,20 +109,16 @@ class _MicGateState extends State<MicGate> with SingleTickerProviderStateMixin {
               ),
             ),
             Positioned(
-              bottom: 24,
-              right: 24,
-              child: GestureDetector(
-                onTap: () {
+              bottom: 20,
+              right: 20,
+              child: IconButton(
+                tooltip: 'Abbrechen',
+                icon: const Icon(Icons.close, size: 28),
+                onPressed: () {
                   if (_handled) return;
                   _handled = true;
                   widget.onDeny();
                 },
-                child: Image.asset(
-                  'assets/icons/mic_delay.webp',
-                  width: 34,
-                  height: 34,
-                  fit: BoxFit.contain,
-                ),
               ),
             ),
             ],

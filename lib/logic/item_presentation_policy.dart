@@ -21,9 +21,6 @@ class ItemPresentationConfig {
     this.minQualifiedItemsToStart = 5, // >4
     this.namingMasteryCorrectThreshold = 1, // remove if correct > 1
     this.namingDownFromNamingMaxAttempts = 5, // remove if attempts > 5
-
-    // Postpone/reactivate
-    this.maxPostponedBlocks = 3,
   }) : assert(comprehensionBlockSize >= 2),
        assert(comprehensionCoreSize >= 1),
        assert(comprehensionCoreSize < comprehensionBlockSize);
@@ -39,8 +36,6 @@ class ItemPresentationConfig {
   final int minQualifiedItemsToStart;
   final int namingMasteryCorrectThreshold;
   final int namingDownFromNamingMaxAttempts;
-
-  final int maxPostponedBlocks;
 }
 
 class PresentationSlot {
@@ -78,7 +73,7 @@ class NamingAdvanceDecision {
 /// - distractors from previous 10 curriculum items (else next 10)
 /// - up-from-comprehension: 4/4 correct comprehension qualifies for naming and removes from comprehension
 /// - down-from-comprehension: remove after >15 answered comprehension attempts
-/// - naming blocks of 5 (priority when available), postpone/reactivate FIFO blocks (max 3)
+/// - naming blocks of 5 (priority when available)
 /// - up/down-from-naming removal returns items to refiller FIFO
 class ItemPresentationPolicy {
   ItemPresentationPolicy({ItemPresentationConfig? config, Random? random})
@@ -118,15 +113,10 @@ class ItemPresentationPolicy {
   List<String>? _activeNamingBlock;
   int _activeNamingIndex = 0;
 
-  // Postponed naming blocks (FIFO)
-  final Queue<List<String>> _postponedNamingBlocks = Queue<List<String>>();
-
   // Resume point in comprehension (block index 0..9)
   int? _resumeComprehensionIndex;
 
   bool _lastSlotFromRefiller = false;
-
-  bool get hasPostponedNamingBlocks => _postponedNamingBlocks.isNotEmpty;
 
   int get comprehensionIndex => _comprehensionIndex;
 
@@ -143,6 +133,8 @@ class ItemPresentationPolicy {
 
   bool get isNamingActive =>
       _activeNamingBlock != null && _activeNamingIndex < _activeNamingBlock!.length;
+
+  bool get hasNamingPool => _namingPool.isNotEmpty;
 
   PresentationMode get mode => isNamingActive ? PresentationMode.naming : PresentationMode.comprehension;
 
@@ -170,6 +162,17 @@ class ItemPresentationPolicy {
     );
   }
 
+  bool ensureNamingBlock({required bool namingDisabled}) {
+    if (namingDisabled) return false;
+    if (isNamingActive) return false;
+    if (_namingPool.isEmpty) return false;
+    final blockSize = _nextNamingBlockSize();
+    if (blockSize <= 0) return false;
+    _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
+    _activeNamingIndex = 0;
+    return true;
+  }
+
   void reset() {
     _curriculum = const [];
     _indexByUuid.clear();
@@ -186,7 +189,6 @@ class ItemPresentationPolicy {
     _blockedFromNaming.clear();
     _activeNamingBlock = null;
     _activeNamingIndex = 0;
-    _postponedNamingBlocks.clear();
     _resumeComprehensionIndex = null;
     _lastSlotFromRefiller = false;
   }
@@ -316,10 +318,10 @@ class ItemPresentationPolicy {
         // Reset the window so we don't keep "qualifying" every time.
         _compLast.remove(uuid);
       } else {
-        if (readyToName.add(uuid) && !_namingPool.contains(uuid)) {
-          _namingPool.add(uuid);
+        if (readyToName.add(uuid)) {
+          _insertNamingPool(uuid);
         } else if (!_namingPool.contains(uuid)) {
-          _namingPool.add(uuid);
+          _insertNamingPool(uuid);
         }
         if (isInBlock) {
           _replaceComprehensionBlockItem(uuid, enqueueToRefiller: false);
@@ -337,15 +339,18 @@ class ItemPresentationPolicy {
           (_comprehensionIndex + 1) % max(1, _comprehensionBlock.length);
     }
 
-    // Naming priority: start a fresh naming block if possible and not postponed.
+    // Naming priority: start a fresh naming block if possible.
     if (!namingDisabled &&
         !namingInProgress &&
         !isNamingActive &&
         readyToName.length >= config.minQualifiedItemsToStart &&
-        _namingPool.length >= config.namingBlockSize) {
+        _namingPool.isNotEmpty) {
       _resumeComprehensionIndex ??= _comprehensionIndex;
-      _activeNamingBlock = _buildNextNamingBlock();
-      _activeNamingIndex = 0;
+      final blockSize = _nextNamingBlockSize();
+      if (blockSize > 0) {
+        _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
+        _activeNamingIndex = 0;
+      }
     }
 
     final slot = currentSlot;
@@ -353,44 +358,15 @@ class ItemPresentationPolicy {
     return PresentationAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
   }
 
-  /// Called by UI when user postpones naming. Returns the next comprehension slot.
-  PresentationSlot postponeActiveNamingBlock() {
+  /// Cancel the current naming block and resume comprehension.
+  PresentationSlot cancelActiveNamingBlock() {
     if (!isNamingActive) return currentSlot;
-    // Postpone the whole current naming block (not only the remaining items).
-    // This "jumps" the entire block back into the postponed FIFO.
-    final wholeBlock = _activeNamingBlock!
-        .where((u) => readyToName.contains(u))
-        .toList();
-    if (wholeBlock.isNotEmpty) {
-      _postponedNamingBlocks.addLast(wholeBlock);
-      while (_postponedNamingBlocks.length > config.maxPostponedBlocks) {
-        _postponedNamingBlocks.removeFirst();
-      }
-    }
     _activeNamingBlock = null;
     _activeNamingIndex = 0;
     final resume = _resumeComprehensionIndex;
     _resumeComprehensionIndex = null;
-    if (resume != null) return _comprehensionSlotAt(resume);
-    return currentSlot;
-  }
-
-  /// Reactivate postponed naming blocks FIFO. If none, stays in comprehension.
-  PresentationSlot reactivatePostponedNamingBlocks({
-    required bool namingDisabled,
-    required bool namingInProgress,
-  }) {
-    if (namingDisabled || namingInProgress) return currentSlot;
-    if (isNamingActive) return currentSlot;
-    while (_postponedNamingBlocks.isNotEmpty) {
-      final next = _postponedNamingBlocks.removeFirst()
-          .where((u) => readyToName.contains(u))
-          .toList();
-      if (next.isEmpty) continue;
-      _resumeComprehensionIndex ??= _comprehensionIndex;
-      _activeNamingBlock = next;
-      _activeNamingIndex = 0;
-      return currentSlot;
+    if (resume != null) {
+      _comprehensionIndex = resume.clamp(0, max(0, _comprehensionBlock.length - 1));
     }
     return currentSlot;
   }
@@ -404,6 +380,16 @@ class ItemPresentationPolicy {
     bool refillerDirty = false;
 
     if (!isNamingActive) {
+      if (!namingDisabled && _namingPool.isNotEmpty) {
+        final blockSize = _nextNamingBlockSize();
+        if (blockSize > 0) {
+          _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
+          _activeNamingIndex = 0;
+        }
+        final slot = currentSlot;
+        refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
+        return NamingAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
+      }
       return NamingAdvanceDecision(nextSlot: currentSlot, refillerQueueDirty: false);
     }
 
@@ -420,14 +406,12 @@ class ItemPresentationPolicy {
       _activeNamingBlock = null;
       _activeNamingIndex = 0;
 
-      // Continue draining postponed blocks FIFO automatically.
-      while (_postponedNamingBlocks.isNotEmpty) {
-        final next = _postponedNamingBlocks.removeFirst()
-            .where((u) => readyToName.contains(u))
-            .toList();
-        if (next.isEmpty) continue;
-        _activeNamingBlock = next;
-        _activeNamingIndex = 0;
+      if (!namingDisabled && _namingPool.isNotEmpty) {
+        final blockSize = _nextNamingBlockSize();
+        if (blockSize > 0) {
+          _activeNamingBlock = _buildNextNamingBlock(blockSize: blockSize);
+          _activeNamingIndex = 0;
+        }
         final slot = currentSlot;
         refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
         return NamingAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
@@ -460,7 +444,7 @@ class ItemPresentationPolicy {
     if (!shouldRemove) return false;
     _blockedFromNaming.add(uuid);
     readyToName.remove(uuid);
-    _namingPool.remove(uuid);
+    _removeNamingPool(uuid);
     // Important: reset the comprehension qualification window. Otherwise, once the item
     // reappears via refiller/comprehension, it can immediately re-qualify for naming
     // based on stale 4/4 history, causing "more than 3 correct namings" within a session.
@@ -470,16 +454,6 @@ class ItemPresentationPolicy {
       if (_activeNamingIndex > _activeNamingBlock!.length) {
         _activeNamingIndex = _activeNamingBlock!.length;
       }
-    }
-    if (_postponedNamingBlocks.isNotEmpty) {
-      final updated = Queue<List<String>>();
-      for (final block in _postponedNamingBlocks) {
-        final filtered = block.where((u) => u != uuid).toList();
-        if (filtered.isNotEmpty) updated.add(filtered);
-      }
-      _postponedNamingBlocks
-        ..clear()
-        ..addAll(updated);
     }
     _enqueueRefiller(uuid);
     return true;
@@ -543,20 +517,57 @@ class ItemPresentationPolicy {
     return uuid;
   }
 
-  List<String> _buildNextNamingBlock() {
-    if (_namingPool.length < config.namingBlockSize) return const [];
+  int _nextNamingBlockSize() {
+    if (_namingPool.isEmpty) return 0;
+    return min(config.namingBlockSize, _namingPool.length);
+  }
+
+  List<String> _buildNextNamingBlock({required int blockSize}) {
+    if (blockSize <= 0 || _namingPool.isEmpty) return const [];
+    final ordered = _namingPool;
+    final safeSize = min(blockSize, ordered.length);
+    final start = _poolCursor % ordered.length;
     final block = <String>[];
-    int guard = 0;
-    while (block.length < config.namingBlockSize && guard < _namingPool.length * 3) {
-      final idx = _poolCursor % _namingPool.length;
-      _poolCursor++;
-      final uuid = _namingPool[idx];
-      if (!block.contains(uuid)) {
-        block.add(uuid);
-      }
-      guard++;
+    for (int i = 0; i < safeSize; i++) {
+      block.add(ordered[(start + i) % ordered.length]);
     }
+    _poolCursor = (start + safeSize) % ordered.length;
     return block;
+  }
+
+  void _insertNamingPool(String uuid) {
+    if (_namingPool.contains(uuid)) return;
+    final insertIndex = _findInsertIndex(uuid);
+    _namingPool.insert(insertIndex, uuid);
+    if (insertIndex <= _poolCursor) {
+      _poolCursor = min(_poolCursor + 1, _namingPool.length - 1);
+    }
+  }
+
+  void _removeNamingPool(String uuid) {
+    final idx = _namingPool.indexOf(uuid);
+    if (idx < 0) return;
+    _namingPool.removeAt(idx);
+    if (_namingPool.isEmpty) {
+      _poolCursor = 0;
+      return;
+    }
+    if (idx < _poolCursor) {
+      _poolCursor = max(0, _poolCursor - 1);
+    } else if (idx == _poolCursor && _poolCursor >= _namingPool.length) {
+      _poolCursor = 0;
+    }
+  }
+
+  int _findInsertIndex(String uuid) {
+    final keyIdx = _indexByUuid[uuid] ?? (1 << 30);
+    for (int i = 0; i < _namingPool.length; i++) {
+      final other = _namingPool[i];
+      final otherIdx = _indexByUuid[other] ?? (1 << 30);
+      if (keyIdx < otherIdx) return i;
+      if (keyIdx == otherIdx && uuid.compareTo(other) < 0) return i;
+    }
+    return _namingPool.length;
   }
 
   List<String> _distractorNeighborhood(String uuid) {
