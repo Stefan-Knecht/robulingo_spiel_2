@@ -20,9 +20,16 @@ wrangler deploy
 
 After deploy, the app will POST (per-session logs):
 
-- `POST https://<workerHost><apiPrefix>/log` → `userdata/<userId>/runs/<sessionId>.ndjson.gz`
+- `POST https://<workerHost><apiPrefix>/log` → 
+  - raw NDJSON: `userdata/<userId>/raw/<YYYY-MM-DD>/<sessionId>.ndjson`
+  - per-day summary: `userdata/<userId>/summary/<YYYY-MM-DD>.json`
+  - legacy gzip: `userdata/<userId>/runs/<sessionId>.ndjson.gz`
 - `POST https://<workerHost><apiPrefix>/audio-target-matches` → `userdata/<userId>/audio_target_matches/<sessionId>.ndjson.gz`
 
 These endpoints require headers:
 - `x-user-id`
 - `x-session-id`
+
+Summary endpoint:
+- `GET https://<workerHost><apiPrefix>/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
+  - header: `x-user-id`

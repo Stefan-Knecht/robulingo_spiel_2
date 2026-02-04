@@ -5,6 +5,7 @@ import 'trial_buffer.dart';
 class SessionResetDeps {
   SessionResetDeps({
     required this.trialBuffer,
+    required this.itemByUuid,
     required this.presentationPolicy,
     required this.itemStats,
     required this.comprehensionHistory,
@@ -20,6 +21,7 @@ class SessionResetDeps {
   });
 
   final TrialBuffer trialBuffer;
+  final Map<String, Object?> itemByUuid;
   final ItemPresentationPolicy presentationPolicy;
   final ItemStatsTracker itemStats;
   final List<bool> comprehensionHistory;
@@ -40,6 +42,7 @@ void resetSessionState({
   required void Function() clearHintRevealed,
 }) {
   deps.trialBuffer.reset();
+  deps.itemByUuid.clear();
   deps.presentationPolicy.reset();
   deps.comprehensionSeen.clear();
   deps.comprehensionHistory.clear();

@@ -22,6 +22,9 @@ export default {
       if (path.endsWith('/log')) {
         return await handleLog(request, env);
       }
+      if (path.endsWith('/summary')) {
+        return await handleSummary(request, env);
+      }
       if (path.endsWith('/audio-target-matches')) {
         return await handleAudioTargetMatches(request, env);
       }
@@ -43,7 +46,8 @@ export default {
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,HEAD,POST,OPTIONS',
-  'access-control-allow-headers': 'content-type,if-none-match,x-user-id,content-encoding',
+  'access-control-allow-headers':
+    'content-type,if-none-match,x-user-id,x-session-id,content-encoding',
 };
 
 // ---------- /hints ----------
@@ -172,6 +176,8 @@ function normalizeLang(raw) {
 
 // ---------- /log ----------
 const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
+const SUMMARY_IDLE_CAP_SECONDS = 20;
+const SUMMARY_START_BONUS_SECONDS = 5;
 
 async function handleLog(request, env) {
   if (request.method !== 'POST') {
@@ -186,33 +192,64 @@ async function handleLog(request, env) {
     return new Response('missing x-session-id', { status: 400 });
   }
   const chunk = await request.arrayBuffer();
-  const key = `${uid}/runs/${sessionId}.ndjson.gz`;
   const bucket = env.USERDATA;
 
-  // Fetch existing log
-  const existing = await bucket.get(key);
-  if (!existing) {
-    await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
-    return new Response('ok', { status: 200 });
+  const bodyText = await readRequestBody(request, chunk);
+  const lines = bodyText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const sessions = new Map();
+  for (const line of lines) {
+    let data;
+    try {
+      data = JSON.parse(line);
+    } catch (_) {
+      continue;
+    }
+    const tsMs = parseTsMs(data.ts);
+    const sid = data.session;
+    if (tsMs == null || !sid) continue;
+    if (!sessions.has(sid)) {
+      sessions.set(sid, { events: [], rawLines: [] });
+    }
+    const entry = sessions.get(sid);
+    entry.events.push({ tsMs, type: data.type });
+    entry.rawLines.push(line);
   }
 
-  const oldBytes = await existing.arrayBuffer();
-  const total = oldBytes.byteLength + chunk.byteLength;
-  if (total > LOG_MAX_BYTES) {
-    // Rotate current to a dated backup, then start fresh with the new chunk
-    const stamp = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').replace('Z', '');
-    const rotatedKey = `${uid}/runs/${sessionId}-${stamp}.ndjson.gz`;
-    await bucket.copy(key, rotatedKey);
-    await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
-    return new Response('ok-rotated', { status: 200 });
+  for (const [sid, entry] of sessions.entries()) {
+    const state = await loadSessionState(bucket, uid, sid);
+    const sorted = entry.events.sort((a, b) => a.tsMs - b.tsMs);
+    if (sorted.length === 0) continue;
+    const sessionStartMs = resolveSessionStartMs(sorted, state);
+    const dayKey = state.dayKey || dayKeyFromMs(sessionStartMs);
+    const activeSeconds = computeActiveSeconds(
+      sorted,
+      state.lastTsMs,
+      SUMMARY_IDLE_CAP_SECONDS
+    );
+    const hasNonStart = sorted.some((e) => e.type && e.type !== 'session_start');
+    const addBonus = hasNonStart && !state.bonusApplied;
+    const bonus = addBonus ? SUMMARY_START_BONUS_SECONDS : 0;
+    const runCount = sorted.filter((e) => e.type === 'trial_result' || e.type === 'naming_result').length;
+    const shouldCountSession = !state.countedSession;
+    await appendRawSession(bucket, uid, dayKey, sid, entry.rawLines);
+    await updateUserSummary(bucket, uid, dayKey, activeSeconds + bonus, runCount, shouldCountSession ? 1 : 0, sorted[sorted.length - 1].tsMs);
+    await saveSessionState(bucket, uid, sid, {
+      sessionStartMs,
+      dayKey,
+      lastTsMs: sorted[sorted.length - 1].tsMs,
+      bonusApplied: state.bonusApplied || addBonus,
+      countedSession: state.countedSession || shouldCountSession,
+    });
   }
 
-  // Append by re-uploading concatenated bytes (gzip supports multiple members)
-  const merged = new Uint8Array(total);
-  merged.set(new Uint8Array(oldBytes), 0);
-  merged.set(new Uint8Array(chunk), oldBytes.byteLength);
-  await bucket.put(key, merged.buffer, { httpMetadata: { contentType: 'application/gzip' } });
-  return new Response('ok', { status: 200 });
+  // Keep legacy gzip log for audit/debug (optional).
+  await appendLegacyRun(bucket, uid, sessionId, chunk);
+
+  return new Response('ok', { status: 200, headers: CORS_HEADERS });
 }
 
 // ---------- /audio-target-matches ----------
@@ -255,6 +292,49 @@ async function handleAudioTargetMatches(request, env) {
   merged.set(new Uint8Array(chunk), oldBytes.byteLength);
   await bucket.put(key, merged.buffer, { httpMetadata: { contentType: 'application/gzip' } });
   return new Response('ok', { status: 200 });
+}
+
+// ---------- /summary ----------
+async function handleSummary(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const uid = request.headers.get('x-user-id');
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  if (!from || !to) {
+    return new Response('missing from/to', { status: 400, headers: CORS_HEADERS });
+  }
+  const fromDate = parseDateKey(from);
+  const toDate = parseDateKey(to);
+  if (!fromDate || !toDate || fromDate > toDate) {
+    return new Response('invalid range', { status: 400, headers: CORS_HEADERS });
+  }
+  const days = [];
+  const cursor = new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate()));
+  const end = new Date(Date.UTC(toDate.getUTCFullYear(), toDate.getUTCMonth(), toDate.getUTCDate()));
+  while (cursor <= end) {
+    const key = dateKey(cursor);
+    const obj = await env.USERDATA.get(`${uid}/summary/${key}.json`);
+    if (obj) {
+      try {
+        const payload = await obj.json();
+        days.push({ date: key, ...payload });
+      } catch (_) {
+        // ignore parse errors
+      }
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  const body = JSON.stringify({ userId: uid, from, to, days });
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers: { ...CORS_HEADERS, 'content-type': 'application/json' } });
+  }
+  return new Response(body, { status: 200, headers: { ...CORS_HEADERS, 'content-type': 'application/json' } });
 }
 
 // ---------- /user-curriculum ----------
@@ -321,4 +401,172 @@ async function handleResumeState(request, env) {
   }
 
   return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+}
+
+async function readRequestBody(request, chunk) {
+  const encoding = request.headers.get('content-encoding');
+  if (encoding && encoding.toLowerCase() === 'gzip') {
+    try {
+      const ds = new DecompressionStream('gzip');
+      const stream = new Response(chunk).body.pipeThrough(ds);
+      return await new Response(stream).text();
+    } catch (_) {
+      // fall through to plain decode
+    }
+  }
+  return new TextDecoder().decode(chunk);
+}
+
+function parseTsMs(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'number') return Math.floor(raw);
+  if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return parsed;
+    const num = Number(raw);
+    if (!Number.isNaN(num)) return Math.floor(num);
+  }
+  return null;
+}
+
+function dateKey(date) {
+  const y = date.getUTCFullYear().toString().padStart(4, '0');
+  const m = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+  const d = date.getUTCDate().toString().padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function dayKeyFromMs(tsMs) {
+  return dateKey(new Date(tsMs));
+}
+
+function parseDateKey(key) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+  const [y, m, d] = key.split('-').map((v) => parseInt(v, 10));
+  if (!y || !m || !d) return null;
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function resolveSessionStartMs(events, state) {
+  if (state.sessionStartMs) return state.sessionStartMs;
+  let start = null;
+  for (const event of events) {
+    if (event.type === 'session_start') {
+      start = event.tsMs;
+      break;
+    }
+  }
+  return start ?? events[0].tsMs;
+}
+
+function computeActiveSeconds(events, lastTsMs, idleCapSeconds) {
+  let active = 0;
+  if (lastTsMs && events.length > 0) {
+    const gap = Math.max(0, (events[0].tsMs - lastTsMs) / 1000);
+    active += Math.min(gap, idleCapSeconds);
+  }
+  for (let i = 0; i < events.length - 1; i++) {
+    const gap = Math.max(0, (events[i + 1].tsMs - events[i].tsMs) / 1000);
+    active += Math.min(gap, idleCapSeconds);
+  }
+  return Math.floor(active);
+}
+
+async function loadSessionState(bucket, uid, sessionId) {
+  const key = `${uid}/session_state/${sessionId}.json`;
+  const obj = await bucket.get(key);
+  if (!obj) {
+    return {
+      sessionStartMs: null,
+      dayKey: null,
+      lastTsMs: null,
+      bonusApplied: false,
+      countedSession: false,
+    };
+  }
+  try {
+    const data = await obj.json();
+    return {
+      sessionStartMs: data.sessionStartMs || null,
+      dayKey: data.dayKey || null,
+      lastTsMs: data.lastTsMs || null,
+      bonusApplied: !!data.bonusApplied,
+      countedSession: !!data.countedSession,
+    };
+  } catch (_) {
+    return {
+      sessionStartMs: null,
+      dayKey: null,
+      lastTsMs: null,
+      bonusApplied: false,
+      countedSession: false,
+    };
+  }
+}
+
+async function saveSessionState(bucket, uid, sessionId, state) {
+  const key = `${uid}/session_state/${sessionId}.json`;
+  await bucket.put(key, JSON.stringify(state), {
+    httpMetadata: { contentType: 'application/json' },
+  });
+}
+
+async function appendRawSession(bucket, uid, dayKey, sessionId, lines) {
+  if (!lines || lines.length === 0) return;
+  const key = `${uid}/raw/${dayKey}/${sessionId}.ndjson`;
+  const existing = await bucket.get(key);
+  const payload = lines.join('\n') + '\n';
+  if (!existing) {
+    await bucket.put(key, payload, { httpMetadata: { contentType: 'application/x-ndjson' } });
+    return;
+  }
+  const oldText = await existing.text();
+  const merged = oldText + payload;
+  await bucket.put(key, merged, { httpMetadata: { contentType: 'application/x-ndjson' } });
+}
+
+async function updateUserSummary(bucket, uid, dayKey, seconds, runs, sessions, lastEventTs) {
+  const key = `${uid}/summary/${dayKey}.json`;
+  let current = { seconds: 0, runs: 0, sessions: 0, lastEventTs: 0 };
+  const existing = await bucket.get(key);
+  if (existing) {
+    try {
+      const parsed = await existing.json();
+      current.seconds = parsed.seconds || 0;
+      current.runs = parsed.runs || 0;
+      current.sessions = parsed.sessions || 0;
+      current.lastEventTs = parsed.lastEventTs || 0;
+    } catch (_) {
+      // ignore parse errors
+    }
+  }
+  current.seconds += seconds;
+  current.runs += runs;
+  current.sessions += sessions;
+  current.lastEventTs = Math.max(current.lastEventTs || 0, lastEventTs || 0);
+  await bucket.put(key, JSON.stringify(current), {
+    httpMetadata: { contentType: 'application/json' },
+  });
+}
+
+async function appendLegacyRun(bucket, uid, sessionId, chunk) {
+  const key = `${uid}/runs/${sessionId}.ndjson.gz`;
+  const existing = await bucket.get(key);
+  if (!existing) {
+    await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
+    return;
+  }
+  const oldBytes = await existing.arrayBuffer();
+  const total = oldBytes.byteLength + chunk.byteLength;
+  if (total > LOG_MAX_BYTES) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').replace('Z', '');
+    const rotatedKey = `${uid}/runs/${sessionId}-${stamp}.ndjson.gz`;
+    await bucket.copy(key, rotatedKey);
+    await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
+    return;
+  }
+  const merged = new Uint8Array(total);
+  merged.set(new Uint8Array(oldBytes), 0);
+  merged.set(new Uint8Array(chunk), oldBytes.byteLength);
+  await bucket.put(key, merged.buffer, { httpMetadata: { contentType: 'application/gzip' } });
 }

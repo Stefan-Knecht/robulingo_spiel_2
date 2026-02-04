@@ -176,6 +176,15 @@ class HexagonController {
     }
   }
 
+  bool tryRivalStep({double probability = 0.5}) {
+    final p = probability.clamp(0.0, 1.0);
+    if (_rand.nextDouble() >= p) return false;
+    final kind = _applyRivalStep();
+    onMove?.call(MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect));
+    onChanged();
+    return true;
+  }
+
   /// Advances both player and rival forward by the same number of steps,
   /// without using the probabilistic rival scheduler.
   void applyCoupledForwardSteps(

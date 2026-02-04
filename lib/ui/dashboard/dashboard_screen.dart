@@ -8,6 +8,8 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../logic/log_storage.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -55,6 +57,8 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  static const _landingUri =
+      'https://robulingo-landingpage.knechtipad-aec.workers.dev';
   late Future<_DashboardData> _dataFuture;
   static const String _cliCommandsText = '''←    →
 F     J
@@ -160,8 +164,7 @@ F     J
                         ? null
                         : () async {
                             try {
-                              final msg =
-                                  await widget.onExportProtocol!.call();
+                              final msg = await widget.onExportProtocol!.call();
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(content: Text(msg)),
@@ -170,8 +173,7 @@ F     J
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                    content:
-                                        Text('Export fehlgeschlagen: $e')),
+                                    content: Text('Export fehlgeschlagen: $e')),
                               );
                             }
                           },
@@ -213,11 +215,14 @@ F     J
                   right: 16,
                   child: GestureDetector(
                     onTap: () async {
-                      Navigator.of(context).popUntil((route) => route.isFirst);
                       if (widget.onExitToResumePanel != null) {
                         await widget.onExitToResumePanel!.call();
+                        if (!context.mounted) return;
+                        Navigator.of(context)
+                            .popUntil((route) => route.isFirst);
                         return;
                       }
+                      Navigator.of(context).popUntil((route) => route.isFirst);
                       if (widget.onExitApp != null) {
                         widget.onExitApp!.call();
                         return;
@@ -229,6 +234,30 @@ F     J
                       width: 54,
                       height: 54,
                       fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  bottom: 12,
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () async {
+                      final uri = Uri.parse(_landingUri);
+                      await launchUrl(uri,
+                          mode: LaunchMode.externalApplication);
+                    },
+                    child: Text(
+                      _landingUri,
+                      style: TextStyle(
+                        decoration: TextDecoration.underline,
+                        color: Colors.blue.shade700,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ),
@@ -490,7 +519,8 @@ class SuccessSeriesLoader {
               ? ts
               : earliestStart;
         }
-        final acc = sessions.putIfAbsent(sessionId, () => _SessionAccumulator());
+        final acc =
+            sessions.putIfAbsent(sessionId, () => _SessionAccumulator());
         switch (type) {
           case 'session_start':
             acc.start = ts;

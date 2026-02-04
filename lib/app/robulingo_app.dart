@@ -64,6 +64,34 @@ import 'package:robulingo_flutter/utils/text_utils.dart';
 // Note: compare against normalized base codes (e.g. "ja-JP" -> "ja").
 const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
 
+@visibleForTesting
+bool shouldSkipComprehensionAutoAdvance({
+  required bool namingHold,
+  required bool namingInProgress,
+  required bool inNamingSlot,
+}) {
+  return namingHold ||
+      namingInProgress ||
+      inNamingSlot;
+}
+
+@visibleForTesting
+bool shouldRenderNamingView({
+  required PresentationMode slotMode,
+  required bool namingInProgress,
+  required bool hasNamingOutcome,
+  required bool policyNamingActive,
+  required bool namingTransition,
+}) {
+  // Rendering is driven by the phase/slot, not by whether the Trial is already built.
+  // This prevents a "comprehension-looking" frame during naming-slot loading.
+  return slotMode == PresentationMode.naming ||
+      namingInProgress ||
+      hasNamingOutcome ||
+      policyNamingActive ||
+      namingTransition;
+}
+
 // ------------------------------------------------------------
 // RobuLingo Viewer – Überblick für Laien
 // ------------------------------------------------------------
@@ -94,18 +122,9 @@ class RobuLingoApp extends StatefulWidget {
 }
 
 class _RestartCurriculumMetadata {
-  const _RestartCurriculumMetadata(
-      {required this.totalItems, this.gratisValue});
+  const _RestartCurriculumMetadata({required this.totalItems});
 
   final int totalItems;
-  final String? gratisValue;
-}
-
-class _RestartGratisInfo {
-  const _RestartGratisInfo({required this.total, required this.remaining});
-
-  final int total;
-  final int remaining;
 }
 
 class _RobuLingoAppState extends State<RobuLingoApp>
@@ -195,8 +214,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   set micOn(bool value) => voiceState.micOn = value;
   int get micStage => voiceState.micStage;
   set micStage(int value) => voiceState.micStage = value;
-  int get lastNamingAutoToken => voiceState.lastNamingAutoToken;
-  set lastNamingAutoToken(int value) => voiceState.lastNamingAutoToken = value;
   late AnimationController micController;
   late Animation<double> micAnimation;
   final List<bool> lastTenResults =
@@ -217,6 +234,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   List<Trial> get trials => trialBuffer.trials;
   Set<String> get loadedUuids => trialBuffer.loadedUuids;
   Trial? currentTrial;
+  Trial? _lastDisplayTrial;
+  bool _namingTransition = false;
   PresentationSlot currentSlot =
       const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
   PresentationSlot? pendingNextSlot;
@@ -271,11 +290,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   RestartModuleProgress restartModuleProgress = RestartModuleProgress(
     iconAsset: startCurriculumIcons[defaultStartCurriculum] ??
         'assets/icons/cross.webp',
-    progress: 0,
     completed: 0,
     total: 0,
-    freeItemsTotal: 0,
-    freeItemsRemaining: 0,
   );
   int _restartPanelInfoRequest = 0;
   bool _lifecyclePersisting = false;
@@ -348,7 +364,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     resumeStateService =
         ResumeStateService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateController = ResumeStateController(service: resumeStateService);
-    voiceController.initSpeech();
     _initLogger();
     _initUserId();
     _loadSavedOnboarding();
@@ -637,8 +652,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       curriculumStartOffset = 0;
       curriculum.clear();
       trialBuffer.reset();
+      itemByUuid.clear();
       trialIndex = 0;
       currentTrial = null;
+      _lastDisplayTrial = null;
+      _namingTransition = false;
       currentSlot =
           const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
       pendingNextSlot = null;
@@ -657,6 +675,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await _loadInitial();
   }
 
+  void _openModuleSelectorFromResume() {
+    setState(() {
+      showRestartSplash = false;
+      awaitingLang = false;
+      awaitingStart = true;
+      awaitingNative = false;
+      awaitingPickNative = false;
+      pickFlowActive = false;
+      pickListLoading = false;
+      pickListError = null;
+    });
+  }
+
   Future<void> _updateRestartModuleProgress() async {
     if (!showRestartSplash) return;
     final int requestId = ++_restartPanelInfoRequest;
@@ -664,14 +695,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final iconAsset = _moduleIconForStart(startKey);
     final metadata = await _fetchRestartCurriculumMetadata(startKey);
     final cursor = await _loadRestartCursor();
-    final int nextIndex = (cursor ?? -1) + 1;
     final int completed =
-        metadata.totalItems > 0 ? nextIndex.clamp(0, metadata.totalItems) : 0;
+        metadata.totalItems > 0 ? (cursor ?? 0).clamp(0, metadata.totalItems) : 0;
     final int total = metadata.totalItems;
-    final double progressValue =
-        total > 0 ? (completed / total).clamp(0.0, 1.0) : 0.0;
-    final _RestartGratisInfo freeInfo =
-        _calculateGratisInfo(metadata.gratisValue, total, completed);
     if (!mounted ||
         requestId != _restartPanelInfoRequest ||
         !showRestartSplash) {
@@ -680,29 +706,23 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       restartModuleProgress = RestartModuleProgress(
         iconAsset: iconAsset,
-        progress: progressValue,
         completed: completed,
         total: total,
-        freeItemsTotal: freeInfo.total,
-        freeItemsRemaining: freeInfo.remaining,
       );
     });
   }
 
   Future<int?> _loadRestartCursor() async {
-    if (resumeStateController.fallbackEnabled) {
-      final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
-      final entry = resumeStateController.entryForStartKey(startKey);
-      if (entry != null && entry.cursor >= 0) return entry.cursor;
+    final uid = userId;
+    if (uid == null || uid.isEmpty) return null;
+    final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
+    var entry = resumeStateController.entryForStartKey(startKey);
+    if (entry == null || entry.cursor < 0) {
+      final fetched = await resumeStateController.fetchAndSet(uid);
+      entry = fetched?.entryForStartKey(startKey);
     }
-    if (!enableRemoteUserDelta) {
-      return null;
-    }
-    final delta = userDelta ??
-        (userId != null && userId!.isNotEmpty
-            ? await userDeltaStore.load(userId!)
-            : null);
-    return delta?.cursor;
+    if (entry == null || entry.cursor < 0) return null;
+    return entry.cursor;
   }
 
   Future<void> _initializePresentationPolicy({
@@ -758,35 +778,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         items = data['item_order'] as List;
       }
       final total = items.length;
-      return _RestartCurriculumMetadata(
-        totalItems: total,
-        gratisValue: (data['gratis'] as String?)?.trim(),
-      );
+      return _RestartCurriculumMetadata(totalItems: total);
     } catch (e) {
       debugPrint('[restart][curriculum-info] $e');
       return const _RestartCurriculumMetadata(totalItems: 0);
     }
-  }
-
-  _RestartGratisInfo _calculateGratisInfo(
-      String? value, int total, int completed) {
-    if (value == null || value.isEmpty) {
-      return const _RestartGratisInfo(total: 0, remaining: 0);
-    }
-    final double? percent = _parsePercent(value);
-    if (percent != null && total > 0) {
-      final int freeItems = (total * (percent / 100)).round();
-      final int remaining = max(0, freeItems - completed);
-      return _RestartGratisInfo(total: freeItems, remaining: remaining);
-    }
-    return const _RestartGratisInfo(total: 0, remaining: 0);
-  }
-
-  double? _parsePercent(String raw) {
-    final cleaned = raw.replaceAll(RegExp('[^0-9.,-]'), '');
-    if (cleaned.isEmpty) return null;
-    final normalized = cleaned.replaceAll(',', '.');
-    return double.tryParse(normalized);
   }
 
   String _moduleIconForStart(String startKey) {
@@ -799,13 +795,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final restored = await readSessionCache(sessionCacheStore);
     if (restored == null) return false;
     try {
+      itemByUuid.clear();
       trialBuffer.replaceAll(restored.items);
+      for (final it in restored.items) {
+        itemByUuid[it.uuid] = it;
+      }
       ladderController.reset(clearWins: false);
       setState(() {
         lang = restored.lang;
         activeStartCurriculumKey = restored.startKey;
         nativeLang = restored.nativeLang;
         currentTrial = null;
+        _lastDisplayTrial = null;
+        _namingTransition = false;
         currentSlot =
             const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
         pendingNextSlot = null;
@@ -921,6 +923,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         thresholdMinutes: 5,
         idleCapSeconds: 20,
         fallbackDatesUtc: _resumeFallbackDatesUtc(),
+        userId: userId,
+        workerHost: workerHost,
+        apiPrefix: apiPrefix,
       );
       final idleDays = data.idleDaysSince(DateTime.now().toUtc());
       ladderController.setRivalIdleDays(idleDays);
@@ -1300,6 +1305,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final bool explicitStartRequested = prep.explicitStartRequested;
     final resetDeps = SessionResetDeps(
       trialBuffer: trialBuffer,
+      itemByUuid: itemByUuid,
       presentationPolicy: presentationPolicy,
       itemStats: itemStats,
       comprehensionHistory: comprehensionHistory,
@@ -1590,10 +1596,25 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
     final cursor = _currentCursorIndexForResume(startKey);
     if (cursor == null) return;
+    String? native = nativeLang;
+    if (native == null || native.trim().isEmpty) {
+      try {
+        final saved = await onboardingStore.load();
+        if (saved != null &&
+            saved.startKey == startKey &&
+            saved.lang == lang &&
+            saved.nativeLang != null &&
+            saved.nativeLang!.trim().isNotEmpty) {
+          native = saved.nativeLang;
+        }
+      } catch (_) {
+        // ignore fallback errors
+      }
+    }
     final entry = ResumeStateEntry(
       startKey: startKey,
       lang: lang,
-      nativeLang: nativeLang,
+      nativeLang: native,
       cursor: cursor,
       date: DateTime.now().toUtc(),
       winsYou: ladder.winsYou,
@@ -1776,6 +1797,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (!mounted || token != currentTrialToken) return;
     setState(() {
       currentTrial = trial;
+      _namingTransition = false;
+      if (trial != null) {
+        _lastDisplayTrial = trial;
+      }
     });
     if (trial != null && loggerReady) {
       unawaited(logger.log('trial_presented', {
@@ -2034,13 +2059,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (namingHold) return; // Benennen wartet auf Button (nur für 2AFC)
     unawaited(_persistSessionCache());
     if (_isNamingTrial()) {
-      if (!micPrimed) {
-        setState(() {
-          micPromptActive = true;
-          namingStatus = 'Tippe das Mikro, um Benennen zu starten.';
-        });
-        return;
-      }
       debugPrint('[trial][start] idx=$trialIndex token=$token naming=true');
       return _startNamingFlow(token);
     } else {
@@ -2051,7 +2069,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   Future<void> _openMicSettings() async {
     setState(() {
-      namingStatus = 'Einstellungen öffnen...';
+      namingStatus = '';
     });
     await openAppSettings();
     if (!mounted) return;
@@ -2065,10 +2083,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       if (ready) {
         namingStatus = '';
       } else if (micPermanentlyDenied || speechPermanentlyDenied) {
-        namingStatus =
-            'Bitte erlaube Mikrofon/Spracherkennung in den Einstellungen.';
+        namingStatus = '';
       } else {
-        namingStatus = 'Mic/Sprache nicht erlaubt. Tippe Aufnehmen erneut.';
+        namingStatus = '';
       }
     });
   }
@@ -2088,12 +2105,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     })) {
       setState(() {
         micDenied = true;
-        if (namingStatus.isEmpty) {
-          namingStatus = micPermanentlyDenied || speechPermanentlyDenied
-              ? 'Mikro dauerhaft gesperrt. Öffne die Einstellungen.'
-              : 'Mikro gesperrt.';
-        }
+        namingStatus = '';
+        micPrimed = false;
+        micGateGranted = false;
+        namingBlockRemaining = 20;
       });
+      final hadActiveBlock = presentationPolicy.mode == PresentationMode.naming;
+      if (hadActiveBlock) {
+        _cancelActiveNamingBlock();
+      } else {
+        _gotoNextTrial();
+      }
       return;
     }
     setState(() {
@@ -2101,7 +2123,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       micPromptActive = false;
       namingStatus = '';
     });
-    lastNamingAutoToken = -1; // nächsten Naming-Autostart erlauben
     await _startNamingFlow(token, skipGate: skipGate, userInitiated: true);
   }
 
@@ -2136,17 +2157,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
   }
 
-  void _postponeActiveNamingBlock() {
-    final slot = presentationPolicy.postponeActiveNamingBlock();
-    if (slot.targetUuid.isEmpty) return;
-    unawaited(_applySlot(slot));
-  }
-
-  void _reactivateNextPostponedNamingBlock() {
-    final slot = presentationPolicy.reactivatePostponedNamingBlocks(
-      namingDisabled: namingDisabled,
-      namingInProgress: namingInProgress,
-    );
+  void _cancelActiveNamingBlock() {
+    final slot = presentationPolicy.cancelActiveNamingBlock();
     if (slot.targetUuid.isEmpty) return;
     unawaited(_applySlot(slot));
   }
@@ -2157,11 +2169,18 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _gotoNextTrial();
       return;
     }
+    setState(() {
+      _namingTransition = true;
+    });
     final decision = presentationPolicy.onNamingAttemptFinished(
       currentUuid: currentUuid,
       namingDisabled: namingDisabled,
       namingInProgress: namingInProgress,
     );
+    if (kDebugMode) {
+      debugPrint(
+          '[naming][advance] current=$currentUuid -> next=${decision.nextSlot.mode}:${decision.nextSlot.targetUuid} policyActive=${presentationPolicy.isNamingActive}');
+    }
     if (decision.refillerQueueDirty) {
       unawaited(_persistRefillerQueue());
     }
@@ -2179,7 +2198,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (!micPrimed) {
       setState(() {
         micPromptActive = true;
-        namingStatus = 'Tippe das Mikro, um Benennen zu starten.';
+        namingStatus = '';
       });
       return;
     }
@@ -2214,16 +2233,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           _liveTranscript = text;
         });
       },
-      onAttemptScored: (heard, correct, isRepeat) {
-        if (!isCurrent()) return;
-        protocolLog.addNaming(
-          label: trial.target.text,
-          nativeLabel: trial.target.nativeText,
-          phonetic: trial.target.phonetic,
-          heard: heard,
-          correct: correct,
-        );
-      },
       userInitiated: userInitiated,
       firstWindow: const Duration(seconds: windowFirst),
       repeatWindow: const Duration(seconds: windowRepeat),
@@ -2243,12 +2252,23 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final uuid = trial.target.uuid;
     debugPrint(
         '[naming][scored] uuid=$uuid transcript="${result.transcript}" target="${trial.target.text}" correct=$wasCorrect moves=${result.moves}');
-    itemStats.addNaming(uuid, wasCorrect);
+    protocolLog.addNaming(
+      label: trial.target.text,
+      nativeLabel: trial.target.nativeText,
+      phonetic: trial.target.phonetic,
+      heard: result.transcript,
+      correct: wasCorrect,
+    );
+    _lastAnsweredCursorUuid = uuid;
+    _lastNonRefillerCursorUuid = uuid;
     if (loggerReady) {
       unawaited(logger.log('naming_result',
           {'lang': lang, 'uuid': uuid, 'correct': wasCorrect}));
     }
     namingHistory.add(wasCorrect);
+    // Run semantics: one outcome per naming slot; repeats happen via the naming block.
+    // Therefore removal thresholds (mastery/overuse) must be applied across runs.
+    itemStats.addNaming(uuid, wasCorrect);
     final stats = itemStats.statsFor(uuid);
     final removedFromNaming = presentationPolicy.onNamingStatsUpdated(
       uuid: uuid,
@@ -2257,9 +2277,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     );
     if (removedFromNaming) {
       final byCorrect =
-          stats.namingCorrect > presentationPolicy.config.namingMasteryCorrectThreshold;
+          stats.namingCorrect >
+              presentationPolicy.config.namingMasteryCorrectThreshold;
       final byAttempts =
-          stats.namingAttempts > presentationPolicy.config.namingDownFromNamingMaxAttempts;
+          stats.namingAttempts >
+              presentationPolicy.config.namingDownFromNamingMaxAttempts;
       final reason = byCorrect && byAttempts
           ? 'mastery+max_attempts'
           : (byCorrect ? 'mastery' : 'max_attempts');
@@ -2270,6 +2292,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       unawaited(_persistRefillerQueue());
     }
     _liveTranscript = result.transcript;
+    final noAnswer = result.transcript.trim().isEmpty;
+    if (!wasCorrect && noAnswer) {
+      ladderController.tryRivalStep(probability: 0.5);
+    }
     _completeNamingSession(
         token: token, wasCorrect: wasCorrect, moves: result.moves);
   }
@@ -2367,14 +2393,23 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   void _advanceToNext(int epoch, {int? token}) {
     final t = token ?? currentTrialToken;
-    // Im Benennen-Modus nie auto-advance; nur Weiter-Button darf wechseln.
-    final bool namingActive = _isNamingTrial() || namingInProgress;
-    if (namingHold || namingActive) return;
+    final bool initialSkip = shouldSkipComprehensionAutoAdvance(
+      namingHold: namingHold,
+      namingInProgress: namingInProgress,
+      inNamingSlot: currentSlot.mode == PresentationMode.naming,
+    );
+    if (initialSkip) return;
     Future.delayed(const Duration(milliseconds: 700), () {
       if (!mounted || epoch != selectionEpoch) return;
       if (t != currentTrialToken) return;
-      final bool namingActiveInner = _isNamingTrial() || namingInProgress;
-      if (namingHold || namingActiveInner) return;
+      final bool delayedSkip = shouldSkipComprehensionAutoAdvance(
+        namingHold: namingHold,
+        namingInProgress: namingInProgress,
+        inNamingSlot: currentSlot.mode == PresentationMode.naming,
+      );
+      if (delayedSkip) {
+        return;
+      }
       _gotoNextTrial();
     });
   }
@@ -2413,6 +2448,15 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       }
     }
     final nextSlot = pendingNextSlot ?? presentationPolicy.currentSlot;
+    assert(() {
+      if (presentationPolicy.isNamingActive &&
+          nextSlot.mode != PresentationMode.naming) {
+        debugPrint(
+            '[flow][invariant] namingActive=true but nextSlot=${nextSlot.mode} currentSlot=${currentSlot.mode} pendingNextSlot=${pendingNextSlot?.mode} policySlot=${presentationPolicy.currentSlot.mode}');
+        return false;
+      }
+      return true;
+    }());
     pendingNextSlot = null;
     unawaited(_applySlot(nextSlot));
     debugPrint(
@@ -2460,8 +2504,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           micGateGranted = true;
           micPrimed = true;
           _primeMicAndStart(skipGate: true);
-          } else {
-            // deny oder timeout: Block setzen und weiter, Gate später erneut zeigen
+        } else {
+          // deny oder timeout: Block setzen und weiter, Gate später erneut zeigen
           final hadActiveBlock = presentationPolicy.mode == PresentationMode.naming;
           setState(() {
             namingBlockRemaining = 20;
@@ -2471,7 +2515,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             micGateGranted = false;
           });
           if (hadActiveBlock) {
-            _postponeActiveNamingBlock();
+            _cancelActiveNamingBlock();
           } else {
             _gotoNextTrial();
           }
@@ -2577,6 +2621,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
+      if (_isNamingTrial() && !namingInProgress && !micGateActive) {
+        unawaited(_startNamingFlow(currentTrialToken, userInitiated: true));
+        return true;
+      }
       if (showRestartSplash) {
         unawaited(_startFromSplash());
         return true;
@@ -2715,7 +2763,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           viewCount: dashboardViewCount,
           onRestart: () => _restartOnboarding(),
           onStart: _startFromSplash,
+          onSelectModule: _openModuleSelectorFromResume,
           moduleProgress: restartModuleProgress,
+          userId: userId,
+          workerHost: workerHost,
+          apiPrefix: apiPrefix,
           fallbackDatesUtc: _resumeFallbackDatesUtc(),
         ),
       );
@@ -2768,107 +2820,120 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           ],
         ),
       );
-    } else if (currentTrial == null) {
-      body = Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('Trial lädt…'),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: () {
-                final slot = presentationPolicy.currentSlot;
-                if (slot.targetUuid.isEmpty) {
-                  _loadInitial();
-                } else {
-                  unawaited(_applySlot(slot));
-                }
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Erneut versuchen'),
-            ),
-          ],
-        ),
-      );
     } else {
-      final trial = currentTrial!;
-      final leftImg = trial.targetOnLeft
-          ? trial.targetImageBytes
-          : trial.distractorImageBytes;
-      final rightImg = trial.targetOnLeft
-          ? trial.distractorImageBytes
-          : trial.targetImageBytes;
-      final size = MediaQuery.of(context).size;
-      final bool isLandscape = size.width > size.height;
-      final bool isNamingTrial = _isNamingTrial();
-      final bool isNamingView =
-          isNamingTrial || namingInProgress || namingOutcome != null;
-      final double baseImageHeight = isLandscape
-          ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
-          : min(size.height * 0.38, 320.0);
-      final double imageHeight = kIsWeb && isNamingView
-          ? baseImageHeight * 0.75
-          : baseImageHeight;
-      final bool showDashboardButton =
-          ladder.hasFlagAppeared || ladder.winsYou > 0 || ladder.winsRival > 0;
-      final bool showHourglass = namingInProgress || batchLoading || loading;
-      if (isNamingTrial) {
-        _showMicGateIfNeeded(currentTrialToken);
-        if (micGateGranted &&
-            micPrimed &&
-            !namingHold &&
-            !namingInProgress &&
-            namingOutcome == null &&
-            lastNamingAutoToken != currentTrialToken) {
-          lastNamingAutoToken = currentTrialToken;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            _startNamingFlow(currentTrialToken, skipGate: true);
-          });
+      final bool namingBlockActive = presentationPolicy.isNamingActive;
+      final Trial? renderTrial = currentTrial ??
+          ((namingBlockActive || _namingTransition) ? _lastDisplayTrial : null);
+      if (renderTrial == null) {
+        if (namingBlockActive || _namingTransition) {
+          body = const Center(
+            child: SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        } else {
+          body = Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text('Trial lädt…'),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    final slot = presentationPolicy.currentSlot;
+                    if (slot.targetUuid.isEmpty) {
+                      _loadInitial();
+                    } else {
+                      unawaited(_applySlot(slot));
+                    }
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Erneut versuchen'),
+                ),
+              ],
+            ),
+          );
         }
-      }
+      } else {
+        final trial = renderTrial;
+        final bool trialIsLoading = currentTrial == null;
+        final leftImg = trial.targetOnLeft
+            ? trial.targetImageBytes
+            : trial.distractorImageBytes;
+        final rightImg = trial.targetOnLeft
+            ? trial.distractorImageBytes
+            : trial.targetImageBytes;
+        final size = MediaQuery.of(context).size;
+        final bool isLandscape = size.width > size.height;
+        final bool isNamingView = shouldRenderNamingView(
+          slotMode: currentSlot.mode,
+          namingInProgress: namingInProgress,
+          hasNamingOutcome: namingOutcome != null,
+          policyNamingActive: namingBlockActive,
+          namingTransition: _namingTransition,
+        );
+        final double baseImageHeight = isLandscape
+            ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
+            : min(size.height * 0.38, 320.0);
+        final double imageHeight = kIsWeb && isNamingView
+            ? baseImageHeight * 0.75
+            : baseImageHeight;
+        final bool showDashboardButton =
+            ladder.hasFlagAppeared || ladder.winsYou > 0 || ladder.winsRival > 0;
+        final bool showHourglass = namingInProgress || batchLoading || loading;
+        assert(() {
+          if (currentSlot.mode == PresentationMode.naming && !isNamingView) {
+            debugPrint(
+                '[flow][invariant] slot=naming but isNamingView=false (trialLoading=$trialIsLoading policyNamingActive=$namingBlockActive namingInProgress=$namingInProgress namingOutcome=${namingOutcome != null} transition=$_namingTransition)');
+            return false;
+          }
+          return true;
+        }());
+        final String phoneticLang = HintsService.normalizeLangCode(lang);
+        final bool hasPhoneticData = trial.target.phonetic != null &&
+            trial.target.phonetic!.isNotEmpty &&
+            _phoneticEligibleLangs.contains(phoneticLang);
+        final int phoneticSeen = phoneticSeenCounts[trial.target.uuid] ?? 0;
+        final int phoneticOverrideCount =
+            phoneticOverrideRemaining[trial.target.uuid] ?? 0;
+        final bool phoneticOverrideActive = phoneticOverrideCount > 0;
+        final bool showPhonetic =
+            hasPhoneticData && (phoneticSeen < 4 || phoneticOverrideActive);
+        final bool showNative =
+            !trialIsLoading && _shouldShowNative(trial.target);
+        final bool hintsEnabled =
+            nativeLang != null && nativeLang!.trim().isNotEmpty;
+        final String normL1 =
+            hintsEnabled ? HintsService.normalizeLangCode(nativeLang) : '';
+        final String normL2 = HintsService.normalizeLangCode(lang);
+        final bool hintPackMatches =
+            hintPack != null && hintPack!.l1 == normL1 && hintPack!.l2 == normL2;
+        final List<String> hintIds = hintPackMatches
+            ? (trial.target.hintRefsByLang[normL2] ?? const <String>[])
+            : const <String>[];
+        final bool showHintsInline =
+            !isNamingView && hintPackMatches && hintIds.isNotEmpty;
+        final List<HintContent> resolvedHints =
+            showHintsInline ? hintPack!.hintsForIds(hintIds) : const <HintContent>[];
+        final bool hintAvailable = showHintsInline && resolvedHints.isNotEmpty;
+        final bool hintRevealedForItem =
+            hintAvailable && hintRevealed.contains(trial.target.uuid);
+        final List<HintContent> hintEntries =
+            hintRevealedForItem ? resolvedHints : const <HintContent>[];
+        final String hintLabel =
+            hintsEnabled ? HintsService.hintLabelFor(nativeLang!) : 'Hint';
+        final String? hintMissingText =
+            hintRevealedForItem && hintIds.isNotEmpty && hintEntries.isEmpty
+                ? 'No hint text found for ids: ${hintIds.join(', ')}'
+                : null;
 
-      final String phoneticLang = HintsService.normalizeLangCode(lang);
-      final bool hasPhoneticData = trial.target.phonetic != null &&
-          trial.target.phonetic!.isNotEmpty &&
-          _phoneticEligibleLangs.contains(phoneticLang);
-      final int phoneticSeen = phoneticSeenCounts[trial.target.uuid] ?? 0;
-      final int phoneticOverrideCount =
-          phoneticOverrideRemaining[trial.target.uuid] ?? 0;
-      final bool phoneticOverrideActive = phoneticOverrideCount > 0;
-      final bool showPhonetic =
-          hasPhoneticData && (phoneticSeen < 4 || phoneticOverrideActive);
-      final bool showNative = _shouldShowNative(trial.target);
-      final bool hintsEnabled =
-          nativeLang != null && nativeLang!.trim().isNotEmpty;
-      final String normL1 =
-          hintsEnabled ? HintsService.normalizeLangCode(nativeLang) : '';
-      final String normL2 = HintsService.normalizeLangCode(lang);
-      final bool hintPackMatches =
-          hintPack != null && hintPack!.l1 == normL1 && hintPack!.l2 == normL2;
-      final List<String> hintIds = hintPackMatches
-          ? (trial.target.hintRefsByLang[normL2] ?? const <String>[])
-          : const <String>[];
-      final bool showHintsInline =
-          !isNamingView && hintPackMatches && hintIds.isNotEmpty;
-      final List<HintContent> resolvedHints =
-          showHintsInline ? hintPack!.hintsForIds(hintIds) : const <HintContent>[];
-      final bool hintAvailable = showHintsInline && resolvedHints.isNotEmpty;
-      final bool hintRevealedForItem =
-          hintAvailable && hintRevealed.contains(trial.target.uuid);
-      final List<HintContent> hintEntries =
-          hintRevealedForItem ? resolvedHints : const <HintContent>[];
-      final String hintLabel =
-          hintsEnabled ? HintsService.hintLabelFor(nativeLang!) : 'Hint';
-      final String? hintMissingText =
-          hintRevealedForItem && hintIds.isNotEmpty && hintEntries.isEmpty
-              ? 'No hint text found for ids: ${hintIds.join(', ')}'
-              : null;
-
-      // Naming UX: don't show L2 text before the audio hint phase starts.
-      // micStage: 0=first recording, 1=hint, 2=repeat, -1=idle/finished.
-      final bool showL2Text = !isNamingView || namingOutcome != null || micStage >= 1;
-      body = SessionBody(
+        // Naming UX: don't show L2 text before the audio hint phase starts.
+        // micStage: 0=first recording, 1=hint, 2=repeat, -1=idle/finished.
+        final bool showL2Text = (!trialIsLoading) &&
+            (!isNamingView || namingOutcome != null || micStage >= 1);
+        body = SessionBody(
         ladder: ladder,
         isNaming: isNamingView,
         imageHeight: imageHeight,
@@ -2886,6 +2951,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         namingHold: namingHold,
         showHourglass: showHourglass,
         namingInProgress: namingInProgress,
+        showTinySpinner:
+            trialIsLoading && (namingBlockActive || _namingTransition),
         liveTranscript: _liveTranscript,
         targetText: showL2Text ? trial.target.text : '',
         targetPhonetic:
@@ -2895,7 +2962,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         phoneticOverrideRemaining: phoneticOverrideCount,
         onTogglePhonetic:
             hasPhoneticData ? () => _reinstatePhoneticsFor(trial.target) : null,
-        spokenCueText: !isNamingView ? trial.target.text : null,
+        spokenCueText:
+            !isNamingView && !trialIsLoading ? trial.target.text : null,
         nativeText: trial.target.nativeText,
         showNative: showNative,
         hintEntries: hintEntries,
@@ -2905,7 +2973,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         hintButtonActive: hintRevealedForItem,
         onToggleHints: _toggleHintsForCurrent,
         hintPanelKey: _hintPanelKey,
-        audioHintEnabled: !isNamingView,
+        audioHintEnabled: !isNamingView && !trialIsLoading,
         onPlayAudioHint: () {
           unawaited(_playHintAudioForItem(trial.target));
         },
@@ -2922,14 +2990,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           }
           _openDashboardPreview(context, focus: 'wins');
         },
-        hasPostponedNamingBlocks: presentationPolicy.hasPostponedNamingBlocks,
-        onReactivateNamingBlocks: presentationPolicy.hasPostponedNamingBlocks
-            ? _reactivateNextPostponedNamingBlock
-            : null,
-        onPostponeNamingBlocks:
-            isNamingView && !namingInProgress ? _postponeActiveNamingBlock : null,
         onEscapeToOpeningPanel: _exitToOpeningPanel,
       );
+      }
     }
 
     return _wrapWithKeyboardShortcuts(
@@ -2997,6 +3060,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _exitToResumePanelIfAvailable() async {
+    await _persistUserCursor();
     await _pushResumeState();
     final saved = await onboardingStore.load();
     if (!mounted) return;
@@ -3032,6 +3096,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       sessionStart = null;
       sessionEnded = true;
       currentTrial = null;
+      _lastDisplayTrial = null;
+      _namingTransition = false;
       currentSlot = const PresentationSlot(
           mode: PresentationMode.comprehension, targetUuid: '');
       pendingNextSlot = null;
@@ -3066,6 +3132,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       sessionStart = null;
       sessionEnded = true;
       currentTrial = null;
+      _lastDisplayTrial = null;
+      _namingTransition = false;
       currentSlot = const PresentationSlot(
           mode: PresentationMode.comprehension, targetUuid: '');
       pendingNextSlot = null;
