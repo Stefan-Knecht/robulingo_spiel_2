@@ -5,11 +5,8 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   permission_handler_windows
-<<<<<<< Updated upstream
-  url_launcher_windows
-=======
   speech_to_text_windows
->>>>>>> Stashed changes
+  url_launcher_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
