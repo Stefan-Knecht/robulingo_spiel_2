@@ -231,6 +231,11 @@ class NamingController {
     if (!_isValid(localFlow, sessionId, isCurrent)) return null;
 
     if (firstCorrect || !allowRepeat) {
+      if (firstCorrect) {
+        onPhase(NamingPhase.playingHint);
+        await playHint();
+        if (!_isValid(localFlow, sessionId, isCurrent)) return null;
+      }
       onPhase(NamingPhase.finished);
       return NamingFlowOutcome(
         correct: firstCorrect,
