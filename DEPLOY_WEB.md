@@ -41,3 +41,22 @@ git checkout main
 git pull --rebase origin main
 tools/deploy_firebase_hosting.sh
 ```
+
+## Automatic deploy from GitHub (recommended)
+
+This repo includes `.github/workflows/deploy-hosting-main.yml`.
+It automatically deploys to Firebase Hosting `live` on every push to `main`.
+
+### One-time GitHub setup
+
+1. Create a Firebase service account key JSON with Hosting deploy permissions.
+2. In GitHub, open `Settings > Secrets and variables > Actions`.
+3. Add a repository secret named `FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5`.
+4. Paste the full JSON key contents as the secret value.
+5. Push to `main` (or run the workflow manually from GitHub Actions).
+
+### Verify what is live
+
+After each deploy, check:
+
+- `https://robulingo-635c5.web.app/version.json`
