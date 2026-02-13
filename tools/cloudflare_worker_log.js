@@ -31,6 +31,21 @@ export default {
       if (path.endsWith('/resume-state')) {
         return await handleResumeState(request, env);
       }
+      if (path.endsWith('/consent')) {
+        return await handleConsent(request, env);
+      }
+      if (path.endsWith('/pair')) {
+        return await handlePair(request, env);
+      }
+      if (path.endsWith('/emoji-queue')) {
+        return await handleEmojiQueue(request, env);
+      }
+      if (path.endsWith('/emoji-queue-ack')) {
+        return await handleEmojiQueueAck(request, env);
+      }
+      if (path.endsWith('/dashboard-info')) {
+        return await handleDashboardInfo(request, env);
+      }
       if (path.endsWith('/user-curriculum')) {
         return await handleCurriculum(request, env);
       }
@@ -45,7 +60,7 @@ export default {
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET,HEAD,POST,OPTIONS',
+  'access-control-allow-methods': 'GET,HEAD,POST,DELETE,OPTIONS',
   'access-control-allow-headers':
     'content-type,if-none-match,x-user-id,x-session-id,content-encoding',
 };
@@ -178,6 +193,7 @@ function normalizeLang(raw) {
 const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
 const SUMMARY_IDLE_CAP_SECONDS = 20;
 const SUMMARY_START_BONUS_SECONDS = 5;
+const EMOJI_QUEUE_MAX_ITEMS = 500;
 
 async function handleLog(request, env) {
   if (request.method !== 'POST') {
@@ -403,6 +419,308 @@ async function handleResumeState(request, env) {
   return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
 }
 
+// ---------- /consent ----------
+async function handleConsent(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const body = await readJsonBody(request);
+  if (!body) {
+    return new Response('invalid body', { status: 400, headers: CORS_HEADERS });
+  }
+  const uid = resolveUserId(request, body);
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  const now = new Date().toISOString();
+  const key = consentKey(uid);
+  const previous = await getJsonObject(env.USERDATA, key);
+  const monitoringOn = body.monitoring_on === true;
+  const internalName = cleanOptionalString(body.internal_name, 128);
+  const comment = cleanOptionalString(body.comment, 1024);
+  const uiLanguage = cleanOptionalString(body.ui_language, 32);
+  const next = {
+    userId: uid,
+    monitoringOn,
+    textVersion: cleanOptionalString(body.text_version, 64) || 'trial_v1',
+    internalName,
+    comment,
+    uiLanguage,
+    consentedAt: monitoringOn ? previous?.consentedAt || now : previous?.consentedAt || null,
+    revokedAt: monitoringOn ? null : now,
+    updatedAt: now,
+  };
+  await putJsonObject(env.USERDATA, key, next);
+  if (!monitoringOn) {
+    const pairing = await getJsonObject(env.USERDATA, pairingKey(uid));
+    if (pairing && pairing.active) {
+      pairing.active = false;
+      pairing.updatedAt = now;
+      await putJsonObject(env.USERDATA, pairingKey(uid), pairing);
+    }
+  }
+  return jsonResponse({ ok: true, consent: next });
+}
+
+// ---------- /pair ----------
+async function handlePair(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const body = await readJsonBody(request);
+  if (!body) {
+    return new Response('invalid body', { status: 400, headers: CORS_HEADERS });
+  }
+  const uid = resolveUserId(request, body);
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  const consent = await getJsonObject(env.USERDATA, consentKey(uid));
+  if (!consent || consent.monitoringOn !== true) {
+    return jsonResponse(
+      { ok: false, error: 'consent_required', message: 'consent monitoring_on=true required' },
+      409
+    );
+  }
+  const emailRaw = String(body.supervisor_email || '').trim();
+  const codeRaw = String(body.supervisor_code_5 || body.supervisor_code || '').trim();
+  if (!emailRaw) {
+    return jsonResponse({ ok: false, error: 'missing_supervisor_email' }, 400);
+  }
+  if (codeRaw.length !== 5) {
+    return jsonResponse({ ok: false, error: 'invalid_supervisor_code', expectedLength: 5 }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const previous = await getJsonObject(env.USERDATA, pairingKey(uid));
+  const internalName = cleanOptionalString(body.internal_name, 128);
+  const comment = cleanOptionalString(body.comment, 1024);
+  const uiLanguage = cleanOptionalString(body.ui_language, 32);
+  const next = {
+    userId: uid,
+    active: true,
+    supervisorEmailNormalized: emailRaw.toLowerCase(),
+    supervisorEmailMasked: maskEmail(emailRaw),
+    supervisorCodeHash: await sha256Hex(codeRaw),
+    supervisorCodeLast2: codeRaw.slice(-2),
+    internalName,
+    comment,
+    uiLanguage,
+    linkedAt: previous?.linkedAt || now,
+    updatedAt: now,
+  };
+  await putJsonObject(env.USERDATA, pairingKey(uid), next);
+
+  return jsonResponse({
+    ok: true,
+    pairing: {
+      userId: next.userId,
+      active: next.active,
+      supervisorEmailMasked: next.supervisorEmailMasked,
+      supervisorCodeLast2: next.supervisorCodeLast2,
+      linkedAt: next.linkedAt,
+      updatedAt: next.updatedAt,
+    },
+  });
+}
+
+// ---------- /emoji-queue ----------
+async function handleEmojiQueue(request, env) {
+  if (request.method !== 'GET' && request.method !== 'POST' && request.method !== 'DELETE') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  if (request.method === 'GET') {
+    const uid = resolveUserId(request, null) || cleanOptionalString(url.searchParams.get('uid'), 128);
+    if (!uid) {
+      return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+    }
+    return await getEmojiQueue(request, env, uid, url);
+  }
+  if (request.method === 'DELETE') {
+    const body = await readJsonBody(request);
+    const uid = resolveUserId(request, body);
+    if (!uid) {
+      return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+    }
+    const queue = await loadEmojiQueue(env.USERDATA, uid);
+    queue.items = [];
+    queue.updatedAt = new Date().toISOString();
+    await saveEmojiQueue(env.USERDATA, uid, queue);
+    return jsonResponse({
+      ok: true,
+      userId: uid,
+      queue: summarizeEmojiQueue(queue),
+    });
+  }
+  const body = await readJsonBody(request);
+  if (!body) {
+    return new Response('invalid body', { status: 400, headers: CORS_HEADERS });
+  }
+  const uid = resolveUserId(request, body);
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  const source = cleanOptionalString(body.source, 64) || 'app';
+  const fallbackReason = cleanOptionalString(body.reason, 64);
+  const fallbackNote = cleanOptionalString(body.note, 512);
+  const fallbackMeta = normalizeMeta(body.meta);
+  const now = new Date().toISOString();
+
+  const rawItems = Array.isArray(body.items) ? body.items : [body];
+  const accepted = [];
+  for (const raw of rawItems) {
+    const emoji = cleanOptionalString(raw?.emoji, 16);
+    if (!emoji) continue;
+    const reason = cleanOptionalString(raw?.reason, 64) || fallbackReason;
+    const note = cleanOptionalString(raw?.note, 512) || fallbackNote;
+    const meta = normalizeMeta(raw?.meta) || fallbackMeta;
+    const priority = normalizePriority(raw?.priority);
+    accepted.push({
+      id: crypto.randomUUID(),
+      emoji,
+      status: 'pending',
+      source: cleanOptionalString(raw?.source, 64) || source,
+      reason,
+      note,
+      priority,
+      meta,
+      createdAt: cleanOptionalString(raw?.createdAt, 64) || now,
+      updatedAt: now,
+      consumedAt: null,
+    });
+  }
+  if (accepted.length === 0) {
+    return jsonResponse(
+      { ok: false, error: 'no_valid_items', message: 'provide emoji or items[].emoji' },
+      400
+    );
+  }
+
+  const queue = await loadEmojiQueue(env.USERDATA, uid);
+  queue.items.push(...accepted);
+  trimEmojiQueue(queue);
+  queue.updatedAt = now;
+  await saveEmojiQueue(env.USERDATA, uid, queue);
+
+  return jsonResponse({
+    ok: true,
+    userId: uid,
+    accepted: accepted.length,
+    queue: summarizeEmojiQueue(queue),
+  });
+}
+
+// ---------- /emoji-queue-ack ----------
+async function handleEmojiQueueAck(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const body = await readJsonBody(request);
+  if (!body) {
+    return new Response('invalid body', { status: 400, headers: CORS_HEADERS });
+  }
+  const uid = resolveUserId(request, body);
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  const ids = Array.isArray(body.ids) ? body.ids.map((v) => String(v)) : [];
+  if (ids.length === 0) {
+    return jsonResponse({ ok: false, error: 'missing_ids' }, 400);
+  }
+  const now = new Date().toISOString();
+  const queue = await loadEmojiQueue(env.USERDATA, uid);
+  const idSet = new Set(ids);
+  const mode = body.mode === 'remove' ? 'remove' : 'status';
+  const nextStatus = mode === 'status' ? normalizeStatus(body.status) || 'delivered' : null;
+  let changed = 0;
+  if (mode === 'remove') {
+    const before = queue.items.length;
+    queue.items = queue.items.filter((item) => !idSet.has(item.id));
+    changed = before - queue.items.length;
+  } else {
+    for (const item of queue.items) {
+      if (!idSet.has(item.id)) continue;
+      item.status = nextStatus;
+      item.updatedAt = now;
+      if (nextStatus !== 'pending') {
+        item.consumedAt = item.consumedAt || now;
+      }
+      changed += 1;
+    }
+  }
+  queue.updatedAt = now;
+  await saveEmojiQueue(env.USERDATA, uid, queue);
+  return jsonResponse({
+    ok: true,
+    userId: uid,
+    changed,
+    queue: summarizeEmojiQueue(queue),
+  });
+}
+
+// ---------- /dashboard-info ----------
+async function handleDashboardInfo(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  const uid = resolveUserId(request, null) || cleanOptionalString(url.searchParams.get('uid'), 128);
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  const [consent, pairing, queue, resume, registration] = await Promise.all([
+    getJsonObject(env.USERDATA, consentKey(uid)),
+    getJsonObject(env.USERDATA, pairingKey(uid)),
+    loadEmojiQueue(env.USERDATA, uid),
+    getJsonObject(env.USERDATA, `${uid}/resume_state.json`),
+    loadSupervisorRegistration(env.USERDATA, uid),
+  ]);
+  const queueSummary = summarizeEmojiQueue(queue);
+  const recent = recentPending(queue.items, 8);
+  const resumeInfo = summarizeResumeState(resume);
+  const registrationName = resolveSupervisorRegistrationName({
+    pairing,
+    consent,
+    registration,
+  });
+  return jsonResponse({
+    ok: true,
+    userId: uid,
+    generatedAt: new Date().toISOString(),
+    supervisor: {
+      paired: !!pairing?.active,
+      active: !!pairing?.active,
+      supervisorEmailMasked: pairing?.supervisorEmailMasked || null,
+      linkedAt: pairing?.linkedAt || null,
+      updatedAt: pairing?.updatedAt || null,
+      registrationName: registrationName || null,
+      internalName: pairing?.internalName || consent?.internalName || null,
+      comment: pairing?.comment || consent?.comment || null,
+      uiLanguage: pairing?.uiLanguage || consent?.uiLanguage || null,
+    },
+    consent: {
+      monitoringOn: consent?.monitoringOn === true,
+      textVersion: consent?.textVersion || null,
+      consentedAt: consent?.consentedAt || null,
+      revokedAt: consent?.revokedAt || null,
+      updatedAt: consent?.updatedAt || null,
+    },
+    emojiQueue: {
+      ...queueSummary,
+      itemsPreview: recent,
+      recommendedSort: ['status', '-priority', 'createdAt'],
+    },
+    resumeState: resumeInfo,
+    dashboardHints: {
+      queuePollingMs: 15000,
+      queueAckEndpoint: '/api/emoji-queue-ack',
+      queueReadEndpoint: '/api/emoji-queue?status=pending&limit=50',
+      dataContractVersion: 2,
+    },
+  });
+}
+
 async function readRequestBody(request, chunk) {
   const encoding = request.headers.get('content-encoding');
   if (encoding && encoding.toLowerCase() === 'gzip') {
@@ -415,6 +733,323 @@ async function readRequestBody(request, chunk) {
     }
   }
   return new TextDecoder().decode(chunk);
+}
+
+async function readJsonBody(request) {
+  try {
+    return await request.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+function resolveUserId(request, body) {
+  const fromHeader = cleanOptionalString(request.headers.get('x-user-id'), 128);
+  if (fromHeader) return fromHeader;
+  if (!body || typeof body !== 'object') return null;
+  return (
+    cleanOptionalString(body.userId, 128) ||
+    cleanOptionalString(body.learnerId, 128) ||
+    cleanOptionalString(body.uid, 128)
+  );
+}
+
+function cleanOptionalString(raw, maxLen = 256) {
+  if (raw == null) return null;
+  const value = String(raw).trim();
+  if (!value) return null;
+  return value.slice(0, maxLen);
+}
+
+function normalizePriority(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(-10, Math.min(10, Math.round(value)));
+}
+
+function normalizeStatus(raw) {
+  const value = cleanOptionalString(raw, 32);
+  if (!value) return null;
+  const lowered = value.toLowerCase();
+  if (lowered === 'pending' || lowered === 'delivered' || lowered === 'archived') {
+    return lowered;
+  }
+  return null;
+}
+
+function normalizeMeta(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return null;
+  try {
+    const clean = JSON.parse(JSON.stringify(raw));
+    return clean && typeof clean === 'object' && !Array.isArray(clean) ? clean : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...CORS_HEADERS, 'content-type': 'application/json' },
+  });
+}
+
+function consentKey(uid) {
+  return `${uid}/supervisor/consent.json`;
+}
+
+function pairingKey(uid) {
+  return `${uid}/supervisor/pairing.json`;
+}
+
+function supervisorRegistrationKey(uid) {
+  return `${uid}/supervisor/registration.json`;
+}
+
+function emojiQueueKey(uid) {
+  return `${uid}/supervisor/emoji_queue.json`;
+}
+
+async function getJsonObject(bucket, key) {
+  const obj = await bucket.get(key);
+  if (!obj) return null;
+  try {
+    return await obj.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function putJsonObject(bucket, key, value) {
+  await bucket.put(key, JSON.stringify(value), {
+    httpMetadata: { contentType: 'application/json' },
+  });
+}
+
+async function loadSupervisorRegistration(bucket, uid) {
+  const candidateKeys = [
+    supervisorRegistrationKey(uid),
+    `${uid}/supervisor/register.json`,
+    `${uid}/supervisor_registration.json`,
+  ];
+  for (const key of candidateKeys) {
+    const value = await getJsonObject(bucket, key);
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
+  return firstNonEmptyString(
+    registration?.supervisorName,
+    registration?.registeredName,
+    registration?.registrationName,
+    registration?.displayName,
+    registration?.name,
+    pairing?.registrationName,
+    pairing?.supervisorName,
+    pairing?.displayName,
+    pairing?.name,
+    consent?.registrationName,
+    consent?.supervisorName,
+    consent?.displayName,
+    consent?.name
+  );
+}
+
+function firstNonEmptyString(...values) {
+  for (const raw of values) {
+    const value = cleanOptionalString(raw, 128);
+    if (value) return value;
+  }
+  return null;
+}
+
+function emptyEmojiQueue() {
+  return {
+    version: 1,
+    updatedAt: null,
+    items: [],
+  };
+}
+
+async function loadEmojiQueue(bucket, uid) {
+  const payload = await getJsonObject(bucket, emojiQueueKey(uid));
+  if (!payload || typeof payload !== 'object') {
+    return emptyEmojiQueue();
+  }
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  return {
+    version: Number(payload.version) || 1,
+    updatedAt: cleanOptionalString(payload.updatedAt, 64),
+    items: items
+      .map((item) => normalizeQueueItem(item))
+      .filter((item) => !!item),
+  };
+}
+
+function normalizeQueueItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const id = cleanOptionalString(item.id, 128);
+  const emoji = cleanOptionalString(item.emoji, 16);
+  if (!id || !emoji) return null;
+  const status = normalizeStatus(item.status) || 'pending';
+  return {
+    id,
+    emoji,
+    status,
+    source: cleanOptionalString(item.source, 64),
+    reason: cleanOptionalString(item.reason, 64),
+    note: cleanOptionalString(item.note, 512),
+    priority: normalizePriority(item.priority),
+    meta: normalizeMeta(item.meta),
+    createdAt: cleanOptionalString(item.createdAt, 64) || null,
+    updatedAt: cleanOptionalString(item.updatedAt, 64) || null,
+    consumedAt: cleanOptionalString(item.consumedAt, 64) || null,
+  };
+}
+
+function trimEmojiQueue(queue) {
+  if (!Array.isArray(queue.items)) queue.items = [];
+  if (queue.items.length <= EMOJI_QUEUE_MAX_ITEMS) return;
+  queue.items.sort((a, b) => {
+    const as = a.status === 'pending' ? 0 : 1;
+    const bs = b.status === 'pending' ? 0 : 1;
+    if (as !== bs) return bs - as;
+    const at = Date.parse(a.updatedAt || a.createdAt || 0);
+    const bt = Date.parse(b.updatedAt || b.createdAt || 0);
+    return at - bt;
+  });
+  while (queue.items.length > EMOJI_QUEUE_MAX_ITEMS) {
+    queue.items.shift();
+  }
+}
+
+async function saveEmojiQueue(bucket, uid, queue) {
+  await putJsonObject(bucket, emojiQueueKey(uid), queue);
+}
+
+function summarizeEmojiQueue(queue) {
+  const total = queue.items.length;
+  const pending = queue.items.filter((item) => item.status === 'pending').length;
+  const delivered = queue.items.filter((item) => item.status === 'delivered').length;
+  const archived = queue.items.filter((item) => item.status === 'archived').length;
+  const latestItem = queue.items
+    .slice()
+    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))[0];
+  return {
+    version: queue.version,
+    updatedAt: queue.updatedAt || null,
+    total,
+    pending,
+    delivered,
+    archived,
+    latestEmoji: latestItem?.emoji || null,
+    latestEventAt: latestItem?.updatedAt || latestItem?.createdAt || null,
+  };
+}
+
+async function getEmojiQueue(request, env, uid, url) {
+  const queue = await loadEmojiQueue(env.USERDATA, uid);
+  const status = (url.searchParams.get('status') || 'all').toLowerCase();
+  const limitRaw = Number(url.searchParams.get('limit') || 50);
+  const cursorRaw = Number(url.searchParams.get('cursor') || 0);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+  const cursor = Number.isFinite(cursorRaw) ? Math.max(0, Math.floor(cursorRaw)) : 0;
+
+  const filtered = queue.items.filter((item) => status === 'all' || item.status === status);
+  filtered.sort((a, b) => {
+    const pa = normalizePriority(a.priority);
+    const pb = normalizePriority(b.priority);
+    if (pa !== pb) return pb - pa;
+    const at = Date.parse(a.createdAt || 0);
+    const bt = Date.parse(b.createdAt || 0);
+    return bt - at;
+  });
+  const slice = filtered.slice(cursor, cursor + limit);
+  return jsonResponse({
+    ok: true,
+    userId: uid,
+    statusFilter: status,
+    limit,
+    cursor,
+    totalFiltered: filtered.length,
+    totalInQueue: queue.items.length,
+    items: slice,
+    queue: summarizeEmojiQueue(queue),
+  });
+}
+
+function recentPending(items, count) {
+  return items
+    .filter((item) => item.status === 'pending')
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
+    .slice(0, count)
+    .map((item) => ({
+      id: item.id,
+      emoji: item.emoji,
+      reason: item.reason,
+      note: item.note,
+      priority: item.priority,
+      createdAt: item.createdAt,
+      source: item.source,
+      status: item.status,
+    }));
+}
+
+function summarizeResumeState(resume) {
+  if (!resume || typeof resume !== 'object') {
+    return {
+      entriesCount: 0,
+      lastEntryDate: null,
+      lastStartKey: null,
+      lastLang: null,
+    };
+  }
+  const entries = Array.isArray(resume.entries) ? resume.entries : [];
+  let latest = null;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const date = cleanOptionalString(entry.date, 64);
+    if (!date) continue;
+    const ts = Date.parse(date);
+    if (!Number.isFinite(ts)) continue;
+    if (!latest || ts > latest.ts) {
+      latest = {
+        ts,
+        date,
+        startKey: cleanOptionalString(entry.startKey, 128),
+        lang: cleanOptionalString(entry.lang, 32),
+      };
+    }
+  }
+  return {
+    entriesCount: entries.length,
+    lastEntryDate: latest?.date || null,
+    lastStartKey: latest?.startKey || null,
+    lastLang: latest?.lang || null,
+  };
+}
+
+async function sha256Hex(input) {
+  const data = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const bytes = new Uint8Array(digest);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function maskEmail(email) {
+  const raw = cleanOptionalString(email, 256);
+  if (!raw || !raw.includes('@')) return null;
+  const [local, domain] = raw.split('@');
+  if (!local || !domain) return null;
+  const visible = local.slice(0, 2);
+  return `${visible}${'*'.repeat(Math.max(1, local.length - visible.length))}@${domain}`;
 }
 
 function parseTsMs(raw) {

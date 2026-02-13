@@ -8,14 +8,15 @@ class HistoryHintLoader {
   HistoryHintLoader({http.Client? client}) : _http = client ?? http.Client();
 
   final http.Client _http;
-  String? _cache;
+  final Map<String, String> _cacheByLang = {};
 
-  Future<String> loadHint(String l1) async {
-    if (_cache != null) return _cache!;
+  Future<String> loadHint(String lang) async {
     const fallback =
         'Keep a copy of your progress reference in case your device loses it, so you can pick up where you left off.';
-    final norm = l1.trim().toLowerCase();
+    final norm = lang.trim().toLowerCase();
     if (norm.isEmpty) return fallback;
+    final cached = _cacheByLang[norm];
+    if (cached != null) return cached;
     final keyTxt = 'history_hint_$norm.txt';
     final keyJson = 'history_hint_$norm.json';
     final urls = [
@@ -35,13 +36,15 @@ class HistoryHintLoader {
             final text =
                 (data['text'] ?? data['hint'] ?? data['message'])?.toString();
             if (text != null && text.trim().isNotEmpty) {
-              _cache = text.trim();
-              return _cache!;
+              final value = text.trim();
+              _cacheByLang[norm] = value;
+              return value;
             }
           }
         } else if (body.trim().isNotEmpty) {
-          _cache = body.trim();
-          return _cache!;
+          final value = body.trim();
+          _cacheByLang[norm] = value;
+          return value;
         }
       } catch (_) {
         // ignore

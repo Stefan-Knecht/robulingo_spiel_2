@@ -18,10 +18,14 @@ class StartCurriculumSelector extends StatelessWidget {
     super.key,
     required this.onSelect,
     this.onPickSelected,
+    this.showHistoryButton = false,
+    this.onOpenHistory,
   });
 
   final void Function(String fileName) onSelect;
   final VoidCallback? onPickSelected;
+  final bool showHistoryButton;
+  final VoidCallback? onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -80,7 +84,7 @@ class StartCurriculumSelector extends StatelessWidget {
       ],
     );
 
-    return Padding(
+    final Widget content = Padding(
       padding: EdgeInsets.symmetric(vertical: verticalPadding, horizontal: 24),
       child: isLandscape
           ? Row(
@@ -117,6 +121,29 @@ class StartCurriculumSelector extends StatelessWidget {
                 ),
               ],
             ),
+    );
+
+    return Stack(
+      children: [
+        Positioned.fill(child: content),
+        if (showHistoryButton && onOpenHistory != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 8,
+            child: Center(
+              child: IconButton(
+                icon: Image.asset(
+                  'assets/icons/eye.webp',
+                  width: 28,
+                  height: 28,
+                  fit: BoxFit.contain,
+                ),
+                onPressed: onOpenHistory,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
