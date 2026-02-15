@@ -30,516 +30,571 @@ Future<void> showHistoryPanel({
   final supervisorCodeController = TextEditingController();
   final learnerInternalNameController = TextEditingController();
   final commentController = TextEditingController();
-  String status = '';
+  bool panelOpen = true;
+  String progressStatus = '';
+  String supervisorStatus = '';
   bool loading = false;
   bool learnerConsentConfirmed = false;
-  await showDialog<void>(
-    context: context,
-    barrierDismissible: true,
-    builder: (dialogCtx) {
-      return StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          final uiLang = _normalizeLang(
-            targetLang ??
-                resumeState?.mostRecentEntry()?.lang ??
-                nativeLang ??
-                resumeState?.mostRecentEntry()?.nativeLang ??
-                'en',
-          );
-          final removeLabel = _textFor('remove', uiLang);
-          final reloadLabel = _textFor('reload', uiLang);
-          final applyLabel = _textFor('apply_action', uiLang);
-          final progressReferenceLabel = _textFor('progress_reference', uiLang);
-          final supervisorLabel = _textFor('supervisor', uiLang);
-          final supervisorEmailLabel = _textFor('supervisor_email', uiLang);
-          final supervisorEmailHint = _textFor('enter_email_address', uiLang);
-          final supervisorCodeLabel =
-              _textFor('supervisor_code_5_digit', uiLang);
-          final supervisorCodeHint = _textFor('enter_code', uiLang);
-          final codeRequiresRegistrationLabel =
-              _textFor('code_requires_registration', uiLang);
-          final internalNameLabel =
-              _textFor('internal_name_for_learner', uiLang);
-          final learnerConsentLabel = _textFor('learner_consent', uiLang);
-          final consentConfirmedLabel = _textFor('consent_confirmed', uiLang);
-          final viewConsentLabel = _textFor('view_consent_information', uiLang);
-          final commentOptionalLabel = _textFor('comment_optional', uiLang);
-          final commentHint = _textFor('enter_comment', uiLang);
-          final areYouSureLabel = _textFor('are_you_sure', uiLang);
-          final cancelLabel = _textFor('cancel', uiLang);
-          final removeActionLabel = _textFor('remove_action', uiLang);
-          final okLabel = _textFor('ok', uiLang);
-          final applyConsentRequiredHint =
-              _textFor('apply_consent_required_hint', uiLang);
-          final applySupervisorRequiredHint =
-              _textFor('apply_supervisor_required_hint', uiLang);
-          final progressId = controller.text.trim();
-          final supervisorEmail = supervisorEmailController.text.trim();
-          final supervisorCode = supervisorCodeController.text.trim();
-          final hasProgressId = progressId.isNotEmpty;
-          final hasSupervisorEmail = supervisorEmail.isNotEmpty;
-          final hasValidSupervisorEmail = _looksLikeEmail(supervisorEmail);
-          final hasValidSupervisorCode =
-              _isValidSupervisorCode(supervisorCode);
-          final canApply = !loading &&
-              learnerConsentConfirmed &&
-              hasProgressId &&
-              hasSupervisorEmail &&
-              hasValidSupervisorEmail &&
-              hasValidSupervisorCode;
-          final applyDisabledHint = !learnerConsentConfirmed
-              ? applyConsentRequiredHint
-              : (!hasSupervisorEmail || supervisorCode.isEmpty)
-                  ? applySupervisorRequiredHint
-                  : !hasValidSupervisorEmail
-                      ? _textFor('status_supervisor_invalid_email', uiLang)
-                  : !hasValidSupervisorCode
-                      ? _textFor('status_supervisor_invalid_code', uiLang)
-                      : !hasProgressId
-                          ? _textFor('status_progress_reference_required', uiLang)
-                          : '';
-          Future<void> applyChanges() async {
-            final id = controller.text.trim();
-            final email = supervisorEmailController.text.trim();
-            final code = supervisorCodeController.text.trim();
-            if (!learnerConsentConfirmed) {
-              setDialogState(() {
-                status = _textFor('status_consent_required_for_apply', uiLang);
-              });
-              return;
-            }
-            if (email.isEmpty || code.isEmpty) {
-              setDialogState(() {
-                status = _textFor('status_supervisor_missing_pair_fields', uiLang);
-              });
-              return;
-            }
-            if (!_looksLikeEmail(email)) {
-              setDialogState(() {
-                status = _textFor('status_supervisor_invalid_email', uiLang);
-              });
-              return;
-            }
-            if (!_isValidSupervisorCode(code)) {
-              setDialogState(() {
-                status = _textFor('status_supervisor_invalid_code', uiLang);
-              });
-              return;
-            }
-            if (id.isEmpty) {
-              setDialogState(() {
-                status = _textFor('status_progress_reference_required', uiLang);
-              });
-              return;
-            }
-            setDialogState(() {
-              loading = true;
-              status = '';
-            });
-            try {
-              final state = await resumeStateService.fetch(userId: id);
-              await onApplyUserId(id, state);
-              if (!ctx.mounted) return;
-              final supervisorSync = await supervisorLinkService.sync(
-                userId: id,
-                monitoringOn: true,
-                supervisorEmail: email,
-                supervisorCode: code,
-                internalLearnerName: learnerInternalNameController.text,
-                comment: commentController.text,
-                uiLanguage: uiLang,
-              );
-              if (!ctx.mounted) return;
-              if (!supervisorSync.success) {
+  try {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final dialogNavigator = Navigator.of(dialogCtx);
+            bool canUseDialog() =>
+                panelOpen && ctx.mounted && dialogCtx.mounted;
+            final uiLang = _normalizeLang(
+              targetLang ??
+                  resumeState?.mostRecentEntry()?.lang ??
+                  nativeLang ??
+                  resumeState?.mostRecentEntry()?.nativeLang ??
+                  'en',
+            );
+            final removeLabel = _textFor('remove', uiLang);
+            final reloadLabel = _textFor('reload', uiLang);
+            final applyLabel = _textFor('apply_action', uiLang);
+            final progressReferenceLabel =
+                _textFor('progress_reference', uiLang);
+            final supervisorLabel = _textFor('supervisor', uiLang);
+            final supervisorEmailLabel = _textFor('supervisor_email', uiLang);
+            final supervisorEmailHint = _textFor('enter_email_address', uiLang);
+            final supervisorCodeLabel =
+                _textFor('supervisor_code_5_digit', uiLang);
+            final supervisorCodeHint = _textFor('enter_code', uiLang);
+            final codeRequiresRegistrationLabel =
+                _textFor('code_requires_registration', uiLang);
+            final internalNameLabel =
+                _textFor('internal_name_for_learner', uiLang);
+            final learnerConsentLabel = _textFor('learner_consent', uiLang);
+            final consentConfirmedLabel = _textFor('consent_confirmed', uiLang);
+            final viewConsentLabel =
+                _textFor('view_consent_information', uiLang);
+            final commentOptionalLabel = _textFor('comment_optional', uiLang);
+            final commentHint = _textFor('enter_comment', uiLang);
+            final areYouSureLabel = _textFor('are_you_sure', uiLang);
+            final cancelLabel = _textFor('cancel', uiLang);
+            final removeActionLabel = _textFor('remove_action', uiLang);
+            final okLabel = _textFor('ok', uiLang);
+            final applyConsentRequiredHint =
+                _textFor('apply_consent_required_hint', uiLang);
+            final applySupervisorRequiredHint =
+                _textFor('apply_supervisor_required_hint', uiLang);
+            final progressId = controller.text.trim();
+            final supervisorEmail = supervisorEmailController.text.trim();
+            final supervisorCode = supervisorCodeController.text.trim();
+            final hasProgressId = progressId.isNotEmpty;
+            final hasSupervisorEmail = supervisorEmail.isNotEmpty;
+            final hasValidSupervisorEmail = _looksLikeEmail(supervisorEmail);
+            final hasValidSupervisorCode =
+                _isValidSupervisorCode(supervisorCode);
+            final canApply = !loading &&
+                learnerConsentConfirmed &&
+                hasProgressId &&
+                hasSupervisorEmail &&
+                hasValidSupervisorEmail &&
+                hasValidSupervisorCode;
+            final applyDisabledHint = !learnerConsentConfirmed
+                ? applyConsentRequiredHint
+                : (!hasSupervisorEmail || supervisorCode.isEmpty)
+                    ? applySupervisorRequiredHint
+                    : !hasValidSupervisorEmail
+                        ? _textFor('status_supervisor_invalid_email', uiLang)
+                        : !hasValidSupervisorCode
+                            ? _textFor('status_supervisor_invalid_code', uiLang)
+                            : !hasProgressId
+                                ? _textFor('status_progress_reference_required',
+                                    uiLang)
+                                : '';
+            Future<void> applyChanges() async {
+              final id = controller.text.trim();
+              final email = supervisorEmailController.text.trim();
+              final code = supervisorCodeController.text.trim();
+              if (!learnerConsentConfirmed) {
+                if (!canUseDialog()) return;
                 setDialogState(() {
-                  loading = false;
-                  status = _textFor(
-                    supervisorSync.statusKey ?? 'status_history_apply_failed',
-                    uiLang,
-                  );
+                  supervisorStatus =
+                      _textFor('status_consent_required_for_apply', uiLang);
                 });
                 return;
               }
-              if (!dialogCtx.mounted) return;
-              Navigator.of(dialogCtx).pop();
-            } catch (_) {
-              if (!ctx.mounted) return;
+              if (email.isEmpty || code.isEmpty) {
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  supervisorStatus =
+                      _textFor('status_supervisor_missing_pair_fields', uiLang);
+                });
+                return;
+              }
+              if (!_looksLikeEmail(email)) {
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  supervisorStatus =
+                      _textFor('status_supervisor_invalid_email', uiLang);
+                });
+                return;
+              }
+              if (!_isValidSupervisorCode(code)) {
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  supervisorStatus =
+                      _textFor('status_supervisor_invalid_code', uiLang);
+                });
+                return;
+              }
+              if (id.isEmpty) {
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  supervisorStatus =
+                      _textFor('status_progress_reference_required', uiLang);
+                });
+                return;
+              }
+              if (!canUseDialog()) return;
               setDialogState(() {
-                loading = false;
-                status = _textFor('status_history_apply_failed', uiLang);
+                loading = true;
+                supervisorStatus = '';
               });
+              try {
+                final state = await resumeStateService.fetch(userId: id);
+                await onApplyUserId(id, state);
+                if (!canUseDialog()) return;
+                final supervisorSync = await supervisorLinkService.sync(
+                  userId: id,
+                  monitoringOn: true,
+                  supervisorEmail: email,
+                  supervisorCode: code,
+                  internalLearnerName: learnerInternalNameController.text,
+                  comment: commentController.text,
+                  uiLanguage: uiLang,
+                );
+                if (!canUseDialog()) return;
+                if (!supervisorSync.success) {
+                  setDialogState(() {
+                    loading = false;
+                    supervisorStatus = _textFor(
+                      supervisorSync.statusKey ?? 'status_history_apply_failed',
+                      uiLang,
+                    );
+                  });
+                  return;
+                }
+                if (!canUseDialog()) return;
+                dialogNavigator.pop();
+              } catch (_) {
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  loading = false;
+                  supervisorStatus =
+                      _textFor('status_history_apply_failed', uiLang);
+                });
+              }
             }
-          }
 
-          Future<void> reloadProgressReference() async {
-            final id = controller.text.trim();
-            if (id.isEmpty) {
+            Future<void> reloadProgressReference() async {
+              final id = controller.text.trim();
+              if (id.isEmpty) {
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  progressStatus =
+                      _textFor('status_progress_reference_required', uiLang);
+                });
+                return;
+              }
+              if (!canUseDialog()) return;
               setDialogState(() {
-                status = _textFor('status_progress_reference_required', uiLang);
+                loading = true;
+                progressStatus = '';
               });
-              return;
+              try {
+                final state = await resumeStateService.fetch(userId: id);
+                await onApplyUserId(id, state);
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  loading = false;
+                  progressStatus = (state == null || state.entries.isEmpty)
+                      ? _textFor('status_userid_applied_no_history', uiLang)
+                      : _textFor('status_userid_updated', uiLang);
+                });
+              } catch (_) {
+                if (!canUseDialog()) return;
+                setDialogState(() {
+                  loading = false;
+                  progressStatus =
+                      _textFor('status_history_apply_failed', uiLang);
+                });
+              }
             }
-            setDialogState(() {
-              loading = true;
-              status = '';
-            });
-            try {
-              final state = await resumeStateService.fetch(userId: id);
-              await onApplyUserId(id, state);
-              if (!ctx.mounted) return;
-              setDialogState(() {
-                loading = false;
-                status = (state == null || state.entries.isEmpty)
-                    ? _textFor('status_userid_applied_no_history', uiLang)
-                    : _textFor('status_userid_updated', uiLang);
-              });
-            } catch (_) {
-              if (!ctx.mounted) return;
-              setDialogState(() {
-                loading = false;
-                status = _textFor('status_history_apply_failed', uiLang);
-              });
-            }
-          }
 
-          Future<void> removeUserId() async {
-            final confirmed = await showDialog<bool>(
-              context: ctx,
-              builder: (confirmCtx) {
-                return AlertDialog(
-                  title: Text(areYouSureLabel),
+            Future<void> removeUserId() async {
+              final confirmed = await showDialog<bool>(
+                context: ctx,
+                builder: (confirmCtx) {
+                  return AlertDialog(
+                    title: Text(areYouSureLabel),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(confirmCtx).pop(false),
+                        child: Text(cancelLabel),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(confirmCtx).pop(true),
+                        child: Text(removeActionLabel),
+                      ),
+                    ],
+                  );
+                },
+              );
+              if (confirmed != true) return;
+              await onRemoveUserId();
+              if (!canUseDialog()) return;
+              setDialogState(() {
+                progressStatus = _textFor('status_userid_removed', uiLang);
+              });
+              if (!canUseDialog()) return;
+              dialogNavigator.pop();
+            }
+
+            Future<void> showHint() async {
+              if (!canUseDialog()) return;
+              setDialogState(() {
+                loading = true;
+                progressStatus = '';
+              });
+              final text = await hintLoader.loadHint(uiLang);
+              if (!canUseDialog()) return;
+              setDialogState(() {
+                loading = false;
+              });
+              if (!canUseDialog()) return;
+              if (!dialogNavigator.mounted) return;
+              showDialog<void>(
+                context: dialogNavigator.context,
+                builder: (hintCtx) => AlertDialog(
+                  content: Text(text),
                   actions: [
                     TextButton(
-                      onPressed: () => Navigator.of(confirmCtx).pop(false),
-                      child: Text(cancelLabel),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.of(confirmCtx).pop(true),
-                      child: Text(removeActionLabel),
+                      onPressed: () => Navigator.of(hintCtx).pop(),
+                      child: Text(okLabel),
                     ),
                   ],
-                );
-              },
-            );
-            if (confirmed != true) return;
-            await onRemoveUserId();
-            if (!ctx.mounted) return;
-            setDialogState(() {
-              status = _textFor('status_userid_removed', uiLang);
-            });
-            Navigator.of(dialogCtx).pop();
-          }
+                ),
+              );
+            }
 
-          Future<void> showHint() async {
-            setDialogState(() {
-              loading = true;
-              status = '';
-            });
-            final text = await hintLoader.loadHint(uiLang);
-            if (!ctx.mounted) return;
-            setDialogState(() {
-              loading = false;
-            });
-            if (!ctx.mounted) return;
-            showDialog<void>(
-              context: ctx,
-              builder: (hintCtx) => AlertDialog(
-                content: Text(text),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(hintCtx).pop(),
-                    child: Text(okLabel),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return Dialog(
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 680),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              supervisorLabel,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+            return Dialog(
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 680),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                supervisorLabel,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                          ),
-                          IconButton(
-                            tooltip: cancelLabel,
-                            onPressed: () => Navigator.of(dialogCtx).pop(),
-                            icon: const Icon(
-                              Icons.close,
-                              size: 30,
-                              color: Colors.black,
-                              weight: 800,
+                            IconButton(
+                              tooltip: cancelLabel,
+                              onPressed: () => Navigator.of(dialogCtx).pop(),
+                              icon: const Icon(
+                                Icons.close,
+                                size: 30,
+                                color: Colors.black,
+                                weight: 800,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      _LabeledField(
-                        label: supervisorEmailLabel,
-                        child: TextField(
-                          controller: supervisorEmailController,
-                          onChanged: (_) => setDialogState(() {}),
-                          keyboardType: TextInputType.emailAddress,
-                          decoration: InputDecoration(
-                            border: const OutlineInputBorder(),
-                            isDense: true,
-                            hintText: supervisorEmailHint,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _LabeledField(
-                        label: supervisorCodeLabel,
-                        child: TextField(
-                          controller: supervisorCodeController,
-                          onChanged: (_) => setDialogState(() {}),
-                          keyboardType: TextInputType.text,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(
-                              RegExp(r'[A-Za-z0-9]'),
-                            ),
-                            LengthLimitingTextInputFormatter(5),
                           ],
-                          decoration: InputDecoration(
-                            border: const OutlineInputBorder(),
-                            isDense: true,
-                            hintText: supervisorCodeHint,
+                        ),
+                        const SizedBox(height: 2),
+                        _LabeledField(
+                          label: supervisorEmailLabel,
+                          child: TextField(
+                            controller: supervisorEmailController,
+                            onChanged: (_) => setDialogState(() {}),
+                            keyboardType: TextInputType.emailAddress,
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                              hintText: supervisorEmailHint,
+                            ),
                           ),
                         ),
-                      ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          onPressed: () async {
-                            final launched = await launchUrl(
-                              _registerInfoUri,
-                              mode: LaunchMode.platformDefault,
-                            );
-                            if (launched || !ctx.mounted) return;
-                            setDialogState(() {
-                              status = _textFor(
-                                'status_register_link_failed',
-                                uiLang,
+                        const SizedBox(height: 10),
+                        _LabeledField(
+                          label: supervisorCodeLabel,
+                          child: TextField(
+                            controller: supervisorCodeController,
+                            onChanged: (_) => setDialogState(() {}),
+                            keyboardType: TextInputType.text,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                RegExp(r'[A-Za-z0-9]'),
+                              ),
+                              LengthLimitingTextInputFormatter(5),
+                            ],
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                              hintText: supervisorCodeHint,
+                            ),
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: () async {
+                              final launched = await launchUrl(
+                                _registerInfoUri,
+                                mode: LaunchMode.platformDefault,
                               );
-                            });
-                          },
-                          child: Text(
-                            '$codeRequiresRegistrationLabel: https://www.dailywords-project.org/register/',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _LabeledField(
-                        label: internalNameLabel,
-                        child: TextField(
-                          controller: learnerInternalNameController,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                            hintText: 'Max Mustermann',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        learnerConsentLabel,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      Row(
-                        children: [
-                          Checkbox(
-                            value: learnerConsentConfirmed,
-                            onChanged: (value) {
+                              if (launched || !ctx.mounted) return;
                               setDialogState(() {
-                                learnerConsentConfirmed = value ?? false;
+                                supervisorStatus = _textFor(
+                                  'status_register_link_failed',
+                                  uiLang,
+                                );
                               });
                             },
+                            child: Text(
+                              '$codeRequiresRegistrationLabel: https://www.dailywords-project.org/register/',
+                            ),
                           ),
-                          Text(consentConfirmedLabel),
-                        ],
-                      ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          onPressed: () async {
-                            final launched = await launchUrl(
-                              _consentInfoUri,
-                              mode: LaunchMode.platformDefault,
-                            );
-                            if (launched || !ctx.mounted) return;
-                            setDialogState(() {
-                              status = _textFor(
-                                'status_consent_link_failed',
-                                uiLang,
+                        ),
+                        const SizedBox(height: 10),
+                        _LabeledField(
+                          label: internalNameLabel,
+                          child: TextField(
+                            controller: learnerInternalNameController,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                              hintText: 'Max Mustermann',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          learnerConsentLabel,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        Row(
+                          children: [
+                            Checkbox(
+                              value: learnerConsentConfirmed,
+                              onChanged: (value) {
+                                setDialogState(() {
+                                  learnerConsentConfirmed = value ?? false;
+                                });
+                              },
+                            ),
+                            Text(consentConfirmedLabel),
+                          ],
+                        ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: () async {
+                              final launched = await launchUrl(
+                                _consentInfoUri,
+                                mode: LaunchMode.platformDefault,
                               );
-                            });
-                          },
-                          child: Text(
-                            '$viewConsentLabel: https://www.dailywords-project.org/trial',
+                              if (launched || !ctx.mounted) return;
+                              setDialogState(() {
+                                supervisorStatus = _textFor(
+                                  'status_consent_link_failed',
+                                  uiLang,
+                                );
+                              });
+                            },
+                            child: Text(
+                              '$viewConsentLabel: https://www.dailywords-project.org/trial',
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      _LabeledField(
-                        label: commentOptionalLabel,
-                        child: TextField(
-                          controller: commentController,
-                          decoration: InputDecoration(
-                            border: const OutlineInputBorder(),
-                            isDense: true,
-                            hintText: commentHint,
+                        const SizedBox(height: 10),
+                        _LabeledField(
+                          label: commentOptionalLabel,
+                          child: TextField(
+                            controller: commentController,
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                              hintText: commentHint,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  progressReferenceLabel,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                TextField(
-                                  controller: controller,
-                                  onChanged: (_) => setDialogState(() {}),
-                                  decoration: const InputDecoration(
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: loading ? null : removeUserId,
-                            child: Image.asset(
-                              'assets/icons/remove.webp',
-                              width: 36,
-                              height: 36,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(removeLabel),
-                          const SizedBox(width: 14),
-                          GestureDetector(
-                            onTap: loading ? null : reloadProgressReference,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Image.asset(
-                                  'assets/icons/reload.webp',
-                                  width: 36,
-                                  height: 36,
-                                  fit: BoxFit.contain,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  reloadLabel,
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          GestureDetector(
-                            onTap: loading ? null : showHint,
-                            child: Image.asset(
-                              'assets/icons/Magnifying_glass.webp',
-                              width: 36,
-                              height: 36,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                          const Spacer(),
-                          GestureDetector(
-                            onTap: canApply ? applyChanges : null,
-                            child: Opacity(
-                              opacity: canApply ? 1.0 : 0.45,
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Icon(
-                                    canApply ? Icons.check_box : Icons.lock,
-                                    size: 36,
-                                    color: canApply
-                                        ? Colors.green.shade700
-                                        : Colors.grey.shade700,
-                                  ),
-                                  const SizedBox(height: 2),
                                   Text(
-                                    applyLabel,
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                  if (!canApply &&
-                                      applyDisabledHint.trim().isNotEmpty) ...[
-                                    const SizedBox(height: 2),
-                                    SizedBox(
-                                      width: 160,
-                                      child: Text(
-                                        applyDisabledHint,
-                                        textAlign: TextAlign.right,
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.grey.shade700,
-                                        ),
-                                      ),
+                                    progressReferenceLabel,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
                                     ),
-                                  ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: controller,
+                                    onChanged: (_) => setDialogState(() {}),
+                                    decoration: const InputDecoration(
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 14,
+                          runSpacing: 10,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                GestureDetector(
+                                  onTap: loading ? null : removeUserId,
+                                  child: Image.asset(
+                                    'assets/icons/remove.webp',
+                                    width: 36,
+                                    height: 36,
+                                    fit: BoxFit.contain,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(removeLabel),
+                              ],
+                            ),
+                            GestureDetector(
+                              onTap: loading ? null : reloadProgressReference,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Image.asset(
+                                    'assets/icons/reload.webp',
+                                    width: 36,
+                                    height: 36,
+                                    fit: BoxFit.contain,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    reloadLabel,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: loading ? null : showHint,
+                              child: Image.asset(
+                                'assets/icons/Magnifying_glass.webp',
+                                width: 36,
+                                height: 36,
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                            SizedBox(
+                              width: 180,
+                              child: GestureDetector(
+                                onTap: canApply ? applyChanges : null,
+                                child: Opacity(
+                                  opacity: canApply ? 1.0 : 0.45,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Icon(
+                                        canApply ? Icons.check_box : Icons.lock,
+                                        size: 36,
+                                        color: canApply
+                                            ? Colors.green.shade700
+                                            : Colors.grey.shade700,
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        applyLabel,
+                                        style: const TextStyle(fontSize: 12),
+                                      ),
+                                      if (!canApply &&
+                                          applyDisabledHint
+                                              .trim()
+                                              .isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        SizedBox(
+                                          width: 160,
+                                          child: Text(
+                                            applyDisabledHint,
+                                            textAlign: TextAlign.right,
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.grey.shade700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (progressStatus.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            '$progressReferenceLabel: $progressStatus',
+                            style: const TextStyle(fontSize: 12),
                           ),
                         ],
-                      ),
-                      if (status.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        Text(status, style: const TextStyle(fontSize: 12)),
+                        if (supervisorStatus.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            '$supervisorLabel: $supervisorStatus',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
-      );
-    },
-  );
-  controller.dispose();
-  supervisorEmailController.dispose();
-  supervisorCodeController.dispose();
-  learnerInternalNameController.dispose();
-  commentController.dispose();
+            );
+          },
+        );
+      },
+    );
+  } finally {
+    panelOpen = false;
+    // Delay disposal one frame to avoid transient route teardown callbacks
+    // touching controllers during dialog close animations.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.dispose();
+      supervisorEmailController.dispose();
+      supervisorCodeController.dispose();
+      learnerInternalNameController.dispose();
+      commentController.dispose();
+    });
+  }
 }
 
 String _normalizeLang(String raw) {
@@ -956,8 +1011,7 @@ const Map<String, Map<String, String>> _historyTexts = {
     'de': 'Fehlende User-ID fur Supervisor-Abgleich.',
   },
   'status_supervisor_invalid_code': {
-    'en':
-        'Supervisor code must be exactly 5 characters (letters and numbers).',
+    'en': 'Supervisor code must be exactly 5 characters (letters and numbers).',
     'de':
         'Der Supervisor-Code muss genau 5 Zeichen haben (Buchstaben und Ziffern).',
   },

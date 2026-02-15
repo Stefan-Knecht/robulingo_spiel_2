@@ -209,6 +209,7 @@ async function handleLog(request, env) {
   }
   const chunk = await request.arrayBuffer();
   const bucket = env.USERDATA;
+  const geo = extractGeoMetadata(request);
 
   const bodyText = await readRequestBody(request, chunk);
   const lines = bodyText
@@ -217,22 +218,27 @@ async function handleLog(request, env) {
     .filter((line) => line.length > 0);
 
   const sessions = new Map();
+  const legacyLines = [];
   for (const line of lines) {
     let data;
     try {
       data = JSON.parse(line);
+      data = enrichLogEventWithGeo(data, geo);
     } catch (_) {
+      legacyLines.push(line);
       continue;
     }
+    const normalizedLine = JSON.stringify(data);
+    legacyLines.push(normalizedLine);
     const tsMs = parseTsMs(data.ts);
-    const sid = data.session;
+    const sid = data.session || data.session_id;
     if (tsMs == null || !sid) continue;
     if (!sessions.has(sid)) {
       sessions.set(sid, { events: [], rawLines: [] });
     }
     const entry = sessions.get(sid);
     entry.events.push({ tsMs, type: data.type });
-    entry.rawLines.push(line);
+    entry.rawLines.push(normalizedLine);
   }
 
   for (const [sid, entry] of sessions.entries()) {
@@ -262,8 +268,10 @@ async function handleLog(request, env) {
     });
   }
 
+  await updateUserGeoProfile(bucket, uid, geo, sessionId);
+
   // Keep legacy gzip log for audit/debug (optional).
-  await appendLegacyRun(bucket, uid, sessionId, chunk);
+  await appendLegacyRun(bucket, uid, sessionId, legacyLines, chunk);
 
   return new Response('ok', { status: 200, headers: CORS_HEADERS });
 }
@@ -743,6 +751,62 @@ async function readJsonBody(request) {
   }
 }
 
+function extractGeoMetadata(request) {
+  const cf = request.cf || {};
+  const countryCode = cleanCountryCode(
+    cf.country ||
+      request.headers.get('cf-ipcountry') ||
+      request.headers.get('x-vercel-ip-country') ||
+      request.headers.get('x-country-code')
+  );
+  const regionCode = cleanOptionalString(cf.regionCode, 32);
+  const region = cleanOptionalString(cf.region, 128);
+  const city = cleanOptionalString(cf.city, 128);
+  const continent = cleanOptionalString(cf.continent, 32);
+  const timezone = cleanOptionalString(cf.timezone, 64);
+  const colo = cleanOptionalString(cf.colo, 32);
+  return {
+    country_code: countryCode,
+    region_code: regionCode,
+    region,
+    city,
+    continent,
+    timezone,
+    colo,
+    source: cf && Object.keys(cf).length > 0 ? 'cf' : 'header',
+  };
+}
+
+function enrichLogEventWithGeo(event, geo) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return event;
+  const enriched = { ...event };
+  if (!cleanCountryCode(enriched.country_code || enriched.cc) && geo.country_code) {
+    enriched.country_code = geo.country_code;
+  }
+  if (!cleanOptionalString(enriched.region_code, 32) && geo.region_code) {
+    enriched.region_code = geo.region_code;
+  }
+  if (!cleanOptionalString(enriched.region, 128) && geo.region) {
+    enriched.region = geo.region;
+  }
+  if (!cleanOptionalString(enriched.city, 128) && geo.city) {
+    enriched.city = geo.city;
+  }
+  if (!cleanOptionalString(enriched.continent, 32) && geo.continent) {
+    enriched.continent = geo.continent;
+  }
+  if (!cleanOptionalString(enriched.timezone, 64) && geo.timezone) {
+    enriched.timezone = geo.timezone;
+  }
+  if (!cleanOptionalString(enriched.colo, 32) && geo.colo) {
+    enriched.colo = geo.colo;
+  }
+  if (!cleanOptionalString(enriched.geo_source, 32) && geo.source) {
+    enriched.geo_source = geo.source;
+  }
+  return enriched;
+}
+
 function resolveUserId(request, body) {
   const fromHeader = cleanOptionalString(request.headers.get('x-user-id'), 128);
   if (fromHeader) return fromHeader;
@@ -759,6 +823,14 @@ function cleanOptionalString(raw, maxLen = 256) {
   const value = String(raw).trim();
   if (!value) return null;
   return value.slice(0, maxLen);
+}
+
+function cleanCountryCode(raw) {
+  const value = cleanOptionalString(raw, 16);
+  if (!value) return null;
+  const upper = value.toUpperCase();
+  if (!/^[A-Z0-9]{2,8}$/.test(upper)) return null;
+  return upper;
 }
 
 function normalizePriority(raw) {
@@ -1184,8 +1256,49 @@ async function updateUserSummary(bucket, uid, dayKey, seconds, runs, sessions, l
   });
 }
 
-async function appendLegacyRun(bucket, uid, sessionId, chunk) {
+async function updateUserGeoProfile(bucket, uid, geo, sessionId) {
+  const hasGeo =
+    cleanCountryCode(geo?.country_code) ||
+    cleanOptionalString(geo?.region_code, 32) ||
+    cleanOptionalString(geo?.region, 128) ||
+    cleanOptionalString(geo?.city, 128);
+  if (!hasGeo) return;
+  const key = `${uid}/profile/geo.json`;
+  const previous = (await getJsonObject(bucket, key)) || {};
+  const now = new Date().toISOString();
+  const next = {
+    userId: uid,
+    country_code: cleanCountryCode(geo.country_code) || cleanCountryCode(previous.country_code) || null,
+    region_code: cleanOptionalString(geo.region_code, 32) || cleanOptionalString(previous.region_code, 32) || null,
+    region: cleanOptionalString(geo.region, 128) || cleanOptionalString(previous.region, 128) || null,
+    city: cleanOptionalString(geo.city, 128) || cleanOptionalString(previous.city, 128) || null,
+    continent: cleanOptionalString(geo.continent, 32) || cleanOptionalString(previous.continent, 32) || null,
+    timezone: cleanOptionalString(geo.timezone, 64) || cleanOptionalString(previous.timezone, 64) || null,
+    colo: cleanOptionalString(geo.colo, 32) || cleanOptionalString(previous.colo, 32) || null,
+    source: cleanOptionalString(geo.source, 32) || cleanOptionalString(previous.source, 32) || null,
+    lastSessionId: cleanOptionalString(sessionId, 128) || cleanOptionalString(previous.lastSessionId, 128) || null,
+    updatedAt: now,
+  };
+  await putJsonObject(bucket, key, next);
+}
+
+async function gzipEncodeUtf8(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+  const bytes = await new Response(stream).arrayBuffer();
+  return bytes;
+}
+
+async function appendLegacyRun(bucket, uid, sessionId, lines, fallbackChunk) {
   const key = `${uid}/runs/${sessionId}.ndjson.gz`;
+  let chunk = fallbackChunk;
+  if (Array.isArray(lines) && lines.length > 0) {
+    try {
+      const body = `${lines.join('\n')}\n`;
+      chunk = await gzipEncodeUtf8(body);
+    } catch (_) {
+      chunk = fallbackChunk;
+    }
+  }
   const existing = await bucket.get(key);
   if (!existing) {
     await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
