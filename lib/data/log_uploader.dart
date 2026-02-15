@@ -8,6 +8,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:robulingo_flutter/flavor_config.dart';
 
 /// Schickt NDJSON-Batches (komprimiert) an den Worker, der nach R2 schreibt.
 class LogUploader {
@@ -56,10 +57,11 @@ class LogUploader {
       if (sessionId != null && sessionId.isNotEmpty) {
         headers['x-session-id'] = sessionId;
       }
+      final requestHeaders = withFlavorHeader(headers);
       final res = await _http
           .post(
             _path(endpointPath),
-            headers: headers,
+            headers: requestHeaders,
             body: payload,
           )
           .timeout(_timeout);

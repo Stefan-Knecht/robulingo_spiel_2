@@ -2,9 +2,10 @@
 
 This repo contains the Worker entrypoint at `tools/cloudflare_worker_log.js`.
 
-It expects two R2 bindings:
+It expects these R2 bindings:
 
 - `USERDATA` → bucket `userdata`
+- `DAILYWORDSUSERDATA` → bucket `dailywordsuserdata`
 - `HINTS` → bucket `hints`
 
 ## Deploy via Wrangler
@@ -29,10 +30,12 @@ After deploy, the app will POST (per-session logs):
 These endpoints require headers:
 - `x-user-id`
 - `x-session-id`
+- optional: `x-app-flavor` (`dailywords` routes user-data writes/reads to `DAILYWORDSUSERDATA`)
 
 Summary endpoint:
 - `GET https://<workerHost><apiPrefix>/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
   - header: `x-user-id`
+  - optional: `x-app-flavor: dailywords`
 
 Supervisor/Consent endpoints (R2-backed MVP):
 - `POST https://<workerHost><apiPrefix>/consent`

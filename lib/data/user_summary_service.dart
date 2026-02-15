@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:robulingo_flutter/flavor_config.dart';
 
 class UserDaySummary {
   const UserDaySummary({
@@ -55,7 +56,7 @@ class UserSummaryService {
       final res = await _http
           .get(
             _path('/summary', {'from': fromKey, 'to': toKey}),
-            headers: {'x-user-id': userId},
+            headers: withFlavorHeader({'x-user-id': userId}),
           )
           .timeout(_timeout);
       if (res.statusCode != 200 || res.bodyBytes.isEmpty) return const {};

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:robulingo_flutter/flavor_config.dart';
 
 class SupervisorDashboardService {
   SupervisorDashboardService({
@@ -43,10 +44,10 @@ class SupervisorDashboardService {
       final res = await _http
           .post(
             _path('/emoji-queue'),
-            headers: {
+            headers: withFlavorHeader({
               'content-type': 'application/json',
               'x-user-id': uid,
-            },
+            }),
             body: jsonEncode(body),
           )
           .timeout(_timeout);
@@ -63,10 +64,12 @@ class SupervisorDashboardService {
     final uid = userId.trim();
     if (uid.isEmpty) return null;
     try {
-      final res = await _http.get(
-        _path('/dashboard-info'),
-        headers: {'x-user-id': uid},
-      ).timeout(_timeout);
+      final res = await _http
+          .get(
+            _path('/dashboard-info'),
+            headers: withFlavorHeader({'x-user-id': uid}),
+          )
+          .timeout(_timeout);
       if (res.statusCode != 200 || res.bodyBytes.isEmpty) return null;
       final decoded = jsonDecode(utf8.decode(res.bodyBytes));
       if (decoded is Map<String, dynamic>) return decoded;
@@ -87,14 +90,16 @@ class SupervisorDashboardService {
     final uid = userId.trim();
     if (uid.isEmpty) return const [];
     try {
-      final res = await _http.get(
-        _path('/emoji-queue', {
-          'status': status,
-          'limit': '$limit',
-          'cursor': '$cursor',
-        }),
-        headers: {'x-user-id': uid},
-      ).timeout(_timeout);
+      final res = await _http
+          .get(
+            _path('/emoji-queue', {
+              'status': status,
+              'limit': '$limit',
+              'cursor': '$cursor',
+            }),
+            headers: withFlavorHeader({'x-user-id': uid}),
+          )
+          .timeout(_timeout);
       if (res.statusCode != 200 || res.bodyBytes.isEmpty) return const [];
       final decoded = jsonDecode(utf8.decode(res.bodyBytes));
       if (decoded is! Map) return const [];
@@ -136,10 +141,10 @@ class SupervisorDashboardService {
       final res = await _http
           .post(
             _path('/emoji-queue-ack'),
-            headers: {
+            headers: withFlavorHeader({
               'content-type': 'application/json',
               'x-user-id': uid,
-            },
+            }),
             body: jsonEncode(body),
           )
           .timeout(_timeout);

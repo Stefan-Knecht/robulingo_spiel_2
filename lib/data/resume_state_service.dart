@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:robulingo_flutter/flavor_config.dart';
 
 class ResumeStateEntry {
   final String startKey;
@@ -40,8 +41,7 @@ class ResumeStateEntry {
     final winsYou = (json['winsYou'] as num?)?.toInt();
     final winsRival = (json['winsRival'] as num?)?.toInt();
     final rawDate = (json['date'] as String?)?.trim();
-    final parsed =
-        rawDate != null ? DateTime.tryParse(rawDate) : null;
+    final parsed = rawDate != null ? DateTime.tryParse(rawDate) : null;
     return ResumeStateEntry(
       startKey: startKey,
       lang: lang,
@@ -77,8 +77,8 @@ class ResumeState {
         if (item is Map<String, dynamic>) {
           entries.add(ResumeStateEntry.fromJson(item));
         } else if (item is Map) {
-          entries.add(
-              ResumeStateEntry.fromJson(Map<String, dynamic>.from(item)));
+          entries
+              .add(ResumeStateEntry.fromJson(Map<String, dynamic>.from(item)));
         }
       }
     }
@@ -118,7 +118,10 @@ class ResumeStateService {
     if (userId.isEmpty) return null;
     try {
       final res = await _http
-          .get(_path('/resume-state'), headers: {'x-user-id': userId})
+          .get(
+            _path('/resume-state'),
+            headers: withFlavorHeader({'x-user-id': userId}),
+          )
           .timeout(_timeout);
       if (res.statusCode != 200 || res.body.isEmpty) return null;
       final data = jsonDecode(utf8.decode(res.bodyBytes));
@@ -139,10 +142,10 @@ class ResumeStateService {
       final res = await _http
           .post(
             _path('/resume-state'),
-            headers: {
+            headers: withFlavorHeader({
               'content-type': 'application/json',
               'x-user-id': userId,
-            },
+            }),
             body: jsonEncode(state.toJson()),
           )
           .timeout(_timeout);

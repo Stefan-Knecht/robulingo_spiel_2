@@ -62,7 +62,7 @@ const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,HEAD,POST,DELETE,OPTIONS',
   'access-control-allow-headers':
-    'content-type,if-none-match,x-user-id,x-session-id,content-encoding',
+    'content-type,if-none-match,x-user-id,x-session-id,content-encoding,x-app-flavor',
 };
 
 // ---------- /hints ----------
@@ -194,6 +194,19 @@ const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
 const SUMMARY_IDLE_CAP_SECONDS = 20;
 const SUMMARY_START_BONUS_SECONDS = 5;
 const EMOJI_QUEUE_MAX_ITEMS = 500;
+const APP_FLAVOR_DAILYWORDS = 'dailywords';
+
+function resolveAppFlavor(request) {
+  return cleanOptionalString(request.headers.get('x-app-flavor'), 64)?.toLowerCase() || 'robulingo';
+}
+
+function resolveUserDataBucket(request, env) {
+  const flavor = resolveAppFlavor(request);
+  if (flavor === APP_FLAVOR_DAILYWORDS && env.DAILYWORDSUSERDATA) {
+    return env.DAILYWORDSUSERDATA;
+  }
+  return env.USERDATA;
+}
 
 async function handleLog(request, env) {
   if (request.method !== 'POST') {
@@ -208,7 +221,7 @@ async function handleLog(request, env) {
     return new Response('missing x-session-id', { status: 400 });
   }
   const chunk = await request.arrayBuffer();
-  const bucket = env.USERDATA;
+  const bucket = resolveUserDataBucket(request, env);
   const geo = extractGeoMetadata(request);
 
   const bodyText = await readRequestBody(request, chunk);
@@ -293,7 +306,7 @@ async function handleAudioTargetMatches(request, env) {
   }
   const chunk = await request.arrayBuffer();
   const key = `${uid}/audio_target_matches/${sessionId}.ndjson.gz`;
-  const bucket = env.USERDATA;
+  const bucket = resolveUserDataBucket(request, env);
 
   const existing = await bucket.get(key);
   if (!existing) {
@@ -338,12 +351,13 @@ async function handleSummary(request, env) {
   if (!fromDate || !toDate || fromDate > toDate) {
     return new Response('invalid range', { status: 400, headers: CORS_HEADERS });
   }
+  const bucket = resolveUserDataBucket(request, env);
   const days = [];
   const cursor = new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate()));
   const end = new Date(Date.UTC(toDate.getUTCFullYear(), toDate.getUTCMonth(), toDate.getUTCDate()));
   while (cursor <= end) {
     const key = dateKey(cursor);
-    const obj = await env.USERDATA.get(`${uid}/summary/${key}.json`);
+    const obj = await bucket.get(`${uid}/summary/${key}.json`);
     if (obj) {
       try {
         const payload = await obj.json();
@@ -369,7 +383,7 @@ async function handleCurriculum(request, env) {
   if (!uid) {
     return new Response('missing uid', { status: 400 });
   }
-  const bucket = env.USERDATA;
+  const bucket = resolveUserDataBucket(request, env);
   const primaryKey = `${uid}/curriculum_delta.json`;
   const fallbackKey = `${uid}/${start}.delta.json`;
 
@@ -402,7 +416,7 @@ async function handleResumeState(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400 });
   }
-  const bucket = env.USERDATA;
+  const bucket = resolveUserDataBucket(request, env);
   const key = `${uid}/resume_state.json`;
 
   if (request.method === 'GET') {
@@ -440,9 +454,10 @@ async function handleConsent(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
+  const bucket = resolveUserDataBucket(request, env);
   const now = new Date().toISOString();
   const key = consentKey(uid);
-  const previous = await getJsonObject(env.USERDATA, key);
+  const previous = await getJsonObject(bucket, key);
   const monitoringOn = body.monitoring_on === true;
   const internalName = cleanOptionalString(body.internal_name, 128);
   const comment = cleanOptionalString(body.comment, 1024);
@@ -458,13 +473,13 @@ async function handleConsent(request, env) {
     revokedAt: monitoringOn ? null : now,
     updatedAt: now,
   };
-  await putJsonObject(env.USERDATA, key, next);
+  await putJsonObject(bucket, key, next);
   if (!monitoringOn) {
-    const pairing = await getJsonObject(env.USERDATA, pairingKey(uid));
+    const pairing = await getJsonObject(bucket, pairingKey(uid));
     if (pairing && pairing.active) {
       pairing.active = false;
       pairing.updatedAt = now;
-      await putJsonObject(env.USERDATA, pairingKey(uid), pairing);
+      await putJsonObject(bucket, pairingKey(uid), pairing);
     }
   }
   return jsonResponse({ ok: true, consent: next });
@@ -483,7 +498,8 @@ async function handlePair(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
-  const consent = await getJsonObject(env.USERDATA, consentKey(uid));
+  const bucket = resolveUserDataBucket(request, env);
+  const consent = await getJsonObject(bucket, consentKey(uid));
   if (!consent || consent.monitoringOn !== true) {
     return jsonResponse(
       { ok: false, error: 'consent_required', message: 'consent monitoring_on=true required' },
@@ -500,7 +516,7 @@ async function handlePair(request, env) {
   }
 
   const now = new Date().toISOString();
-  const previous = await getJsonObject(env.USERDATA, pairingKey(uid));
+  const previous = await getJsonObject(bucket, pairingKey(uid));
   const internalName = cleanOptionalString(body.internal_name, 128);
   const comment = cleanOptionalString(body.comment, 1024);
   const uiLanguage = cleanOptionalString(body.ui_language, 32);
@@ -517,7 +533,7 @@ async function handlePair(request, env) {
     linkedAt: previous?.linkedAt || now,
     updatedAt: now,
   };
-  await putJsonObject(env.USERDATA, pairingKey(uid), next);
+  await putJsonObject(bucket, pairingKey(uid), next);
 
   return jsonResponse({
     ok: true,
@@ -543,7 +559,8 @@ async function handleEmojiQueue(request, env) {
     if (!uid) {
       return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
     }
-    return await getEmojiQueue(request, env, uid, url);
+    const bucket = resolveUserDataBucket(request, env);
+    return await getEmojiQueue(request, bucket, uid, url);
   }
   if (request.method === 'DELETE') {
     const body = await readJsonBody(request);
@@ -551,10 +568,11 @@ async function handleEmojiQueue(request, env) {
     if (!uid) {
       return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
     }
-    const queue = await loadEmojiQueue(env.USERDATA, uid);
+    const bucket = resolveUserDataBucket(request, env);
+    const queue = await loadEmojiQueue(bucket, uid);
     queue.items = [];
     queue.updatedAt = new Date().toISOString();
-    await saveEmojiQueue(env.USERDATA, uid, queue);
+    await saveEmojiQueue(bucket, uid, queue);
     return jsonResponse({
       ok: true,
       userId: uid,
@@ -569,6 +587,7 @@ async function handleEmojiQueue(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
+  const bucket = resolveUserDataBucket(request, env);
   const source = cleanOptionalString(body.source, 64) || 'app';
   const fallbackReason = cleanOptionalString(body.reason, 64);
   const fallbackNote = cleanOptionalString(body.note, 512);
@@ -605,11 +624,11 @@ async function handleEmojiQueue(request, env) {
     );
   }
 
-  const queue = await loadEmojiQueue(env.USERDATA, uid);
+  const queue = await loadEmojiQueue(bucket, uid);
   queue.items.push(...accepted);
   trimEmojiQueue(queue);
   queue.updatedAt = now;
-  await saveEmojiQueue(env.USERDATA, uid, queue);
+  await saveEmojiQueue(bucket, uid, queue);
 
   return jsonResponse({
     ok: true,
@@ -632,12 +651,13 @@ async function handleEmojiQueueAck(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
+  const bucket = resolveUserDataBucket(request, env);
   const ids = Array.isArray(body.ids) ? body.ids.map((v) => String(v)) : [];
   if (ids.length === 0) {
     return jsonResponse({ ok: false, error: 'missing_ids' }, 400);
   }
   const now = new Date().toISOString();
-  const queue = await loadEmojiQueue(env.USERDATA, uid);
+  const queue = await loadEmojiQueue(bucket, uid);
   const idSet = new Set(ids);
   const mode = body.mode === 'remove' ? 'remove' : 'status';
   const nextStatus = mode === 'status' ? normalizeStatus(body.status) || 'delivered' : null;
@@ -658,7 +678,7 @@ async function handleEmojiQueueAck(request, env) {
     }
   }
   queue.updatedAt = now;
-  await saveEmojiQueue(env.USERDATA, uid, queue);
+  await saveEmojiQueue(bucket, uid, queue);
   return jsonResponse({
     ok: true,
     userId: uid,
@@ -677,12 +697,13 @@ async function handleDashboardInfo(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
+  const bucket = resolveUserDataBucket(request, env);
   const [consent, pairing, queue, resume, registration] = await Promise.all([
-    getJsonObject(env.USERDATA, consentKey(uid)),
-    getJsonObject(env.USERDATA, pairingKey(uid)),
-    loadEmojiQueue(env.USERDATA, uid),
-    getJsonObject(env.USERDATA, `${uid}/resume_state.json`),
-    loadSupervisorRegistration(env.USERDATA, uid),
+    getJsonObject(bucket, consentKey(uid)),
+    getJsonObject(bucket, pairingKey(uid)),
+    loadEmojiQueue(bucket, uid),
+    getJsonObject(bucket, `${uid}/resume_state.json`),
+    loadSupervisorRegistration(bucket, uid),
   ]);
   const queueSummary = summarizeEmojiQueue(queue);
   const recent = recentPending(queue.items, 8);
@@ -1024,8 +1045,8 @@ function summarizeEmojiQueue(queue) {
   };
 }
 
-async function getEmojiQueue(request, env, uid, url) {
-  const queue = await loadEmojiQueue(env.USERDATA, uid);
+async function getEmojiQueue(request, bucket, uid, url) {
+  const queue = await loadEmojiQueue(bucket, uid);
   const status = (url.searchParams.get('status') || 'all').toLowerCase();
   const limitRaw = Number(url.searchParams.get('limit') || 50);
   const cursorRaw = Number(url.searchParams.get('cursor') || 0);

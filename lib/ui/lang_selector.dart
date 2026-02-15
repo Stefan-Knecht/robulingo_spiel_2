@@ -9,6 +9,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../constants.dart';
+import '../flavor_config.dart';
 
 class LangSelector extends StatefulWidget {
   const LangSelector({
@@ -33,8 +34,7 @@ class _LangSelectorState extends State<LangSelector> {
     final bool isLandscape = size.width > size.height;
     final double logoHeight = size.height * (isLandscape ? 0.16 : 0.2);
     final double logoWidth = size.width * (isLandscape ? 0.4 : 0.85);
-    final double tileSize =
-        isLandscape ? min(84.0, size.height * 0.2) : 96.0;
+    final double tileSize = isLandscape ? min(84.0, size.height * 0.2) : 96.0;
     final double flagFontSize = tileSize * 0.48;
     final double spacing = isLandscape ? 16.0 : 24.0;
     final Widget mainContent = isLandscape
@@ -44,7 +44,7 @@ class _LangSelectorState extends State<LangSelector> {
               SizedBox(
                 width: logoWidth,
                 child: Image.asset(
-                  'assets/icons/RL_logo.webp',
+                  activeFlavor.brandLogoAsset,
                   width: logoWidth,
                   height: logoHeight,
                   fit: BoxFit.contain,
@@ -95,7 +95,7 @@ class _LangSelectorState extends State<LangSelector> {
         : Column(
             children: [
               Image.asset(
-                'assets/icons/RL_logo.webp',
+                activeFlavor.brandLogoAsset,
                 width: logoWidth,
                 height: logoHeight,
                 fit: BoxFit.contain,
@@ -117,7 +117,8 @@ class _LangSelectorState extends State<LangSelector> {
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: Colors.white,
-                                border: Border.all(color: Colors.black, width: 2),
+                                border:
+                                    Border.all(color: Colors.black, width: 2),
                                 borderRadius: BorderRadius.circular(18),
                                 boxShadow: const [
                                   BoxShadow(
@@ -134,14 +135,15 @@ class _LangSelectorState extends State<LangSelector> {
                           ),
                         )
                         .toList(),
-                      ),
+                  ),
                 ),
               ),
             ],
           );
 
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: isLandscape ? 16 : 32, horizontal: 24),
+      padding:
+          EdgeInsets.symmetric(vertical: isLandscape ? 16 : 32, horizontal: 24),
       child: Stack(
         children: [
           Positioned.fill(child: mainContent),

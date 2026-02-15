@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../constants.dart';
+import '../flavor_config.dart';
 
 class UserLogService {
   UserLogService({
@@ -25,17 +25,24 @@ class UserLogService {
   Future<List<String>> fetchLines({required String userId}) async {
     if (userId.isEmpty) return const [];
     final candidates = <Uri>[
-      Uri.parse('$userDataBucketVirtualHost/$userId/events.ndjson'),
-      Uri.parse('$userDataBucketPathBase/$userId/events.ndjson'),
-      Uri.parse('$userDataBucketVirtualHost/$userId/logs/events.ndjson'),
-      Uri.parse('$userDataBucketPathBase/$userId/logs/events.ndjson'),
+      Uri.parse(
+          '${activeFlavor.userDataBucketVirtualHost}/$userId/events.ndjson'),
+      Uri.parse('${activeFlavor.userDataBucketPathBase}/$userId/events.ndjson'),
+      Uri.parse(
+          '${activeFlavor.userDataBucketVirtualHost}/$userId/logs/events.ndjson'),
+      Uri.parse(
+          '${activeFlavor.userDataBucketPathBase}/$userId/logs/events.ndjson'),
       _path('/user-logs', {'uid': userId}),
       _path('/logs', {'uid': userId}),
       _path('/log', {'uid': userId}),
     ];
+    final workerHeaders = withFlavorHeader(<String, String>{});
     for (final uri in candidates) {
       try {
-        final res = await _http.get(uri).timeout(_timeout);
+        final useWorkerHeaders = uri.host == workerHost;
+        final res = await _http
+            .get(uri, headers: useWorkerHeaders ? workerHeaders : null)
+            .timeout(_timeout);
         if (res.statusCode != 200 || res.bodyBytes.isEmpty) continue;
         final body = utf8.decode(res.bodyBytes, allowMalformed: true);
         final lines = body
