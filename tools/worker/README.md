@@ -31,11 +31,12 @@ These endpoints require headers:
 - `x-user-id`
 - `x-session-id`
 - optional: `x-app-flavor` (`dailywords` routes user-data writes/reads to `DAILYWORDSUSERDATA`)
+- optional query fallback for link-based clients: `app_flavor=dailywords` (also supports `flavor=dailywords` / `app=dailywords`)
 
 Summary endpoint:
 - `GET https://<workerHost><apiPrefix>/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
   - header: `x-user-id`
-  - optional: `x-app-flavor: dailywords`
+  - optional: `x-app-flavor: dailywords` or query `app_flavor=dailywords`
 
 Supervisor/Consent endpoints (R2-backed MVP):
 - `POST https://<workerHost><apiPrefix>/consent`

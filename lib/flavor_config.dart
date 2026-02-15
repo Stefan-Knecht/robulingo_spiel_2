@@ -2,6 +2,9 @@ class AppFlavorConfig {
   const AppFlavorConfig({
     required this.id,
     required this.brandLogoAsset,
+    required this.dashboardLandingUrl,
+    required this.consentInfoUrl,
+    required this.registerInfoUrl,
     required this.allowedStartCurricula,
     required this.allowPickManifest,
     required this.defaultStartCurriculum,
@@ -11,6 +14,9 @@ class AppFlavorConfig {
 
   final String id;
   final String brandLogoAsset;
+  final String dashboardLandingUrl;
+  final String consentInfoUrl;
+  final String registerInfoUrl;
   final List<String> allowedStartCurricula;
   final bool allowPickManifest;
   final String defaultStartCurriculum;
@@ -21,6 +27,9 @@ class AppFlavorConfig {
 const AppFlavorConfig _robuLingoFlavor = AppFlavorConfig(
   id: 'robulingo',
   brandLogoAsset: 'assets/icons/RL_logo.webp',
+  dashboardLandingUrl: 'https://robulingo-landingpage.knechtipad-aec.workers.dev',
+  consentInfoUrl: 'https://www.dailywords-project.org/trial',
+  registerInfoUrl: 'https://www.dailywords-project.org/register/',
   allowedStartCurricula: <String>[
     'start_curriculum_a.json',
     'start_curriculum_b.json',
@@ -39,6 +48,9 @@ const AppFlavorConfig _robuLingoFlavor = AppFlavorConfig(
 const AppFlavorConfig _dailyWordsFlavor = AppFlavorConfig(
   id: 'dailywords',
   brandLogoAsset: 'assets/icons/DailyWords.webp',
+  dashboardLandingUrl: 'https://www.dailywords-project.org',
+  consentInfoUrl: 'https://www.dailywords-project.org/trial',
+  registerInfoUrl: 'https://www.dailywords-project.org/register/',
   allowedStartCurricula: <String>[
     'start_curriculum_a.json',
     'start_curriculum_b.json',

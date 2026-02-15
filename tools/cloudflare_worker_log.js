@@ -195,9 +195,17 @@ const SUMMARY_IDLE_CAP_SECONDS = 20;
 const SUMMARY_START_BONUS_SECONDS = 5;
 const EMOJI_QUEUE_MAX_ITEMS = 500;
 const APP_FLAVOR_DAILYWORDS = 'dailywords';
+const APP_FLAVOR_DEFAULT = 'robulingo';
 
 function resolveAppFlavor(request) {
-  return cleanOptionalString(request.headers.get('x-app-flavor'), 64)?.toLowerCase() || 'robulingo';
+  const headerFlavor = cleanOptionalString(request.headers.get('x-app-flavor'), 64)?.toLowerCase();
+  if (headerFlavor) return headerFlavor;
+  const url = new URL(request.url);
+  const queryFlavor =
+    cleanOptionalString(url.searchParams.get('app_flavor'), 64)?.toLowerCase() ||
+    cleanOptionalString(url.searchParams.get('flavor'), 64)?.toLowerCase() ||
+    cleanOptionalString(url.searchParams.get('app'), 64)?.toLowerCase();
+  return queryFlavor || APP_FLAVOR_DEFAULT;
 }
 
 function resolveUserDataBucket(request, env) {

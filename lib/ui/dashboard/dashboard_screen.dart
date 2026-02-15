@@ -9,6 +9,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:robulingo_flutter/flavor_config.dart';
 
 import '../../logic/log_storage.dart';
 
@@ -53,8 +54,6 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  static const _landingUri =
-      'https://robulingo-landingpage.knechtipad-aec.workers.dev';
   late Future<_DashboardData> _dataFuture;
   static const String _cliCommandsText = '''←    →
 F     J
@@ -241,12 +240,13 @@ F     J
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                     onPressed: () async {
-                      final uri = Uri.parse(_landingUri);
+                      final landingUrl = activeFlavor.dashboardLandingUrl;
+                      final uri = Uri.parse(landingUrl);
                       await launchUrl(uri,
                           mode: LaunchMode.externalApplication);
                     },
                     child: Text(
-                      _landingUri,
+                      activeFlavor.dashboardLandingUrl,
                       style: TextStyle(
                         decoration: TextDecoration.underline,
                         color: Colors.blue.shade700,
