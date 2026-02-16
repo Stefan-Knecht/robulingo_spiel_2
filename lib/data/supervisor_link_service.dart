@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:robulingo_flutter/flavor_config.dart';
 
 class SupervisorSyncResult {
   const SupervisorSyncResult({
@@ -178,10 +179,10 @@ class SupervisorLinkService {
     final res = await _http
         .post(
           _path(path),
-          headers: <String, String>{
+          headers: withFlavorHeader(<String, String>{
             'content-type': 'application/json',
             'x-user-id': userId,
-          },
+          }),
           body: jsonEncode(body),
         )
         .timeout(_timeout);

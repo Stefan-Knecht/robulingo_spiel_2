@@ -1,17 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:robulingo_flutter/flavor_config.dart';
 
 import '../data/resume_state_service.dart';
 import '../data/supervisor_link_service.dart';
 import '../logic/history_hint_loader.dart';
-
-final Uri _consentInfoUri = Uri.parse(
-  'https://www.dailywords-project.org/trial',
-);
-final Uri _registerInfoUri = Uri.parse(
-  'https://www.dailywords-project.org/register/',
-);
 
 Future<void> showHistoryPanel({
   required BuildContext context,
@@ -71,6 +65,8 @@ Future<void> showHistoryPanel({
             final consentConfirmedLabel = _textFor('consent_confirmed', uiLang);
             final viewConsentLabel =
                 _textFor('view_consent_information', uiLang);
+            final registerInfoUri = Uri.parse(activeFlavor.registerInfoUrl);
+            final consentInfoUri = Uri.parse(activeFlavor.consentInfoUrl);
             final commentOptionalLabel = _textFor('comment_optional', uiLang);
             final commentHint = _textFor('enter_comment', uiLang);
             final areYouSureLabel = _textFor('are_you_sure', uiLang);
@@ -357,7 +353,7 @@ Future<void> showHistoryPanel({
                           child: TextButton(
                             onPressed: () async {
                               final launched = await launchUrl(
-                                _registerInfoUri,
+                                registerInfoUri,
                                 mode: LaunchMode.platformDefault,
                               );
                               if (launched || !ctx.mounted) return;
@@ -369,7 +365,7 @@ Future<void> showHistoryPanel({
                               });
                             },
                             child: Text(
-                              '$codeRequiresRegistrationLabel: https://www.dailywords-project.org/register/',
+                              '$codeRequiresRegistrationLabel: ${registerInfoUri.toString()}',
                             ),
                           ),
                         ),
@@ -408,7 +404,7 @@ Future<void> showHistoryPanel({
                           child: TextButton(
                             onPressed: () async {
                               final launched = await launchUrl(
-                                _consentInfoUri,
+                                consentInfoUri,
                                 mode: LaunchMode.platformDefault,
                               );
                               if (launched || !ctx.mounted) return;
@@ -420,7 +416,7 @@ Future<void> showHistoryPanel({
                               });
                             },
                             child: Text(
-                              '$viewConsentLabel: https://www.dailywords-project.org/trial',
+                              '$viewConsentLabel: ${consentInfoUri.toString()}',
                             ),
                           ),
                         ),

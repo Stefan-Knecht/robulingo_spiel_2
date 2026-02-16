@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../constants.dart';
+import '../flavor_config.dart';
 
 class NativeLangSelector extends StatelessWidget {
   const NativeLangSelector(
@@ -34,7 +35,7 @@ class NativeLangSelector extends StatelessWidget {
         child: Column(
           children: [
             Image.asset(
-              'assets/icons/RL_logo.webp',
+              activeFlavor.brandLogoAsset,
               width: logoWidth,
               height: logoHeight,
               fit: BoxFit.contain,

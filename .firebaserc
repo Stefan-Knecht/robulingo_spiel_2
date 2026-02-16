@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "robulingo-635c5"
-  }
+  },
+  "targets": {
+    "robulingo-635c5": {
+      "hosting": {
+        "robulingo": [
+          "robulingo-635c5"
+        ],
+        "dailywords": [
+          "dailywords-635c5"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

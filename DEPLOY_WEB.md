@@ -1,8 +1,11 @@
 # Deploy Robulingo Web to Firebase Hosting
 
-This repo deploys the Flutter web build to Firebase Hosting:
+This repo deploys the Flutter web build to Firebase Hosting targets:
 
-- `https://robulingo-635c5.web.app/` (project: `robulingo-635c5`)
+- `robulingo` (site: `robulingo-635c5`)
+- `dailywords` (site: `dailywords`)
+
+Both targets are in Firebase project `robulingo-635c5`.
 
 ## One-time setup
 
@@ -18,12 +21,22 @@ The Firebase project is configured in `.firebaserc` and Hosting is configured in
 
 ## Deploy (production)
 
+RobuLingo:
+
 ```bash
-tools/deploy_firebase_hosting.sh
+tools/deploy_firebase_hosting.sh prod robulingo
 ```
 
-This builds Flutter web (`flutter build web --release`) and deploys `build/web`
-to Firebase Hosting.
+DailyWords:
+
+```bash
+tools/deploy_firebase_hosting.sh prod dailywords
+```
+
+The script builds Flutter web with flavor:
+
+- `robulingo` -> `--dart-define=APP_FLAVOR=robulingo`
+- `dailywords` -> `--dart-define=APP_FLAVOR=dailywords`
 
 ## Deploy (preview channel)
 
@@ -31,7 +44,8 @@ Preview deploys create a temporary URL so you can test without overwriting
 production:
 
 ```bash
-tools/deploy_firebase_hosting.sh preview my-branch
+tools/deploy_firebase_hosting.sh preview my-branch robulingo
+tools/deploy_firebase_hosting.sh preview my-branch dailywords
 ```
 
 ## Typical update workflow
@@ -39,7 +53,15 @@ tools/deploy_firebase_hosting.sh preview my-branch
 ```bash
 git checkout main
 git pull --rebase origin main
-tools/deploy_firebase_hosting.sh
+tools/deploy_firebase_hosting.sh prod robulingo
+```
+
+## One-time target binding
+
+If the `dailywords` hosting target/site is not yet bound in Firebase, run:
+
+```bash
+firebase target:apply hosting dailywords <YOUR_DAILYWORDS_SITE_ID>
 ```
 
 ## Automatic deploy from GitHub (recommended)

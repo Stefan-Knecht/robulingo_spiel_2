@@ -8,6 +8,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:robulingo_flutter/flavor_config.dart';
 
 /// Schickt NDJSON-Batches (komprimiert) an den Worker, der nach R2 schreibt.
 class LogUploader {
@@ -48,6 +49,7 @@ class LogUploader {
       }
     }
     try {
+      final uri = _path(endpointPath);
       final headers = <String, String>{
         'content-type': 'application/x-ndjson',
         if (contentEncoding != null) 'content-encoding': contentEncoding,
@@ -56,20 +58,23 @@ class LogUploader {
       if (sessionId != null && sessionId.isNotEmpty) {
         headers['x-session-id'] = sessionId;
       }
+      final requestHeaders = withFlavorHeader(headers);
       final res = await _http
           .post(
-            _path(endpointPath),
-            headers: headers,
+            uri,
+            headers: requestHeaders,
             body: payload,
           )
           .timeout(_timeout);
       final ok = res.statusCode >= 200 && res.statusCode < 300;
       if (!ok) {
-        debugPrint('[log-upload] status=${res.statusCode} body=${res.body}');
+        debugPrint(
+            '[log-upload] endpoint=$endpointPath status=${res.statusCode} body=${res.body}');
       }
       return ok;
     } catch (e) {
-      debugPrint('[log-upload][error] $e');
+      final uri = _path(endpointPath);
+      debugPrint('[log-upload][error] endpoint=$endpointPath uri=$uri err=$e');
       return false;
     }
   }

@@ -21,6 +21,43 @@ fi
 
 MODE="${1:-prod}"
 SOURCE_REF="${SOURCE_REF:-origin/main}"
+CHANNEL=""
+FLAVOR="robulingo"
+
+case "$MODE" in
+ prod)
+   FLAVOR="${2:-robulingo}"
+   ;;
+ preview)
+   CHANNEL="${2:-}"
+   if [[ -z "$CHANNEL" ]]; then
+     echo "Usage: tools/deploy_firebase_hosting.sh preview <channel> [robulingo|dailywords]" >&2
+     exit 2
+   fi
+   FLAVOR="${3:-robulingo}"
+   ;;
+ *)
+   echo "Usage: tools/deploy_firebase_hosting.sh [prod [robulingo|dailywords] | preview <channel> [robulingo|dailywords]]" >&2
+   exit 2
+   ;;
+esac
+
+TARGET=""
+APP_FLAVOR="robulingo"
+case "$FLAVOR" in
+ robulingo)
+   TARGET="robulingo"
+   APP_FLAVOR="robulingo"
+   ;;
+ dailywords)
+   TARGET="dailywords"
+   APP_FLAVOR="dailywords"
+   ;;
+ *)
+   echo "Invalid flavor: $FLAVOR (expected: robulingo|dailywords)" >&2
+   exit 2
+   ;;
+esac
 
 echo "Fetching latest refs from origin..."
 git fetch origin
@@ -36,25 +73,16 @@ echo "Creating temporary worktree at ref: $SOURCE_REF"
 git worktree add --detach "$WORKTREE_DIR" "$SOURCE_REF"
 cd "$WORKTREE_DIR"
 
-echo "Building Flutter web (release)..."
-flutter build web --release
+echo "Building Flutter web (release, APP_FLAVOR=$APP_FLAVOR)..."
+flutter build web --release --dart-define="APP_FLAVOR=$APP_FLAVOR"
 
 case "$MODE" in
  prod)
-   echo "Deploying to Firebase Hosting (production)..."
-   firebase deploy --only hosting
+   echo "Deploying to Firebase Hosting target '$TARGET' (production)..."
+   firebase deploy --only "hosting:$TARGET"
    ;;
  preview)
-   CHANNEL="${2:-}"
-   if [[ -z "$CHANNEL" ]]; then
-     echo "Usage: tools/deploy_firebase_hosting.sh preview <channel>" >&2
-     exit 2
-   fi
-   echo "Deploying to Firebase Hosting preview channel: $CHANNEL"
-   firebase hosting:channel:deploy "$CHANNEL" --only hosting
-   ;;
- *)
-   echo "Usage: tools/deploy_firebase_hosting.sh [prod|preview <channel>]" >&2
-   exit 2
+   echo "Deploying to Firebase Hosting preview channel '$CHANNEL' for target '$TARGET'..."
+   firebase hosting:channel:deploy "$CHANNEL" --only "$TARGET"
    ;;
 esac

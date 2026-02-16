@@ -9,6 +9,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:robulingo_flutter/data/hint_models.dart';
+import 'package:robulingo_flutter/flavor_config.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
 import 'package:robulingo_flutter/ui/dashboard_button.dart';
@@ -80,7 +81,7 @@ class _RestartSplashState extends State<RestartSplash> {
         child: Column(
           children: [
             const SizedBox(height: 32),
-            Image.asset('assets/icons/RL_logo.webp',
+            Image.asset(activeFlavor.brandLogoAsset,
                 height: 120, fit: BoxFit.contain),
             const SizedBox(height: 16),
             Padding(

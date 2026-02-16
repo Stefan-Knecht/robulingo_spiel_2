@@ -22,6 +22,7 @@ import 'package:robulingo_flutter/data/supervisor_link_service.dart';
 import 'package:robulingo_flutter/data/user_curriculum_delta.dart';
 import 'package:robulingo_flutter/data/user_curriculum_service.dart';
 import 'package:robulingo_flutter/event_logger.dart';
+import 'package:robulingo_flutter/flavor_config.dart';
 import 'package:robulingo_flutter/logic/item_stats.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/logic/ladder_controller.dart'
@@ -444,11 +445,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleWinYou() {
-    unawaited(_enqueueDashboardEmoji(
-      '🏆',
-      reason: 'player_win',
-      priority: 2,
-    ));
     if (loggerReady) {
       unawaited(logger.log('win', {'side': 'you', 'lang': lang}));
     }
@@ -463,11 +459,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleWinRival() {
-    unawaited(_enqueueDashboardEmoji(
-      '🤖',
-      reason: 'rival_win',
-      priority: 1,
-    ));
     if (loggerReady) {
       unawaited(logger.log('win', {'side': 'rival', 'lang': lang}));
     }
@@ -520,7 +511,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (!mounted || saved == null) return;
     setState(() {
       lang = saved.lang;
-      activeStartCurriculumKey = saved.startKey;
+      activeStartCurriculumKey = sanitizeStartCurriculum(saved.startKey);
       nativeLang = saved.nativeLang;
       awaitingLang = false;
       awaitingStart = false;
@@ -552,7 +543,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       lang = latest.lang;
       nativeLang = latest.nativeLang;
-      activeStartCurriculumKey = latest.startKey;
+      activeStartCurriculumKey = sanitizeStartCurriculum(latest.startKey);
       awaitingLang = false;
       awaitingStart = false;
       awaitingNative = false;
@@ -562,7 +553,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     unawaited(_loadHintPack());
     ladderController.setWins(you: fallbackWinsYou, rival: fallbackWinsRival);
-    _saveOnboardingSnapshot(startKey: latest.startKey);
+    _saveOnboardingSnapshot(startKey: sanitizeStartCurriculum(latest.startKey));
     await _loadLastSessionWins();
     unawaited(_updateRestartModuleProgress());
   }
@@ -830,7 +821,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       ladderController.reset(clearWins: false);
       setState(() {
         lang = restored.lang;
-        activeStartCurriculumKey = restored.startKey;
+        activeStartCurriculumKey = sanitizeStartCurriculum(restored.startKey);
         nativeLang = restored.nativeLang;
         currentTrial = null;
         _lastDisplayTrial = null;
@@ -1045,28 +1036,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
   }
 
-  Future<void> _enqueueDashboardEmoji(
-    String emoji, {
-    required String reason,
-    int priority = 0,
-    String? note,
-  }) async {
-    final uid = userId?.trim() ?? '';
-    if (uid.isEmpty) return;
-    await supervisorDashboardService.enqueueEmoji(
-      userId: uid,
-      emoji: emoji,
-      reason: reason,
-      note: note,
-      priority: priority,
-      meta: <String, dynamic>{
-        'lang': lang,
-        if (activeStartCurriculumKey != null)
-          'startKey': activeStartCurriculumKey,
-      },
-    );
-  }
-
   void _handleSpeechError(String code) {
     final lower = code.toLowerCase();
     if (lower.contains('no_match') ||
@@ -1097,19 +1066,21 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _onSelectStart(String fileName) async {
+    final selectedStart = sanitizeStartCurriculum(fileName);
     nativeSelectTimer?.cancel();
     nativeSelectTimer = Timer(const Duration(seconds: 20), () {
       if (!mounted || !awaitingNative) return;
-      _onSelectNative(null, fileName);
+      _onSelectNative(null, selectedStart);
     });
     setState(() {
       awaitingStart = false;
       awaitingNative = true;
-      activeStartCurriculumKey = fileName;
+      activeStartCurriculumKey = selectedStart;
     });
   }
 
   void _enterPickFlow() {
+    if (!activeFlavor.allowPickManifest) return;
     setState(() {
       pickFlowActive = true;
       awaitingStart = false;
@@ -1191,6 +1162,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _startPickGame(String key) async {
+    if (!activeFlavor.allowPickManifest) return;
     _resetPickSelection();
     await _loadInitial(startKey: key);
   }
@@ -1333,7 +1305,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintRevealed.clear();
     });
     unawaited(_loadHintPack(forceRefresh: true));
-    await _loadInitial(startKey: startKey);
+    await _loadInitial(startKey: sanitizeStartCurriculum(startKey));
   }
 
   Future<void> _loadInitial({String? startKey}) async {
@@ -1341,12 +1313,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     // dann so viele Batches laden, bis mindestens 1 valides Item da ist
     // oder nichts Brauchbares gefunden wird.
     lastCloudLoadToken++;
-    final previousStartKey = activeStartCurriculumKey;
+    final previousStartKey = activeStartCurriculumKey == null
+        ? null
+        : sanitizeStartCurriculum(activeStartCurriculumKey);
+    final requestedStartKey =
+        startKey == null ? null : sanitizeStartCurriculum(startKey);
     final initData = buildSessionInitData(DateTime.now().toUtc());
     final prep = await prepareForInitialLoad(
-      startKey: startKey,
+      startKey: requestedStartKey,
       previousStartKey: previousStartKey,
-      defaultStartCurriculum: defaultStartCurriculum,
+      defaultStartCurriculum: activeFlavor.defaultStartCurriculum,
       resolveStartKeyForLang: _startCurriculumKeyForLanguage,
       resetCursorOnNextLoad: resetCursorOnNextLoad,
       persistUserCursor: () async {},
@@ -1494,11 +1470,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<String> _startCurriculumKeyForLanguage(String startKey) async {
-    if (startKey.toLowerCase().startsWith('pick_')) {
+    final sanitized = sanitizeStartCurriculum(startKey);
+    if (isPickManifestKey(sanitized)) {
       return startKey;
     }
-    final candidate = _startCurriculumKeyWithLangSuffix(startKey, lang);
-    return candidate == startKey ? startKey : candidate;
+    final candidate = _startCurriculumKeyWithLangSuffix(sanitized, lang);
+    return candidate == sanitized ? sanitized : candidate;
   }
 
   String _startCurriculumKeyWithLangSuffix(String startKey, String language) {
@@ -2803,7 +2780,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           body: SafeArea(
             child: StartCurriculumSelector(
               onSelect: _onSelectStart,
-              onPickSelected: _enterPickFlow,
+              onPickSelected:
+                  activeFlavor.allowPickManifest ? _enterPickFlow : null,
               showHistoryButton: true,
               onOpenHistory: _openHistoryPanel,
             ),

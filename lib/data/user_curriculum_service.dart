@@ -8,7 +8,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../constants.dart';
+import '../flavor_config.dart';
 import 'user_curriculum_delta.dart';
 
 /// Holt/schreibt das User-Curriculum-Delta (schlanke Cursor+Patch-Datei).
@@ -34,15 +34,23 @@ class UserCurriculumService {
     required String startKey,
   }) async {
     final candidates = <Uri>[
-      Uri.parse('$userDataBucketVirtualHost/$userId/curriculum_delta.json'),
-      Uri.parse('$userDataBucketPathBase/$userId/curriculum_delta.json'),
-      Uri.parse('$userDataBucketVirtualHost/$userId/$startKey.delta.json'),
-      Uri.parse('$userDataBucketPathBase/$userId/$startKey.delta.json'),
+      Uri.parse(
+          '${activeFlavor.userDataBucketVirtualHost}/$userId/curriculum_delta.json'),
+      Uri.parse(
+          '${activeFlavor.userDataBucketPathBase}/$userId/curriculum_delta.json'),
+      Uri.parse(
+          '${activeFlavor.userDataBucketVirtualHost}/$userId/$startKey.delta.json'),
+      Uri.parse(
+          '${activeFlavor.userDataBucketPathBase}/$userId/$startKey.delta.json'),
       _path('/user-curriculum', {'uid': userId, 'start': startKey}),
     ];
+    final workerHeaders = withFlavorHeader(<String, String>{});
     for (final uri in candidates) {
       try {
-        final res = await _http.get(uri).timeout(_timeout);
+        final useWorkerHeaders = uri.host == workerHost;
+        final res = await _http
+            .get(uri, headers: useWorkerHeaders ? workerHeaders : null)
+            .timeout(_timeout);
         if (res.statusCode != 200 || res.body.isEmpty) continue;
         final data = jsonDecode(utf8.decode(res.bodyBytes));
         return tryParseDelta(data as Map<String, dynamic>?);
@@ -62,7 +70,7 @@ class UserCurriculumService {
     try {
       final res = await _http
           .post(uri,
-              headers: {'content-type': 'application/json'},
+              headers: withFlavorHeader({'content-type': 'application/json'}),
               body: jsonEncode({
                 'uid': userId,
                 'start': startKey,
@@ -71,7 +79,8 @@ class UserCurriculumService {
           .timeout(_timeout);
       final ok = res.statusCode >= 200 && res.statusCode < 300;
       if (!ok) {
-        debugPrint('[user-delta][push-status] ${res.statusCode} body=${res.body}');
+        debugPrint(
+            '[user-delta][push-status] ${res.statusCode} body=${res.body}');
       }
       return ok;
     } catch (e) {

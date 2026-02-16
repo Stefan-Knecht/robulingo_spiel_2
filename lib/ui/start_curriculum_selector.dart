@@ -7,6 +7,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:robulingo_flutter/constants.dart';
+import 'package:robulingo_flutter/flavor_config.dart';
 
 String _iconForStartKey(String key) =>
     startCurriculumIcons[key] ??
@@ -40,34 +41,54 @@ class StartCurriculumSelector extends StatelessWidget {
     final double rowSpacing = isLandscape ? 12.0 : 12.0;
     final double verticalPadding = isLandscape ? 16.0 : 32.0;
 
-    final optionRows = [
-      [
+    final allowed = activeFlavor.allowedStartCurricula.toSet();
+    final optionRows = <List<_StartOption>>[];
+
+    if (allowed.contains('start_curriculum_a.json')) {
+      optionRows.add([
         _StartOption(
             asset: _iconForStartKey('start_curriculum_a.json'),
             fileName: 'start_curriculum_a.json'),
-      ],
-      [
+      ]);
+    }
+
+    final secondRow = <_StartOption>[];
+    if (allowed.contains('start_curriculum_b.json')) {
+      secondRow.add(_StartOption(
+          asset: _iconForStartKey('start_curriculum_b.json'),
+          fileName: 'start_curriculum_b.json'));
+    }
+    if (allowed.contains('start_curriculum_t.json')) {
+      secondRow.add(_StartOption(
+          asset: _iconForStartKey('start_curriculum_t.json'),
+          fileName: 'start_curriculum_t.json'));
+    }
+    if (secondRow.isNotEmpty) {
+      optionRows.add(secondRow);
+    }
+
+    final thirdRow = <_StartOption>[];
+    if (allowed.contains('start_curriculum_s.json')) {
+      thirdRow.add(_StartOption(
+          asset: _iconForStartKey('start_curriculum_s.json'),
+          fileName: 'start_curriculum_s.json'));
+    }
+    if (allowed.contains('start_curriculum_l.json')) {
+      thirdRow.add(_StartOption(
+          asset: _iconForStartKey('start_curriculum_l.json'),
+          fileName: 'start_curriculum_l.json'));
+    }
+    if (activeFlavor.allowPickManifest && onPickSelected != null) {
+      thirdRow.add(
         _StartOption(
-            asset: _iconForStartKey('start_curriculum_b.json'),
-            fileName: 'start_curriculum_b.json'),
-        _StartOption(
-            asset: _iconForStartKey('start_curriculum_t.json'),
-            fileName: 'start_curriculum_t.json'),
-      ],
-      [
-        _StartOption(
-            asset: _iconForStartKey('start_curriculum_s.json'),
-            fileName: 'start_curriculum_s.json'),
-        _StartOption(
-            asset: _iconForStartKey('start_curriculum_l.json'),
-            fileName: 'start_curriculum_l.json'),
-        if (onPickSelected != null)
-          _StartOption(
-            asset: 'assets/icons/pick.webp',
-            onTap: onPickSelected,
-          ),
-      ],
-    ];
+          asset: 'assets/icons/pick.webp',
+          onTap: onPickSelected,
+        ),
+      );
+    }
+    if (thirdRow.isNotEmpty) {
+      optionRows.add(thirdRow);
+    }
 
     final optionsColumn = Column(
       mainAxisSize: MainAxisSize.min,
@@ -93,7 +114,7 @@ class StartCurriculumSelector extends StatelessWidget {
                 SizedBox(
                   width: logoWidth,
                   child: Image.asset(
-                    'assets/icons/RL_logo.webp',
+                    activeFlavor.brandLogoAsset,
                     width: logoWidth,
                     height: logoHeight,
                     fit: BoxFit.contain,
@@ -110,7 +131,7 @@ class StartCurriculumSelector extends StatelessWidget {
           : Column(
               children: [
                 Image.asset(
-                  'assets/icons/RL_logo.webp',
+                  activeFlavor.brandLogoAsset,
                   width: logoWidth,
                   height: logoHeight,
                   fit: BoxFit.contain,
