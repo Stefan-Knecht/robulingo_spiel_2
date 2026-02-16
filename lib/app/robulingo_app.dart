@@ -445,11 +445,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleWinYou() {
-    unawaited(_enqueueDashboardEmoji(
-      '🏆',
-      reason: 'player_win',
-      priority: 2,
-    ));
     if (loggerReady) {
       unawaited(logger.log('win', {'side': 'you', 'lang': lang}));
     }
@@ -464,11 +459,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleWinRival() {
-    unawaited(_enqueueDashboardEmoji(
-      '🤖',
-      reason: 'rival_win',
-      priority: 1,
-    ));
     if (loggerReady) {
       unawaited(logger.log('win', {'side': 'rival', 'lang': lang}));
     }
@@ -1044,28 +1034,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hostCtrl.dispose();
       prefixCtrl.dispose();
     }
-  }
-
-  Future<void> _enqueueDashboardEmoji(
-    String emoji, {
-    required String reason,
-    int priority = 0,
-    String? note,
-  }) async {
-    final uid = userId?.trim() ?? '';
-    if (uid.isEmpty) return;
-    await supervisorDashboardService.enqueueEmoji(
-      userId: uid,
-      emoji: emoji,
-      reason: reason,
-      note: note,
-      priority: priority,
-      meta: <String, dynamic>{
-        'lang': lang,
-        if (activeStartCurriculumKey != null)
-          'startKey': activeStartCurriculumKey,
-      },
-    );
   }
 
   void _handleSpeechError(String code) {

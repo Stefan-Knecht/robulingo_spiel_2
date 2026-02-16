@@ -15,6 +15,9 @@ class EventLogger {
   static final EventLogger _instance = EventLogger._internal();
   factory EventLogger() => _instance;
   EventLogger._internal();
+  static const int _maxLogBatchLines = 150;
+  static const int _maxAudioMatchBatchLines = 80;
+  static const Duration _retryDelay = Duration(seconds: 3);
 
   bool _ready = false;
   LogStorage? _storage;
@@ -126,20 +129,28 @@ class EventLogger {
     }
   }
 
-  void _scheduleUpload() {
+  void _scheduleUpload({Duration delay = Duration.zero}) {
     if (_uploadScheduled) return;
     // Upload nur wenn Remote-Konfig vorhanden ist.
     if (_uploader == null || userId.isEmpty) return;
     _uploadScheduled = true;
-    Future.microtask(_flushUploads);
+    if (delay <= Duration.zero) {
+      Future.microtask(_flushUploads);
+      return;
+    }
+    Future.delayed(delay, _flushUploads);
   }
 
-  void _scheduleAudioMatchUpload() {
+  void _scheduleAudioMatchUpload({Duration delay = Duration.zero}) {
     if (_uploadScheduledAudioMatches) return;
     if (_audioMatchUploader == null || userId.isEmpty) return;
     if (_pendingAudioMatchUpload.isEmpty) return;
     _uploadScheduledAudioMatches = true;
-    Future.microtask(_flushAudioMatchUploads);
+    if (delay <= Duration.zero) {
+      Future.microtask(_flushAudioMatchUploads);
+      return;
+    }
+    Future.delayed(delay, _flushAudioMatchUploads);
   }
 
   Future<void> _flushUploads() async {
@@ -153,7 +164,8 @@ class EventLogger {
       sessionId = sid;
     }
     // Schicke Logs im Batch; bei Erfolg entfernen.
-    final batch = List<String>.from(_pendingUpload);
+    final batch =
+        _pendingUpload.take(_maxLogBatchLines).toList(growable: false);
     final ok =
         await _uploader!.upload(userId: userId, lines: batch, sessionId: sid);
     if (ok) {
@@ -161,7 +173,7 @@ class EventLogger {
     }
     _uploading = false;
     if (_pendingUpload.isNotEmpty) {
-      _scheduleUpload();
+      _scheduleUpload(delay: ok ? Duration.zero : _retryDelay);
     }
   }
 
@@ -175,7 +187,9 @@ class EventLogger {
     if (sessionId.isEmpty) {
       sessionId = sid;
     }
-    final batch = List<String>.from(_pendingAudioMatchUpload);
+    final batch = _pendingAudioMatchUpload
+        .take(_maxAudioMatchBatchLines)
+        .toList(growable: false);
     final ok = await _audioMatchUploader!
         .upload(userId: userId, lines: batch, sessionId: sid);
     if (ok) {
@@ -183,7 +197,7 @@ class EventLogger {
     }
     _uploadingAudioMatches = false;
     if (_pendingAudioMatchUpload.isNotEmpty) {
-      _scheduleAudioMatchUpload();
+      _scheduleAudioMatchUpload(delay: ok ? Duration.zero : _retryDelay);
     }
   }
 }

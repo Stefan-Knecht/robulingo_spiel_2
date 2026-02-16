@@ -218,15 +218,15 @@ function resolveUserDataBucket(request, env) {
 
 async function handleLog(request, env) {
   if (request.method !== 'POST') {
-    return new Response('method not allowed', { status: 405 });
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
   }
   const uid = request.headers.get('x-user-id');
   const sessionId = request.headers.get('x-session-id');
   if (!uid) {
-    return new Response('missing x-user-id', { status: 400 });
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
   if (!sessionId) {
-    return new Response('missing x-session-id', { status: 400 });
+    return new Response('missing x-session-id', { status: 400, headers: CORS_HEADERS });
   }
   const chunk = await request.arrayBuffer();
   const bucket = resolveUserDataBucket(request, env);
@@ -302,15 +302,15 @@ const AUDIO_MATCH_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
 
 async function handleAudioTargetMatches(request, env) {
   if (request.method !== 'POST') {
-    return new Response('method not allowed', { status: 405 });
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
   }
   const uid = request.headers.get('x-user-id');
   const sessionId = request.headers.get('x-session-id');
   if (!uid) {
-    return new Response('missing x-user-id', { status: 400 });
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
   if (!sessionId) {
-    return new Response('missing x-session-id', { status: 400 });
+    return new Response('missing x-session-id', { status: 400, headers: CORS_HEADERS });
   }
   const chunk = await request.arrayBuffer();
   const key = `${uid}/audio_target_matches/${sessionId}.ndjson.gz`;
@@ -319,7 +319,7 @@ async function handleAudioTargetMatches(request, env) {
   const existing = await bucket.get(key);
   if (!existing) {
     await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
-    return new Response('ok', { status: 200 });
+    return new Response('ok', { status: 200, headers: CORS_HEADERS });
   }
 
   const oldBytes = await existing.arrayBuffer();
@@ -329,14 +329,14 @@ async function handleAudioTargetMatches(request, env) {
     const rotatedKey = `${uid}/audio_target_matches/${sessionId}-${stamp}.ndjson.gz`;
     await bucket.copy(key, rotatedKey);
     await bucket.put(key, chunk, { httpMetadata: { contentType: 'application/gzip' } });
-    return new Response('ok-rotated', { status: 200 });
+    return new Response('ok-rotated', { status: 200, headers: CORS_HEADERS });
   }
 
   const merged = new Uint8Array(total);
   merged.set(new Uint8Array(oldBytes), 0);
   merged.set(new Uint8Array(chunk), oldBytes.byteLength);
   await bucket.put(key, merged.buffer, { httpMetadata: { contentType: 'application/gzip' } });
-  return new Response('ok', { status: 200 });
+  return new Response('ok', { status: 200, headers: CORS_HEADERS });
 }
 
 // ---------- /summary ----------
@@ -620,7 +620,8 @@ async function handleEmojiQueue(request, env) {
       note,
       priority,
       meta,
-      createdAt: cleanOptionalString(raw?.createdAt, 64) || now,
+      // Use server timestamp to keep queue ordering deterministic.
+      createdAt: now,
       updatedAt: now,
       consumedAt: null,
     });
@@ -1087,7 +1088,11 @@ async function getEmojiQueue(request, bucket, uid, url) {
 function recentPending(items, count) {
   return items
     .filter((item) => item.status === 'pending')
-    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
+    .sort((a, b) => {
+      const aTs = Date.parse(a.updatedAt || a.createdAt || 0);
+      const bTs = Date.parse(b.updatedAt || b.createdAt || 0);
+      return bTs - aTs;
+    })
     .slice(0, count)
     .map((item) => ({
       id: item.id,

@@ -49,6 +49,7 @@ class LogUploader {
       }
     }
     try {
+      final uri = _path(endpointPath);
       final headers = <String, String>{
         'content-type': 'application/x-ndjson',
         if (contentEncoding != null) 'content-encoding': contentEncoding,
@@ -60,18 +61,20 @@ class LogUploader {
       final requestHeaders = withFlavorHeader(headers);
       final res = await _http
           .post(
-            _path(endpointPath),
+            uri,
             headers: requestHeaders,
             body: payload,
           )
           .timeout(_timeout);
       final ok = res.statusCode >= 200 && res.statusCode < 300;
       if (!ok) {
-        debugPrint('[log-upload] status=${res.statusCode} body=${res.body}');
+        debugPrint(
+            '[log-upload] endpoint=$endpointPath status=${res.statusCode} body=${res.body}');
       }
       return ok;
     } catch (e) {
-      debugPrint('[log-upload][error] $e');
+      final uri = _path(endpointPath);
+      debugPrint('[log-upload][error] endpoint=$endpointPath uri=$uri err=$e');
       return false;
     }
   }

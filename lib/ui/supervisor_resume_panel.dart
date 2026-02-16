@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../flavor_config.dart';
 import '../data/supervisor_dashboard_service.dart';
 
 class SupervisorResumePanel extends StatefulWidget {
@@ -28,6 +29,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   Timer? _refreshTimer;
   bool _loading = false;
   Map<String, dynamic>? _data;
+  List<Map<String, dynamic>> _pendingItems = const [];
   late final AnimationController _wiggleController;
 
   @override
@@ -76,15 +78,35 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         workerHost: widget.workerHost,
         apiPrefix: widget.apiPrefix,
       );
-      final payload = await service.fetchDashboardInfo(userId: uid);
+      final results = await Future.wait<dynamic>([
+        service.fetchDashboardInfo(userId: uid),
+        service.fetchEmojiQueue(userId: uid, status: 'pending', limit: 50),
+      ]);
+      final payload = results[0] as Map<String, dynamic>?;
+      final pendingRaw = (results[1] as List<Map<String, dynamic>>);
+      final pending = pendingRaw
+          .where((item) => !_isAppGeneratedEmoji(item))
+          .toList(growable: false);
+      final sample = pending.take(3).map((item) {
+        final emoji = (item['emoji'] ?? '').toString().trim();
+        final source = (item['source'] ?? '').toString().trim();
+        final reason = (item['reason'] ?? '').toString().trim();
+        final id = (item['id'] ?? '').toString().trim();
+        return '[$emoji src=$source reason=$reason id=${id.isEmpty ? '-' : id}]';
+      }).join(', ');
+      debugPrint(
+        '[supervisor-resume] flavor=${activeFlavor.id} uid=$uid host=${widget.workerHost} pendingRaw=${pendingRaw.length} pendingFiltered=${pending.length} sample=$sample',
+      );
       if (!mounted) return;
       setState(() {
         _data = payload;
+        _pendingItems = pending;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _data = null;
+        _pendingItems = const [];
       });
     } finally {
       _loading = false;
@@ -111,9 +133,12 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     final hasActiveSupervisor =
         supervisor['active'] == true || supervisor['paired'] == true;
     final supervisorName = _resolveSupervisorName(supervisor);
-    final queuedEmoji = _resolveQueuedEmoji(preview);
+    final queuedEmoji = _resolveQueuedEmoji(
+      _pendingItems,
+      fallbackItems: preview,
+    );
     final showName = hasActiveSupervisor && supervisorName.isNotEmpty;
-    final showEmoji = hasActiveSupervisor && queuedEmoji.isNotEmpty;
+    final showEmoji = queuedEmoji.isNotEmpty;
     if (!showName && !showEmoji) return const SizedBox.shrink();
 
     return Container(
@@ -184,11 +209,61 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     return '';
   }
 
-  String _resolveQueuedEmoji(List<Map<String, dynamic>> preview) {
-    for (final item in preview) {
-      final emoji = (item['emoji'] ?? '').toString().trim();
-      if (emoji.isNotEmpty) return emoji;
-    }
+  String _resolveQueuedEmoji(
+    List<Map<String, dynamic>> items, {
+    List<Map<String, dynamic>> fallbackItems = const [],
+  }) {
+    final primary = _pickBestEmoji(items);
+    if (primary != null && primary.isNotEmpty) return primary;
+    final fallback = _pickBestEmoji(fallbackItems);
+    if (fallback != null && fallback.isNotEmpty) return fallback;
     return '';
+  }
+
+  DateTime _itemTs(Map<String, dynamic> item) {
+    final updated = DateTime.tryParse((item['updatedAt'] ?? '').toString());
+    if (updated != null) return updated;
+    final created = DateTime.tryParse((item['createdAt'] ?? '').toString());
+    if (created != null) return created;
+    return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+  }
+
+  bool _isAppGeneratedEmoji(Map<String, dynamic> item) {
+    final source = (item['source'] ?? '').toString().trim().toLowerCase();
+    if (source != 'app') return false;
+    final reason = (item['reason'] ?? '').toString().trim().toLowerCase();
+    if (reason == 'player_win' || reason == 'rival_win') return true;
+    final emoji = (item['emoji'] ?? '').toString().trim();
+    if (emoji == '🤖' || emoji == '🏆') return true;
+    return false;
+  }
+
+  String? _pickBestEmoji(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return null;
+    final candidates = items
+        .where((item) => (item['emoji'] ?? '').toString().trim().isNotEmpty)
+        .toList(growable: false);
+    if (candidates.isEmpty) return null;
+    final sorted = <Map<String, dynamic>>[...candidates]
+      ..sort((a, b) {
+        final rankDiff = _emojiPriorityRank(a).compareTo(_emojiPriorityRank(b));
+        if (rankDiff != 0) return rankDiff;
+        return _itemTs(b).compareTo(_itemTs(a));
+      });
+    return (sorted.first['emoji'] ?? '').toString().trim();
+  }
+
+  int _emojiPriorityRank(Map<String, dynamic> item) {
+    final source = (item['source'] ?? '').toString().trim().toLowerCase();
+    final reason = (item['reason'] ?? '').toString().trim().toLowerCase();
+    final emoji = (item['emoji'] ?? '').toString().trim();
+    final appGenerated = _isAppGeneratedEmoji(item);
+    final isGameReason = reason == 'player_win' || reason == 'rival_win';
+    final isWinLossEmoji = emoji == '🤖' || emoji == '🏆';
+    if (source != 'app' && !isGameReason && !isWinLossEmoji) return 0;
+    if (!isGameReason && !isWinLossEmoji) return 1;
+    if (!isGameReason) return 2;
+    if (!appGenerated) return 3;
+    return 4;
   }
 }
