@@ -87,6 +87,8 @@ class ItemPresentationPolicy {
   final Map<String, int> _indexByUuid = {};
 
   int _nextCurriculumIndex = 0;
+  int _curriculumPullCount = 0;
+  bool _curriculumExhausted = false;
 
   final List<String> _comprehensionBlock = [];
   int _comprehensionIndex = 0;
@@ -118,6 +120,7 @@ class ItemPresentationPolicy {
   bool _lastSlotFromRefiller = false;
 
   int get comprehensionIndex => _comprehensionIndex;
+  bool get curriculumExhausted => _curriculumExhausted;
 
   List<String> get comprehensionBlockUuids =>
       List<String>.unmodifiable(_comprehensionBlock);
@@ -176,6 +179,8 @@ class ItemPresentationPolicy {
     _curriculum = const [];
     _indexByUuid.clear();
     _nextCurriculumIndex = 0;
+    _curriculumPullCount = 0;
+    _curriculumExhausted = false;
     _comprehensionBlock.clear();
     _comprehensionIndex = 0;
     _refillerQueue.clear();
@@ -226,6 +231,7 @@ class ItemPresentationPolicy {
     _comprehensionBlock.clear();
     for (int i = 0; i < config.comprehensionCoreSize; i++) {
       _comprehensionBlock.add(_curriculum[(normalizedStart + i) % n]);
+      _recordCurriculumPull();
     }
     _nextCurriculumIndex = (normalizedStart + config.comprehensionCoreSize) % n;
 
@@ -452,8 +458,9 @@ class ItemPresentationPolicy {
     // Idempotency: if we've already removed/blocked this item from naming,
     // do not enqueue it again or mutate state repeatedly.
     if (_blockedFromNaming.contains(uuid)) return false;
-    final shouldRemove = namingCorrect > config.namingMasteryCorrectThreshold ||
-        namingAttempts > config.namingDownFromNamingMaxAttempts;
+    final byCorrect = namingCorrect > config.namingMasteryCorrectThreshold;
+    final byAttempts = namingAttempts > config.namingDownFromNamingMaxAttempts;
+    final shouldRemove = byCorrect || byAttempts;
     if (!shouldRemove) return false;
     _blockedFromNaming.add(uuid);
     readyToName.remove(uuid);
@@ -469,19 +476,11 @@ class ItemPresentationPolicy {
         _activeNamingQueue = null;
       }
     }
-    _enqueueRefiller(uuid);
-    return true;
-  }
-
-  PresentationSlot _comprehensionSlotAt(int idx) {
-    if (_comprehensionBlock.isEmpty) {
-      return const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
+    // Refiller is intentionally "down-items only": comprehension-down + naming-down.
+    if (byAttempts) {
+      _enqueueRefiller(uuid);
     }
-    final i = idx.clamp(0, _comprehensionBlock.length - 1);
-    return PresentationSlot(
-      mode: PresentationMode.comprehension,
-      targetUuid: _comprehensionBlock[i],
-    );
+    return true;
   }
 
   void _replaceComprehensionBlockItem(String uuid, {required bool enqueueToRefiller}) {
@@ -498,12 +497,20 @@ class ItemPresentationPolicy {
       if (refill != null) {
         replacement = refill;
         _lastSlotFromRefiller = true;
+      } else if (_curriculumExhausted) {
+        // Curriculum is exhausted: keep existing item if no down-item is available.
+        replacement = _comprehensionBlock[idx];
       } else {
         replacement = _takeNextCurriculum();
         _lastSlotFromRefiller = false;
       }
     } else {
-      replacement = _takeNextCurriculum();
+      if (_curriculumExhausted) {
+        final refill = _dequeueRefiller();
+        replacement = refill ?? _comprehensionBlock[idx];
+      } else {
+        replacement = _takeNextCurriculum();
+      }
     }
     _comprehensionBlock[idx] = replacement;
   }
@@ -528,7 +535,16 @@ class ItemPresentationPolicy {
     if (_curriculum.isEmpty) return '';
     final uuid = _curriculum[_nextCurriculumIndex % _curriculum.length];
     _nextCurriculumIndex = (_nextCurriculumIndex + 1) % _curriculum.length;
+    _recordCurriculumPull();
     return uuid;
+  }
+
+  void _recordCurriculumPull() {
+    if (_curriculumExhausted || _curriculum.isEmpty) return;
+    _curriculumPullCount++;
+    if (_curriculumPullCount >= _curriculum.length) {
+      _curriculumExhausted = true;
+    }
   }
 
   int _nextNamingBlockSize() {

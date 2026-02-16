@@ -17,6 +17,8 @@ import 'package:robulingo_flutter/data/hint_models.dart';
 import 'package:robulingo_flutter/data/hints_service.dart';
 import 'package:robulingo_flutter/data/models.dart';
 import 'package:robulingo_flutter/data/resume_state_service.dart';
+import 'package:robulingo_flutter/data/supervisor_dashboard_service.dart';
+import 'package:robulingo_flutter/data/supervisor_link_service.dart';
 import 'package:robulingo_flutter/data/user_curriculum_delta.dart';
 import 'package:robulingo_flutter/data/user_curriculum_service.dart';
 import 'package:robulingo_flutter/event_logger.dart';
@@ -70,9 +72,15 @@ bool shouldSkipComprehensionAutoAdvance({
   required bool namingInProgress,
   required bool inNamingSlot,
 }) {
-  return namingHold ||
-      namingInProgress ||
-      inNamingSlot;
+  return namingHold || namingInProgress || inNamingSlot;
+}
+
+@visibleForTesting
+bool shouldDisableNamingTransitions({
+  required bool namingDisabled,
+  required int namingBlockRemaining,
+}) {
+  return namingDisabled || namingBlockRemaining > 0;
 }
 
 @visibleForTesting
@@ -140,6 +148,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   late UserCurriculumService userCurriculumService;
   late HintsService hintsService;
   late ResumeStateService resumeStateService;
+  late SupervisorDashboardService supervisorDashboardService;
+  late SupervisorLinkService supervisorLinkService;
   late ResumeStateController resumeStateController;
   String workerHost = defaultWorkerHost;
   String fileHost = defaultFileHost;
@@ -236,8 +246,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Trial? currentTrial;
   Trial? _lastDisplayTrial;
   bool _namingTransition = false;
-  PresentationSlot currentSlot =
-      const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
+  PresentationSlot currentSlot = const PresentationSlot(
+      mode: PresentationMode.comprehension, targetUuid: '');
   PresentationSlot? pendingNextSlot;
   String? _lastAnsweredCursorUuid;
   String? _lastNonRefillerCursorUuid;
@@ -363,6 +373,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     hintsService = HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateService =
         ResumeStateService(workerHost: workerHost, apiPrefix: apiPrefix);
+    supervisorDashboardService = SupervisorDashboardService(
+        workerHost: workerHost, apiPrefix: apiPrefix);
+    supervisorLinkService =
+        SupervisorLinkService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateController = ResumeStateController(service: resumeStateService);
     _initLogger();
     _initUserId();
@@ -430,6 +444,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleWinYou() {
+    unawaited(_enqueueDashboardEmoji(
+      '🏆',
+      reason: 'player_win',
+      priority: 2,
+    ));
     if (loggerReady) {
       unawaited(logger.log('win', {'side': 'you', 'lang': lang}));
     }
@@ -444,6 +463,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleWinRival() {
+    unawaited(_enqueueDashboardEmoji(
+      '🤖',
+      reason: 'rival_win',
+      priority: 1,
+    ));
     if (loggerReady) {
       unawaited(logger.log('win', {'side': 'rival', 'lang': lang}));
     }
@@ -460,16 +484,18 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await showHistoryPanel(
       context: context,
       userId: userId,
+      targetLang: lang,
       nativeLang: nativeLang,
       resumeState: resumeStateController.state,
       resumeStateService: resumeStateService,
+      supervisorLinkService: supervisorLinkService,
       hintLoader: historyHintLoader,
       onApplyUserId: (id, state) async {
         await userIdentity.save(id);
         setState(() {
           userId = id;
-          resumeStateController
-              .setState((state != null && state.entries.isNotEmpty) ? state : null);
+          resumeStateController.setState(
+              (state != null && state.entries.isNotEmpty) ? state : null);
         });
         unawaited(protocolLog.setUserId(id));
         _configureLoggerRemote();
@@ -657,8 +683,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       currentTrial = null;
       _lastDisplayTrial = null;
       _namingTransition = false;
-      currentSlot =
-          const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
+      currentSlot = const PresentationSlot(
+          mode: PresentationMode.comprehension, targetUuid: '');
       pendingNextSlot = null;
       presentationPolicy.reset();
     });
@@ -695,8 +721,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final iconAsset = _moduleIconForStart(startKey);
     final metadata = await _fetchRestartCurriculumMetadata(startKey);
     final cursor = await _loadRestartCursor();
-    final int completed =
-        metadata.totalItems > 0 ? (cursor ?? 0).clamp(0, metadata.totalItems) : 0;
+    final int completed = metadata.totalItems > 0
+        ? (cursor ?? 0).clamp(0, metadata.totalItems)
+        : 0;
     final int total = metadata.totalItems;
     if (!mounted ||
         requestId != _restartPanelInfoRequest ||
@@ -757,8 +784,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       startIndex: startIndex,
       refillerQueue: refiller.queue,
     );
-    final int idxInBlock = (cursorIndex - startIndex)
-        .clamp(0, max(0, presentationPolicy.comprehensionBlockUuids.length - 1));
+    final int idxInBlock = (cursorIndex - startIndex).clamp(
+        0, max(0, presentationPolicy.comprehensionBlockUuids.length - 1));
     presentationPolicy.setComprehensionIndex(idxInBlock);
 
     final slot = presentationPolicy.currentSlot;
@@ -808,8 +835,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         currentTrial = null;
         _lastDisplayTrial = null;
         _namingTransition = false;
-        currentSlot =
-            const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
+        currentSlot = const PresentationSlot(
+            mode: PresentationMode.comprehension, targetUuid: '');
         pendingNextSlot = null;
         showRestartSplash = false;
         awaitingLang = false;
@@ -846,8 +873,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       await _ensureCurriculumLoaded();
       int? fallbackCursorIndex;
       if (restored.savedUuid != null && curriculum.isNotEmpty) {
-        final idx =
-            curriculum.indexWhere((e) => e.uuid == restored.savedUuid);
+        final idx = curriculum.indexWhere((e) => e.uuid == restored.savedUuid);
         if (idx >= 0) fallbackCursorIndex = idx;
       }
       fallbackCursorIndex ??= restored.savedIndex;
@@ -943,65 +969,102 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _openSettings() async {
     final hostCtrl = TextEditingController(text: workerHost);
     final prefixCtrl = TextEditingController(text: apiPrefix);
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Worker-URL anpassen'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: hostCtrl,
-              decoration: const InputDecoration(
-                  labelText: 'Host (ohne Schema)', hintText: 'example.com'),
-            ),
-            TextField(
-              controller: prefixCtrl,
-              decoration: const InputDecoration(
-                  labelText: 'API-Prefix', hintText: '/api'),
+    try {
+      final result = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Worker-URL anpassen'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: hostCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'Host (ohne Schema)', hintText: 'example.com'),
+              ),
+              TextField(
+                controller: prefixCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'API-Prefix', hintText: '/api'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Abbrechen')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, {
+                'host': hostCtrl.text.trim(),
+                'prefix': prefixCtrl.text.trim(),
+              }),
+              child: const Text('Übernehmen'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Abbrechen')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, {
-              'host': hostCtrl.text.trim(),
-              'prefix': prefixCtrl.text.trim(),
-            }),
-            child: const Text('Übernehmen'),
-          ),
-        ],
-      ),
-    );
-    if (result != null &&
-        result['host'] != null &&
-        result['host']!.isNotEmpty) {
-      final newHost = result['host']!;
-      final newPrefix =
-          result['prefix']?.isNotEmpty == true ? result['prefix']! : '/api';
-      final normalizedPrefix =
-          newPrefix.startsWith('/') ? newPrefix : '/$newPrefix';
-      setState(() {
-        workerHost = newHost;
-        apiPrefix = normalizedPrefix;
-        api = ApiClient(
-          workerHost: workerHost,
-          fileHost: fileHost,
-          apiPrefix: apiPrefix,
-        );
-        pickManifestService = PickManifestService(api: api);
-        userCurriculumService =
-            UserCurriculumService(workerHost: workerHost, apiPrefix: apiPrefix);
-        hintsService =
-            HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
-      });
-      _configureLoggerRemote();
-      unawaited(_loadHintPack(forceRefresh: true));
-      _loadInitial();
+      );
+      if (!mounted) return;
+      if (result != null &&
+          result['host'] != null &&
+          result['host']!.isNotEmpty) {
+        final newHost = result['host']!;
+        final newPrefix =
+            result['prefix']?.isNotEmpty == true ? result['prefix']! : '/api';
+        final normalizedPrefix =
+            newPrefix.startsWith('/') ? newPrefix : '/$newPrefix';
+        setState(() {
+          workerHost = newHost;
+          apiPrefix = normalizedPrefix;
+          api = ApiClient(
+            workerHost: workerHost,
+            fileHost: fileHost,
+            apiPrefix: apiPrefix,
+          );
+          pickManifestService = PickManifestService(api: api);
+          userCurriculumService = UserCurriculumService(
+              workerHost: workerHost, apiPrefix: apiPrefix);
+          hintsService =
+              HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
+          resumeStateService =
+              ResumeStateService(workerHost: workerHost, apiPrefix: apiPrefix);
+          supervisorDashboardService = SupervisorDashboardService(
+              workerHost: workerHost, apiPrefix: apiPrefix);
+          resumeStateController =
+              ResumeStateController(service: resumeStateService)
+                ..setState(resumeStateController.state);
+          supervisorLinkService = SupervisorLinkService(
+              workerHost: workerHost, apiPrefix: apiPrefix);
+        });
+        _configureLoggerRemote();
+        unawaited(_loadHintPack(forceRefresh: true));
+        _loadInitial();
+      }
+    } finally {
+      hostCtrl.dispose();
+      prefixCtrl.dispose();
     }
+  }
+
+  Future<void> _enqueueDashboardEmoji(
+    String emoji, {
+    required String reason,
+    int priority = 0,
+    String? note,
+  }) async {
+    final uid = userId?.trim() ?? '';
+    if (uid.isEmpty) return;
+    await supervisorDashboardService.enqueueEmoji(
+      userId: uid,
+      emoji: emoji,
+      reason: reason,
+      note: note,
+      priority: priority,
+      meta: <String, dynamic>{
+        'lang': lang,
+        if (activeStartCurriculumKey != null)
+          'startKey': activeStartCurriculumKey,
+      },
+    );
   }
 
   void _handleSpeechError(String code) {
@@ -1405,8 +1468,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         itemsLength: () => items.length,
         curriculumLength: () => curriculum.length,
         nextOffset: _nextCurriculumOffset,
-        loadBatch: (offset, limit) =>
-            _loadBatch(offset, maxEntries: limit),
+        loadBatch: (offset, limit) => _loadBatch(offset, maxEntries: limit),
       );
 
       if (items.isEmpty) {
@@ -1555,8 +1617,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (uuid == null || uuid.isEmpty) return;
     final cursor = curriculum.indexWhere((e) => e.uuid == uuid);
     if (cursor < 0) return;
-    protocolLog.addNote(
-        'Cursor: startKey=$startKey cursor=$cursor uuid=$uuid');
+    protocolLog.addNote('Cursor: startKey=$startKey cursor=$cursor uuid=$uuid');
     if (!enableRemoteUserDelta) return;
     final nextDelta = (userDelta ?? UserCurriculumDelta()).withCursor(cursor);
     userDelta = nextDelta;
@@ -1715,8 +1776,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<Trial?> _buildTrialForTarget(String targetUuid) async {
     final targetItem = await _ensureItemLoaded(targetUuid);
     if (targetItem == null) return null;
-    final distractorUuid =
-        presentationPolicy.pickDistractorUuid(targetUuid, exclude: {targetUuid});
+    final distractorUuid = presentationPolicy
+        .pickDistractorUuid(targetUuid, exclude: {targetUuid});
     final distractorItem = await _ensureItemLoaded(
         distractorUuid ?? _fallbackDistractorUuid(targetUuid));
     if (distractorItem == null) return null;
@@ -1742,7 +1803,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return targetUuid;
   }
 
-  Future<void> _prefetchUuids(Set<String> uuids, {int maxConcurrent = 4}) async {
+  Future<void> _prefetchUuids(Set<String> uuids,
+      {int maxConcurrent = 4}) async {
     if (uuids.isEmpty) return;
     final pending = Queue<String>.from(uuids.where((u) => u.isNotEmpty));
     Future<void> runOne(String uuid) async {
@@ -1804,7 +1866,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     if (trial != null && loggerReady) {
       unawaited(logger.log('trial_presented', {
-        'mode': slot.mode == PresentationMode.naming ? 'naming' : 'comprehension',
+        'mode':
+            slot.mode == PresentationMode.naming ? 'naming' : 'comprehension',
         'uuid': trial.target.uuid,
         'distractor_uuid': trial.distractor.uuid,
         'target_on_left': trial.targetOnLeft,
@@ -2172,9 +2235,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       _namingTransition = true;
     });
+    final disableNamingTransitions = shouldDisableNamingTransitions(
+      namingDisabled: namingDisabled,
+      namingBlockRemaining: namingBlockRemaining,
+    );
     final decision = presentationPolicy.onNamingAttemptFinished(
       currentUuid: currentUuid,
-      namingDisabled: namingDisabled,
+      namingDisabled: disableNamingTransitions,
       namingInProgress: namingInProgress,
     );
     if (kDebugMode) {
@@ -2240,23 +2307,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
     if (!mounted || token != currentTrialToken) return;
 
-    if (result == null) {
-      setState(() {
-        namingOutcome = null;
-        hasAnswered = false;
-      });
-      return;
-    }
-
-    final wasCorrect = result.moves > 0;
+    final wasCorrect = (result?.moves ?? 0) > 0;
+    final transcript = result?.transcript ?? '';
+    final moves = result?.moves ?? 0;
     final uuid = trial.target.uuid;
     debugPrint(
-        '[naming][scored] uuid=$uuid transcript="${result.transcript}" target="${trial.target.text}" correct=$wasCorrect moves=${result.moves}');
+        '[naming][scored] uuid=$uuid transcript="$transcript" target="${trial.target.text}" correct=$wasCorrect moves=$moves result_null=${result == null}');
     protocolLog.addNaming(
       label: trial.target.text,
       nativeLabel: trial.target.nativeText,
       phonetic: trial.target.phonetic,
-      heard: result.transcript,
+      heard: transcript,
       correct: wasCorrect,
     );
     _lastAnsweredCursorUuid = uuid;
@@ -2276,30 +2337,35 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       namingCorrect: stats.namingCorrect,
     );
     if (removedFromNaming) {
-      final byCorrect =
-          stats.namingCorrect >
-              presentationPolicy.config.namingMasteryCorrectThreshold;
-      final byAttempts =
-          stats.namingAttempts >
-              presentationPolicy.config.namingDownFromNamingMaxAttempts;
+      final byCorrect = stats.namingCorrect >
+          presentationPolicy.config.namingMasteryCorrectThreshold;
+      final byAttempts = stats.namingAttempts >
+          presentationPolicy.config.namingDownFromNamingMaxAttempts;
       final reason = byCorrect && byAttempts
           ? 'mastery+max_attempts'
           : (byCorrect ? 'mastery' : 'max_attempts');
       protocolLog.addNote(
           'Naming removal: uuid=$uuid reason=$reason attempts=${stats.namingAttempts} correct=${stats.namingCorrect} threshold_correct>${presentationPolicy.config.namingMasteryCorrectThreshold} threshold_attempts>${presentationPolicy.config.namingDownFromNamingMaxAttempts}');
+      if (byCorrect && loggerReady) {
+        unawaited(logger.log('item_naming_mastered', {
+          'lang': lang,
+          'uuid': uuid,
+          'reason': reason,
+          'naming_attempts': stats.namingAttempts,
+          'naming_correct': stats.namingCorrect,
+        }));
+      }
     }
     if (removedFromNaming && presentationPolicy.consumeRefillerDirtyFlag()) {
       unawaited(_persistRefillerQueue());
     }
-    _liveTranscript = result.transcript;
-    final noAnswer = result.transcript.trim().isEmpty;
+    _liveTranscript = transcript;
+    final noAnswer = transcript.trim().isEmpty;
     if (!wasCorrect && noAnswer) {
       ladderController.tryRivalStep(probability: 0.5);
     }
-    _completeNamingSession(
-        token: token, wasCorrect: wasCorrect, moves: result.moves);
+    _completeNamingSession(token: token, wasCorrect: wasCorrect, moves: moves);
   }
-
 
   Future<void> _skipNaming(String reason) async {
     if (!mounted) return;
@@ -2342,16 +2408,21 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     final wasQualified =
         presentationPolicy.readyToName.contains(trial.target.uuid);
+    final disableNamingTransitions = shouldDisableNamingTransitions(
+      namingDisabled: namingDisabled,
+      namingBlockRemaining: namingBlockRemaining,
+    );
     final decision = presentationPolicy.onComprehensionAnswered(
       uuid: trial.target.uuid,
       correct: correct,
-      namingDisabled: namingDisabled,
+      namingDisabled: disableNamingTransitions,
       namingInProgress: namingInProgress,
     );
     if (decision.refillerQueueDirty) {
       unawaited(_persistRefillerQueue());
     }
-    final isQualified = presentationPolicy.readyToName.contains(trial.target.uuid);
+    final isQualified =
+        presentationPolicy.readyToName.contains(trial.target.uuid);
     if (!wasQualified && isQualified && loggerReady) {
       unawaited(logger.log('item_mastered', {
         'lang': lang,
@@ -2506,7 +2577,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           _primeMicAndStart(skipGate: true);
         } else {
           // deny oder timeout: Block setzen und weiter, Gate später erneut zeigen
-          final hadActiveBlock = presentationPolicy.mode == PresentationMode.naming;
+          final hadActiveBlock =
+              presentationPolicy.mode == PresentationMode.naming;
           setState(() {
             namingBlockRemaining = 20;
             namingOutcome = null;
@@ -2630,8 +2702,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         return true;
       }
     }
-    if (key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.keyF) {
+    if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyF) {
       unawaited(_select(true));
       return true;
     }
@@ -2698,8 +2769,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           body: SafeArea(
             child: LangSelector(
               onSelect: _onSelectLang,
-              showHistoryButton: true,
-              onOpenHistory: _openHistoryPanel,
             ),
           ),
         ),
@@ -2735,6 +2804,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             child: StartCurriculumSelector(
               onSelect: _onSelectStart,
               onPickSelected: _enterPickFlow,
+              showHistoryButton: true,
+              onOpenHistory: _openHistoryPanel,
             ),
           ),
         ),
@@ -2877,11 +2948,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         final double baseImageHeight = isLandscape
             ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
             : min(size.height * 0.38, 320.0);
-        final double imageHeight = kIsWeb && isNamingView
-            ? baseImageHeight * 0.75
-            : baseImageHeight;
-        final bool showDashboardButton =
-            ladder.hasFlagAppeared || ladder.winsYou > 0 || ladder.winsRival > 0;
+        final double imageHeight =
+            kIsWeb && isNamingView ? baseImageHeight * 0.75 : baseImageHeight;
+        final bool showDashboardButton = ladder.hasFlagAppeared ||
+            ladder.winsYou > 0 ||
+            ladder.winsRival > 0;
         final bool showHourglass = namingInProgress || batchLoading || loading;
         assert(() {
           if (currentSlot.mode == PresentationMode.naming && !isNamingView) {
@@ -2900,7 +2971,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             phoneticOverrideRemaining[trial.target.uuid] ?? 0;
         final bool phoneticOverrideActive = phoneticOverrideCount > 0;
         final bool showPhonetic =
-            hasPhoneticData && (phoneticSeen < 4 || phoneticOverrideActive);
+            hasPhoneticData && (phoneticSeen < 3 || phoneticOverrideActive);
         final bool showNative =
             !trialIsLoading && _shouldShowNative(trial.target);
         final bool hintsEnabled =
@@ -2908,15 +2979,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         final String normL1 =
             hintsEnabled ? HintsService.normalizeLangCode(nativeLang) : '';
         final String normL2 = HintsService.normalizeLangCode(lang);
-        final bool hintPackMatches =
-            hintPack != null && hintPack!.l1 == normL1 && hintPack!.l2 == normL2;
+        final bool hintPackMatches = hintPack != null &&
+            hintPack!.l1 == normL1 &&
+            hintPack!.l2 == normL2;
         final List<String> hintIds = hintPackMatches
             ? (trial.target.hintRefsByLang[normL2] ?? const <String>[])
             : const <String>[];
         final bool showHintsInline =
             !isNamingView && hintPackMatches && hintIds.isNotEmpty;
-        final List<HintContent> resolvedHints =
-            showHintsInline ? hintPack!.hintsForIds(hintIds) : const <HintContent>[];
+        final List<HintContent> resolvedHints = showHintsInline
+            ? hintPack!.hintsForIds(hintIds)
+            : const <HintContent>[];
         final bool hintAvailable = showHintsInline && resolvedHints.isNotEmpty;
         final bool hintRevealedForItem =
             hintAvailable && hintRevealed.contains(trial.target.uuid);
@@ -2934,64 +3007,65 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         final bool showL2Text = (!trialIsLoading) &&
             (!isNamingView || namingOutcome != null || micStage >= 1);
         body = SessionBody(
-        ladder: ladder,
-        isNaming: isNamingView,
-        imageHeight: imageHeight,
-        leftImageBytes: leftImg,
-        rightImageBytes: rightImg,
-        targetOnLeft: trial.targetOnLeft,
-        hasAnswered: hasAnswered,
-        lastSelectionIsLeft: lastSelectionIsLeft,
-        namingOutcome: namingOutcome,
-        namingStatus: namingStatus,
-        micPrimed: micPrimed,
-        micDenied: micDenied,
-        micPermanentlyDenied: micPermanentlyDenied,
-        speechPermanentlyDenied: speechPermanentlyDenied,
-        namingHold: namingHold,
-        showHourglass: showHourglass,
-        namingInProgress: namingInProgress,
-        showTinySpinner:
-            trialIsLoading && (namingBlockActive || _namingTransition),
-        liveTranscript: _liveTranscript,
-        targetText: showL2Text ? trial.target.text : '',
-        targetPhonetic:
-            showL2Text && showPhonetic ? trial.target.phonetic : null,
-        phoneticButtonVisible: showL2Text && hasPhoneticData,
-        phoneticOverrideActive: phoneticOverrideActive,
-        phoneticOverrideRemaining: phoneticOverrideCount,
-        onTogglePhonetic:
-            hasPhoneticData ? () => _reinstatePhoneticsFor(trial.target) : null,
-        spokenCueText:
-            !isNamingView && !trialIsLoading ? trial.target.text : null,
-        nativeText: trial.target.nativeText,
-        showNative: showNative,
-        hintEntries: hintEntries,
-        hintLabel: hintLabel,
-        hintMissingText: hintMissingText,
-        hintButtonVisible: hintAvailable,
-        hintButtonActive: hintRevealedForItem,
-        onToggleHints: _toggleHintsForCurrent,
-        hintPanelKey: _hintPanelKey,
-        audioHintEnabled: !isNamingView && !trialIsLoading,
-        onPlayAudioHint: () {
-          unawaited(_playHintAudioForItem(trial.target));
-        },
-        showDashboardButton: showDashboardButton,
-        showGlobalHourglass: showGlobalHourglass,
-        onPrimeMic: _primeMicAndStart,
-        onOpenMicSettings: _openMicSettings,
-        onSkipNaming: _skipNaming,
-        onSelect: _select,
-        onOpenDashboard: () {
-          _persistUserCursor();
-          if (!sessionEnded) {
-            _finishSession();
-          }
-          _openDashboardPreview(context, focus: 'wins');
-        },
-        onEscapeToOpeningPanel: _exitToOpeningPanel,
-      );
+          ladder: ladder,
+          isNaming: isNamingView,
+          imageHeight: imageHeight,
+          leftImageBytes: leftImg,
+          rightImageBytes: rightImg,
+          targetOnLeft: trial.targetOnLeft,
+          hasAnswered: hasAnswered,
+          lastSelectionIsLeft: lastSelectionIsLeft,
+          namingOutcome: namingOutcome,
+          namingStatus: namingStatus,
+          micPrimed: micPrimed,
+          micDenied: micDenied,
+          micPermanentlyDenied: micPermanentlyDenied,
+          speechPermanentlyDenied: speechPermanentlyDenied,
+          namingHold: namingHold,
+          showHourglass: showHourglass,
+          namingInProgress: namingInProgress,
+          showTinySpinner:
+              trialIsLoading && (namingBlockActive || _namingTransition),
+          liveTranscript: _liveTranscript,
+          targetText: showL2Text ? trial.target.text : '',
+          targetPhonetic:
+              showL2Text && showPhonetic ? trial.target.phonetic : null,
+          phoneticButtonVisible: showL2Text && hasPhoneticData,
+          phoneticOverrideActive: phoneticOverrideActive,
+          phoneticOverrideRemaining: phoneticOverrideCount,
+          onTogglePhonetic: hasPhoneticData
+              ? () => _reinstatePhoneticsFor(trial.target)
+              : null,
+          spokenCueText:
+              !isNamingView && !trialIsLoading ? trial.target.text : null,
+          nativeText: trial.target.nativeText,
+          showNative: showNative,
+          hintEntries: hintEntries,
+          hintLabel: hintLabel,
+          hintMissingText: hintMissingText,
+          hintButtonVisible: hintAvailable,
+          hintButtonActive: hintRevealedForItem,
+          onToggleHints: _toggleHintsForCurrent,
+          hintPanelKey: _hintPanelKey,
+          audioHintEnabled: !isNamingView && !trialIsLoading,
+          onPlayAudioHint: () {
+            unawaited(_playHintAudioForItem(trial.target));
+          },
+          showDashboardButton: showDashboardButton,
+          showGlobalHourglass: showGlobalHourglass,
+          onPrimeMic: _primeMicAndStart,
+          onOpenMicSettings: _openMicSettings,
+          onSkipNaming: _skipNaming,
+          onSelect: _select,
+          onOpenDashboard: () {
+            _persistUserCursor();
+            if (!sessionEnded) {
+              _finishSession();
+            }
+            _openDashboardPreview(context, focus: 'wins');
+          },
+          onEscapeToOpeningPanel: _exitToOpeningPanel,
+        );
       }
     }
 
@@ -3004,7 +3078,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12.0, vertical: 8.0),
                   child: MicProgressBar(
-                      animation: micAnimation, micStage: micStage, micOn: micOn),
+                      animation: micAnimation,
+                      micStage: micStage,
+                      micOn: micOn),
                 ),
               )
             : null,
@@ -3046,9 +3122,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           comprehensionHistory: List<bool>.from(comprehensionHistory),
           namingHistory: List<bool>.from(namingHistory),
           comprehensionAttempts: itemStats.comprehensionAttempts(),
-          comprehensionCorrect: itemStats.comprehensionCorrect(),
           namingAttempts: itemStats.namingAttempts(),
-          namingCorrect: itemStats.namingCorrect(),
           onExitToOpeningPanel: _exitToOpeningPanel,
           onExitToResumePanel: _exitToResumePanelIfAvailable,
           onExitApp: _exitAndClose,
@@ -3057,6 +3131,33 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         ),
       ),
     );
+  }
+
+  Future<void> _stopAllSessionAudioPlayers() async {
+    final players = <AudioPlayer>[
+      player,
+      hintPlayer,
+      fanfarePlayer,
+      moveYouPlayer,
+      moveRivalPlayer,
+      namingBeepPlayer,
+      namingBeepPlayer2,
+    ];
+    for (final p in players) {
+      try {
+        await p.stop();
+      } catch (_) {
+        // best-effort shutdown
+      }
+    }
+  }
+
+  void _invalidateActiveSessionFlow() {
+    currentTrialToken++;
+    selectionEpoch++;
+    pendingNextSlot = null;
+    micGateToken = -1;
+    micGateActive = false;
   }
 
   Future<void> _exitToResumePanelIfAvailable() async {
@@ -3071,17 +3172,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final resumeWinsYou = saved?.winsYou ?? ladder.winsYou;
     final resumeWinsRival = saved?.winsRival ?? ladder.winsRival;
     voiceController.cancelActive();
-    unawaited(player.stop());
-    unawaited(hintPlayer.stop());
-    unawaited(fanfarePlayer.stop());
-    unawaited(moveYouPlayer.stop());
-    unawaited(moveRivalPlayer.stop());
-    unawaited(namingBeepPlayer.stop());
-    unawaited(namingBeepPlayer2.stop());
+    await _stopAllSessionAudioPlayers();
     if (loggerReady && sessionStart != null && !sessionEnded) {
       unawaited(logger.endSession());
     }
     setState(() {
+      _invalidateActiveSessionFlow();
       lang = resumeLang;
       activeStartCurriculumKey = resumeStartKey;
       nativeLang = resumeNative;
@@ -3100,7 +3196,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _namingTransition = false;
       currentSlot = const PresentationSlot(
           mode: PresentationMode.comprehension, targetUuid: '');
-      pendingNextSlot = null;
     });
     unawaited(_loadHintPack());
     ladderController.setWins(you: resumeWinsYou, rival: resumeWinsRival);
@@ -3110,17 +3205,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   void _exitToOpeningPanel() {
     voiceController.cancelActive();
-    unawaited(player.stop());
-    unawaited(hintPlayer.stop());
-    unawaited(fanfarePlayer.stop());
-    unawaited(moveYouPlayer.stop());
-    unawaited(moveRivalPlayer.stop());
-    unawaited(namingBeepPlayer.stop());
-    unawaited(namingBeepPlayer2.stop());
+    unawaited(_stopAllSessionAudioPlayers());
     if (loggerReady && sessionStart != null && !sessionEnded) {
       unawaited(logger.endSession());
     }
     setState(() {
+      _invalidateActiveSessionFlow();
       awaitingLang = true;
       awaitingStart = false;
       awaitingNative = false;
@@ -3136,24 +3226,20 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _namingTransition = false;
       currentSlot = const PresentationSlot(
           mode: PresentationMode.comprehension, targetUuid: '');
-      pendingNextSlot = null;
     });
   }
 
   Future<void> _exitAndClose() async {
     await _pushResumeState();
     voiceController.cancelActive();
-    unawaited(player.stop());
-    unawaited(hintPlayer.stop());
-    unawaited(fanfarePlayer.stop());
-    unawaited(moveYouPlayer.stop());
-    unawaited(moveRivalPlayer.stop());
-    unawaited(namingBeepPlayer.stop());
-    unawaited(namingBeepPlayer2.stop());
+    await _stopAllSessionAudioPlayers();
     if (loggerReady && sessionStart != null && !sessionEnded) {
       unawaited(logger.endSession());
     }
     if (!mounted) return;
+    setState(() {
+      _invalidateActiveSessionFlow();
+    });
     await exitApp(context: context, onReturnToStart: _exitToOpeningPanel);
   }
 
@@ -3216,9 +3302,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         if (uuid != null) 'uuid': uuid,
         'attempt': attempt,
         'accepted': accepted,
-        'reason': accepted
-            ? (dist <= maxDist ? 'levenshtein' : 'ratio')
-            : 'rejected',
+        'reason':
+            accepted ? (dist <= maxDist ? 'levenshtein' : 'ratio') : 'rejected',
         'transcript': transcript,
         'target': target,
         't_norm': t,
@@ -3237,7 +3322,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     return accepted;
   }
-
 }
 
 class _SessionWinSnapshot {

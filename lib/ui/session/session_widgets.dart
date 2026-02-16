@@ -13,6 +13,7 @@ import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
 import 'package:robulingo_flutter/ui/dashboard_button.dart';
 import 'package:robulingo_flutter/ui/hexagon_track.dart';
+import 'package:robulingo_flutter/ui/supervisor_resume_panel.dart';
 import 'package:robulingo_flutter/ui/training_calendar_panel.dart';
 
 class RestartModuleProgress {
@@ -106,13 +107,48 @@ class _RestartSplashState extends State<RestartSplash> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: TrainingCalendarPanel(
-                  userId: widget.userId,
-                  workerHost: widget.workerHost,
-                  apiPrefix: widget.apiPrefix,
-                  thresholdMinutes: 1,
-                  thresholdRuns: 10,
-                  fallbackDatesUtc: widget.fallbackDatesUtc,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final showSideBySide = constraints.maxWidth >= 780;
+                    final calendar = TrainingCalendarPanel(
+                      userId: widget.userId,
+                      workerHost: widget.workerHost,
+                      apiPrefix: widget.apiPrefix,
+                      thresholdMinutes: 1,
+                      thresholdRuns: 10,
+                      fallbackDatesUtc: widget.fallbackDatesUtc,
+                    );
+                    final supervisorPanel = SupervisorResumePanel(
+                      userId: widget.userId,
+                      workerHost: widget.workerHost,
+                      apiPrefix: widget.apiPrefix,
+                    );
+                    if (showSideBySide) {
+                      final panelWidth =
+                          constraints.maxWidth.clamp(0.0, 1200.0) * 0.22;
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(
+                            width: panelWidth.clamp(140.0, 220.0),
+                            child: supervisorPanel,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(child: calendar),
+                        ],
+                      );
+                    }
+                    return Column(
+                      children: [
+                        SizedBox(
+                          height: 120,
+                          child: supervisorPanel,
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(child: calendar),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
@@ -259,7 +295,7 @@ class NamingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isWeb = kIsWeb;
+    const bool isWeb = kIsWeb;
     final double gapHourglass = isWeb ? 2 : 6;
     final double cardMargin = isWeb ? 4 : 8;
     final double cardPadding = isWeb ? 8 : 12;
@@ -686,7 +722,7 @@ class SessionBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isWeb = kIsWeb;
+    const bool isWeb = kIsWeb;
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
     final double panelGap = isWeb ? 4 : 12;

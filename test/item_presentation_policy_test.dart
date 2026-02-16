@@ -216,4 +216,80 @@ void main() {
     final restarted = policy.ensureNamingBlock(namingDisabled: false);
     expect(restarted, isFalse);
   });
+
+  test('curriculumExhausted flips explicitly after one full curriculum pass', () {
+    const config = ItemPresentationConfig(
+      comprehensionBlockSize: 3,
+      comprehensionCoreSize: 2,
+    );
+    final policy = ItemPresentationPolicy(config: config);
+
+    policy.initializeComprehensionBlock(
+      curriculumUuids: const ['A', 'B', 'C'],
+      startIndex: 0,
+    );
+
+    expect(policy.curriculumExhausted, isTrue);
+  });
+
+  test('after curriculum exhaustion, comprehension replacement uses refiller only', () {
+    const config = ItemPresentationConfig(
+      comprehensionBlockSize: 2,
+      comprehensionCoreSize: 1,
+      compWindowSize: 1,
+      compWindowCorrectNeeded: 1,
+      minQualifiedItemsToStart: 99, // keep naming off
+    );
+    final policy = ItemPresentationPolicy(config: config);
+
+    policy.initializeComprehensionBlock(
+      curriculumUuids: const ['A', 'B'],
+      startIndex: 0,
+    );
+    expect(policy.curriculumExhausted, isTrue);
+
+    // Seed a down-item replacement candidate.
+    policy.setRefillerQueue(const ['R']);
+
+    // A is in slot 0 (non-last). On qualification it is replaced;
+    // with exhausted curriculum this must come from refiller, not curriculum.
+    final _ = policy.onComprehensionAnswered(
+      uuid: 'A',
+      correct: true,
+      namingDisabled: true,
+      namingInProgress: false,
+    );
+
+    expect(policy.comprehensionBlockUuids.contains('R'), isTrue);
+    expect(policy.comprehensionBlockUuids.where((u) => u == 'A').length, 0);
+  });
+
+  test('naming-up does not enqueue refiller, naming-down does', () {
+    const config = ItemPresentationConfig(
+      namingMasteryCorrectThreshold: 1, // naming-up if correct > 1
+      namingDownFromNamingMaxAttempts: 5, // naming-down if attempts > 5
+    );
+    final policy = ItemPresentationPolicy(config: config);
+
+    policy.initializeComprehensionBlock(
+      curriculumUuids: const ['A', 'B', 'C'],
+      startIndex: 0,
+    );
+
+    final removedUp = policy.onNamingStatsUpdated(
+      uuid: 'A',
+      namingAttempts: 1,
+      namingCorrect: 2,
+    );
+    expect(removedUp, isTrue);
+    expect(policy.refillerQueueSnapshot.contains('A'), isFalse);
+
+    final removedDown = policy.onNamingStatsUpdated(
+      uuid: 'B',
+      namingAttempts: 6,
+      namingCorrect: 0,
+    );
+    expect(removedDown, isTrue);
+    expect(policy.refillerQueueSnapshot.contains('B'), isTrue);
+  });
 }

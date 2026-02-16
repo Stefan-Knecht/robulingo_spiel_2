@@ -22,9 +22,7 @@ class DashboardScreen extends StatefulWidget {
   final List<bool> comprehensionHistory;
   final List<bool> namingHistory;
   final Map<String, int> comprehensionAttempts;
-  final Map<String, int> comprehensionCorrect;
   final Map<String, int> namingAttempts;
-  final Map<String, int> namingCorrect;
   final VoidCallback? onExitToOpeningPanel;
   final Future<void> Function()? onExitToResumePanel;
   final VoidCallback? onExitApp;
@@ -42,9 +40,7 @@ class DashboardScreen extends StatefulWidget {
     required this.comprehensionHistory,
     required this.namingHistory,
     required this.comprehensionAttempts,
-    required this.comprehensionCorrect,
     required this.namingAttempts,
-    required this.namingCorrect,
     this.onExitToOpeningPanel,
     this.onExitToResumePanel,
     this.onExitApp,
@@ -84,9 +80,7 @@ F     J
     final successPoints = await SuccessSeriesLoader.load(
       liveSessionStart: widget.sessionStart,
       liveComprehensionAttempts: widget.comprehensionAttempts,
-      liveComprehensionCorrect: widget.comprehensionCorrect,
       liveNamingAttempts: widget.namingAttempts,
-      liveNamingCorrect: widget.namingCorrect,
     );
     return _DashboardData(
       weekMinutes: weekMinutes,
@@ -231,8 +225,8 @@ F     J
                     },
                     child: Image.asset(
                       'assets/icons/exit.webp',
-                      width: 54,
-                      height: 54,
+                      width: 86.4,
+                      height: 86.4,
                       fit: BoxFit.contain,
                     ),
                   ),
@@ -448,57 +442,38 @@ class TherapistAssetResolver {
 }
 
 class SuccessPoint {
-  final double weekOffset;
-  final int masteredNaming;
-  final int masteredComprehension;
-  final int pendingNaming;
-  final int pendingComprehension;
+  final int trainingDayIndex;
+  final String trainingDayUtc;
+  final int comprehensionMasteredCumulative;
+  final int namingMasteredCumulative;
   SuccessPoint({
-    required this.weekOffset,
-    required this.masteredNaming,
-    required this.masteredComprehension,
-    required this.pendingNaming,
-    required this.pendingComprehension,
+    required this.trainingDayIndex,
+    required this.trainingDayUtc,
+    required this.comprehensionMasteredCumulative,
+    required this.namingMasteredCumulative,
   });
 }
 
-class _ItemCounters {
-  int compAttempts = 0;
-  int compCorrect = 0;
-  int namingAttempts = 0;
-  int namingCorrect = 0;
+class _TrainingDayAccumulator {
+  _TrainingDayAccumulator({
+    required this.dayKeyUtc,
+    required this.dayStartUtcMs,
+  });
 
-  void addComp(bool correct) {
-    compAttempts++;
-    if (correct) compCorrect++;
-  }
-
-  void addNaming(bool correct) {
-    namingAttempts++;
-    if (correct) namingCorrect++;
-  }
-}
-
-class _SessionAccumulator {
-  DateTime? start;
-  DateTime? end;
-  final Map<String, _ItemCounters> items = {};
-
-  void ensureItem(String uuid) {
-    items.putIfAbsent(uuid, () => _ItemCounters());
-  }
+  final String dayKeyUtc;
+  final int dayStartUtcMs;
+  bool hasTrainingActivity = false;
+  final Set<String> comprehensionMastered = <String>{};
+  final Set<String> namingMastered = <String>{};
 }
 
 class SuccessSeriesLoader {
   static Future<List<SuccessPoint>> load({
     required DateTime? liveSessionStart,
     required Map<String, int> liveComprehensionAttempts,
-    required Map<String, int> liveComprehensionCorrect,
     required Map<String, int> liveNamingAttempts,
-    required Map<String, int> liveNamingCorrect,
   }) async {
-    final Map<String, _SessionAccumulator> sessions = {};
-    DateTime? earliestStart;
+    final Map<String, _TrainingDayAccumulator> byDay = {};
     try {
       final storage = LogStorage();
       final lines = await storage.readLines();
@@ -511,36 +486,36 @@ class SuccessSeriesLoader {
           continue;
         }
         final type = data['type'] as String?;
-        final sessionId = data['session'] as String? ?? 'unknown';
         final tsStr = data['ts'] as String?;
         final ts = tsStr == null ? null : DateTime.tryParse(tsStr)?.toUtc();
-        if (ts != null) {
-          earliestStart = earliestStart == null || ts.isBefore(earliestStart)
-              ? ts
-              : earliestStart;
-        }
-        final acc =
-            sessions.putIfAbsent(sessionId, () => _SessionAccumulator());
+        if (ts == null) continue;
+        final dayKey = _dayKeyUtc(ts);
+        final day = byDay.putIfAbsent(
+          dayKey,
+          () => _TrainingDayAccumulator(
+            dayKeyUtc: dayKey,
+            dayStartUtcMs:
+                DateTime.utc(ts.year, ts.month, ts.day).millisecondsSinceEpoch,
+          ),
+        );
         switch (type) {
-          case 'session_start':
-            acc.start = ts;
-            break;
-          case 'session_end':
-            acc.end = ts;
-            break;
           case 'trial_result':
-            final uuid = data['uuid'] as String?;
-            final correct = data['correct'] == true;
-            if (uuid == null) break;
-            acc.ensureItem(uuid);
-            acc.items[uuid]!.addComp(correct);
-            break;
           case 'naming_result':
+            day.hasTrainingActivity = true;
+            break;
+          case 'item_mastered':
             final uuid = data['uuid'] as String?;
-            final correct = data['correct'] == true;
-            if (uuid == null) break;
-            acc.ensureItem(uuid);
-            acc.items[uuid]!.addNaming(correct);
+            if (uuid != null && uuid.trim().isNotEmpty) {
+              day.comprehensionMastered.add(uuid.trim());
+              day.hasTrainingActivity = true;
+            }
+            break;
+          case 'item_naming_mastered':
+            final uuid = data['uuid'] as String?;
+            if (uuid != null && uuid.trim().isNotEmpty) {
+              day.namingMastered.add(uuid.trim());
+              day.hasTrainingActivity = true;
+            }
             break;
           default:
             break;
@@ -550,112 +525,53 @@ class SuccessSeriesLoader {
       // ignore log errors
     }
 
-    // Add live session as pseudo session with end = now
-    if (liveSessionStart != null) {
-      final liveAcc = _SessionAccumulator()
-        ..start = liveSessionStart
-        ..end = DateTime.now().toUtc();
-      liveComprehensionAttempts.forEach((uuid, attempts) {
-        if (attempts <= 0) return;
-        final correct = liveComprehensionCorrect[uuid] ?? 0;
-        liveAcc.ensureItem(uuid);
-        final item = liveAcc.items[uuid]!;
-        item.compAttempts += attempts;
-        item.compCorrect += correct;
-      });
-      liveNamingAttempts.forEach((uuid, attempts) {
-        if (attempts <= 0) return;
-        final correct = liveNamingCorrect[uuid] ?? 0;
-        liveAcc.ensureItem(uuid);
-        final item = liveAcc.items[uuid]!;
-        item.namingAttempts += attempts;
-        item.namingCorrect += correct;
-      });
-      sessions['__live__'] = liveAcc;
+    // Keep current training day visible while session is active.
+    final bool liveHasActivity =
+        liveComprehensionAttempts.values.any((attempts) => attempts > 0) ||
+            liveNamingAttempts.values.any((attempts) => attempts > 0);
+    if (liveSessionStart != null && liveHasActivity) {
+      final now = DateTime.now().toUtc();
+      final dayKey = _dayKeyUtc(now);
+      final day = byDay.putIfAbsent(
+        dayKey,
+        () => _TrainingDayAccumulator(
+          dayKeyUtc: dayKey,
+          dayStartUtcMs:
+              DateTime.utc(now.year, now.month, now.day).millisecondsSinceEpoch,
+        ),
+      );
+      day.hasTrainingActivity = true;
     }
 
-    if (earliestStart == null) {
-      earliestStart = DateTime.now().toUtc();
-      for (final acc in sessions.values) {
-        if (acc.start != null && acc.start!.isBefore(earliestStart!)) {
-          earliestStart = acc.start!;
-        }
-      }
-    }
-
-    final List<_SessionAccumulator> ordered = sessions.values
-        .where((s) => s.start != null && s.end != null)
+    final List<_TrainingDayAccumulator> ordered = byDay.values
+        .where((d) => d.hasTrainingActivity)
         .toList()
-      ..sort((a, b) => a.end!.compareTo(b.end!));
+      ..sort((a, b) => a.dayStartUtcMs.compareTo(b.dayStartUtcMs));
 
-    final Map<String, _ItemCounters> total = {};
+    final Set<String> cumulativeComprehensionMastered = <String>{};
+    final Set<String> cumulativeNamingMastered = <String>{};
     final List<SuccessPoint> result = [];
-    for (final acc in ordered) {
-      acc.items.forEach((uuid, c) {
-        final t = total.putIfAbsent(uuid, () => _ItemCounters());
-        t.compAttempts += c.compAttempts;
-        t.compCorrect += c.compCorrect;
-        t.namingAttempts += c.namingAttempts;
-        t.namingCorrect += c.namingCorrect;
-      });
-      final counts = _computeCounts(total);
-      final weekOffset = acc.end!.difference(earliestStart!).inDays / 7.0;
+    for (int i = 0; i < ordered.length; i++) {
+      final day = ordered[i];
+      cumulativeComprehensionMastered.addAll(day.comprehensionMastered);
+      cumulativeNamingMastered.addAll(day.namingMastered);
       result.add(SuccessPoint(
-        weekOffset: weekOffset,
-        masteredNaming: counts.masteredNaming,
-        masteredComprehension: counts.masteredComprehension,
-        pendingNaming: counts.pendingNaming,
-        pendingComprehension: counts.pendingComprehension,
+        trainingDayIndex: i + 1,
+        trainingDayUtc: day.dayKeyUtc,
+        comprehensionMasteredCumulative: cumulativeComprehensionMastered.length,
+        namingMasteredCumulative: cumulativeNamingMastered.length,
       ));
     }
 
     return result;
   }
 
-  static _CountSnapshot _computeCounts(Map<String, _ItemCounters> total) {
-    int masteredNaming = 0;
-    int masteredComp = 0;
-    int pendingNaming = 0;
-    int pendingComp = 0;
-    total.forEach((_, c) {
-      if (c.compAttempts >= 2) {
-        final acc = c.compAttempts == 0 ? 0.0 : c.compCorrect / c.compAttempts;
-        if (c.compAttempts > 4 && acc > 0.75) {
-          masteredComp++;
-        } else {
-          pendingComp++;
-        }
-      }
-      if (c.namingAttempts >= 2) {
-        final acc =
-            c.namingAttempts == 0 ? 0.0 : c.namingCorrect / c.namingAttempts;
-        if (c.namingAttempts > 4 && acc > 0.75) {
-          masteredNaming++;
-        } else {
-          pendingNaming++;
-        }
-      }
-    });
-    return _CountSnapshot(
-      masteredNaming: masteredNaming,
-      masteredComprehension: masteredComp,
-      pendingNaming: pendingNaming,
-      pendingComprehension: pendingComp,
-    );
+  static String _dayKeyUtc(DateTime tsUtc) {
+    final y = tsUtc.year.toString().padLeft(4, '0');
+    final m = tsUtc.month.toString().padLeft(2, '0');
+    final d = tsUtc.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
   }
-}
-
-class _CountSnapshot {
-  final int masteredNaming;
-  final int masteredComprehension;
-  final int pendingNaming;
-  final int pendingComprehension;
-  _CountSnapshot({
-    required this.masteredNaming,
-    required this.masteredComprehension,
-    required this.pendingNaming,
-    required this.pendingComprehension,
-  });
 }
 
 class VictoryPanel extends StatelessWidget {
@@ -976,24 +892,22 @@ class _SuccessPainter extends CustomPainter {
     final chartW = right - left;
     final chartH = bottom - top;
 
-    final double maxWeek = points.isEmpty
-        ? 0
-        : points.map((p) => p.weekOffset).fold<double>(0, max);
-    double xMax = 5;
-    while (maxWeek > xMax * 0.8) {
-      xMax *= 2;
-    }
+    final int maxTrainingDay =
+        points.isEmpty ? 0 : points.map((p) => p.trainingDayIndex).fold(0, max);
 
     final int maxItems = points.isEmpty
         ? 0
         : points
-            .map((p) => max(max(p.masteredNaming, p.masteredComprehension),
-                max(p.pendingNaming, p.pendingComprehension)))
+            .map((p) => max(
+                  p.comprehensionMasteredCumulative,
+                  p.namingMasteredCumulative,
+                ))
             .fold(0, max);
-    int yMax = 20;
-    while (maxItems > yMax * 0.8) {
-      yMax *= 2;
-    }
+    // Auto-scale y-axis to 125% of the current maximum cumulative value.
+    final int yMax = max(1, (maxItems * 1.25).ceil());
+    final double xTargetRatio = 0.75;
+    final double effectiveXMax =
+        maxTrainingDay <= 0 ? 1.0 : maxTrainingDay / xTargetRatio;
 
     final axis = Paint()
       ..color = Colors.black
@@ -1007,6 +921,97 @@ class _SuccessPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     final guideY = bottom - chartH * 0.8;
     canvas.drawLine(Offset(left, guideY), Offset(right, guideY), guide);
+    void drawYAxisLabel({
+      required String text,
+      required double y,
+      Color color = Colors.black87,
+      double dx = 6,
+    }) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: color,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(left - tp.width - dx, y - tp.height / 2));
+    }
+
+    void drawIconCountLabel({
+      required IconData icon,
+      required int count,
+      required double y,
+      required Color color,
+      double dx = 10,
+    }) {
+      final tp = TextPainter(
+        text: TextSpan(
+          children: [
+            TextSpan(
+              text: String.fromCharCode(icon.codePoint),
+              style: TextStyle(
+                fontFamily: icon.fontFamily,
+                package: icon.fontPackage,
+                fontSize: 20,
+                color: color,
+              ),
+            ),
+            TextSpan(
+              text: ' $count',
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(left - tp.width - dx, y - tp.height / 2));
+    }
+
+    drawYAxisLabel(text: '0', y: bottom);
+    drawYAxisLabel(text: '$yMax', y: top);
+    if (maxTrainingDay > 0) {
+      final startLabel = TextPainter(
+        text: const TextSpan(
+          text: 'T1',
+          style: TextStyle(
+            color: Colors.black87,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      startLabel.paint(canvas, Offset(left, bottom + 2));
+      final endLabel = TextPainter(
+        text: TextSpan(
+          text: 'T$maxTrainingDay',
+          style: const TextStyle(
+            color: Colors.black87,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      endLabel.paint(
+        canvas,
+        Offset(
+          (left +
+                  chartW * (maxTrainingDay / effectiveXMax) -
+                  endLabel.width / 2)
+              .clamp(left, right - endLabel.width),
+          bottom + 2,
+        ),
+      );
+    }
 
     void drawSeries(List<Offset> pts, Color color, {bool dashed = false}) {
       if (pts.length < 2) {
@@ -1037,22 +1042,41 @@ class _SuccessPainter extends CustomPainter {
       final List<Offset> pts = [];
       for (int i = 0; i < values.length; i++) {
         final p = points[i];
-        final x = left + chartW * (p.weekOffset / xMax);
+        final x = left + chartW * (p.trainingDayIndex / effectiveXMax);
         final y = bottom - chartH * (values[i] / yMax);
         pts.add(Offset(x, y));
       }
       return pts;
     }
 
-    final namingMastered = points.map((p) => p.masteredNaming).toList();
-    final compMastered = points.map((p) => p.masteredComprehension).toList();
-    final namingPending = points.map((p) => p.pendingNaming).toList();
-    final compPending = points.map((p) => p.pendingComprehension).toList();
+    final compUp =
+        points.map((p) => p.comprehensionMasteredCumulative).toList();
+    final namingUp = points.map((p) => p.namingMasteredCumulative).toList();
 
-    drawSeries(seriesFrom(compMastered), Colors.blue.shade700);
-    drawSeries(seriesFrom(namingMastered), Colors.green.shade700);
-    drawSeries(seriesFrom(compPending), Colors.blue.shade700, dashed: true);
-    drawSeries(seriesFrom(namingPending), Colors.green.shade700, dashed: true);
+    drawSeries(seriesFrom(compUp), Colors.blue.shade700);
+    drawSeries(seriesFrom(namingUp), Colors.green.shade700);
+    final int compCurrent = compUp.isNotEmpty ? compUp.last : 0;
+    final int namingCurrent = namingUp.isNotEmpty ? namingUp.last : 0;
+    double compY = bottom - chartH * (compCurrent / yMax);
+    double namingY = bottom - chartH * (namingCurrent / yMax);
+    if ((compY - namingY).abs() < 12) {
+      compY -= 8;
+      namingY += 8;
+    }
+    drawIconCountLabel(
+      icon: Icons.hearing,
+      count: compCurrent,
+      y: compY.clamp(top, bottom),
+      color: Colors.blue.shade700,
+      dx: 10,
+    );
+    drawIconCountLabel(
+      icon: Icons.record_voice_over,
+      count: namingCurrent,
+      y: namingY.clamp(top, bottom),
+      color: Colors.green.shade700,
+      dx: 10,
+    );
   }
 
   @override

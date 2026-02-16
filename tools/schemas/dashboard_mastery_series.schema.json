@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://robulingo.local/schemas/dashboard_mastery_series.schema.json",
+  "title": "DashboardMasterySeries",
+  "description": "Cumulative comprehension/naming mastery series over sequential training days.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "time_basis",
+    "points"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "time_basis": {
+      "type": "string",
+      "const": "sequential_training_days"
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_event_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "trial_result",
+          "naming_result",
+          "item_mastered",
+          "item_naming_mastered"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/point"
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "training_day_index",
+        "training_day_utc",
+        "comprehension_mastered_cumulative",
+        "naming_mastered_cumulative"
+      ],
+      "properties": {
+        "training_day_index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based sequential training day index after sorting active days by UTC date."
+        },
+        "training_day_utc": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "UTC day key (YYYY-MM-DD) for this training day."
+        },
+        "comprehension_mastered_cumulative": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cumulative number of unique items with comprehension mastery up to this day."
+        },
+        "naming_mastered_cumulative": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cumulative number of unique items with naming mastery up to this day."
+        }
+      }
+    }
+  }
+}
