@@ -74,6 +74,16 @@ class RestartSplash extends StatefulWidget {
 }
 
 class _RestartSplashState extends State<RestartSplash> {
+  bool _supervisorPanelVisible = false;
+
+  void _handleSupervisorPanelVisibilityChanged(bool visible) {
+    if (!mounted) return;
+    if (_supervisorPanelVisible == visible) return;
+    setState(() {
+      _supervisorPanelVisible = visible;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -123,8 +133,22 @@ class _RestartSplashState extends State<RestartSplash> {
                       userId: widget.userId,
                       workerHost: widget.workerHost,
                       apiPrefix: widget.apiPrefix,
+                      onVisibilityChanged:
+                          _handleSupervisorPanelVisibilityChanged,
                     );
                     if (showSideBySide) {
+                      if (!_supervisorPanelVisible) {
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            calendar,
+                            Offstage(
+                              offstage: true,
+                              child: supervisorPanel,
+                            ),
+                          ],
+                        );
+                      }
                       final panelWidth =
                           constraints.maxWidth.clamp(0.0, 1200.0) * 0.22;
                       return Row(
@@ -141,11 +165,17 @@ class _RestartSplashState extends State<RestartSplash> {
                     }
                     return Column(
                       children: [
-                        SizedBox(
-                          height: 120,
-                          child: supervisorPanel,
-                        ),
-                        const SizedBox(height: 10),
+                        if (_supervisorPanelVisible) ...[
+                          SizedBox(
+                            height: 120,
+                            child: supervisorPanel,
+                          ),
+                          const SizedBox(height: 10),
+                        ] else
+                          Offstage(
+                            offstage: true,
+                            child: supervisorPanel,
+                          ),
                         Expanded(child: calendar),
                       ],
                     );

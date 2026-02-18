@@ -22,3 +22,27 @@ void setCookieValue(String name, String value, {int maxAgeDays = 365}) {
   html.document.cookie =
       '$name=$encoded; max-age=$maxAgeSeconds; path=/; samesite=lax';
 }
+
+String? getWebStorageValue(String key) {
+  try {
+    return html.window.localStorage[key];
+  } catch (_) {
+    return null;
+  }
+}
+
+void setWebStorageValue(String key, String value) {
+  try {
+    html.window.localStorage[key] = value;
+  } catch (_) {
+    // ignore
+  }
+}
+
+void clearWebStorageValue(String key) {
+  try {
+    html.window.localStorage.remove(key);
+  } catch (_) {
+    // ignore
+  }
+}

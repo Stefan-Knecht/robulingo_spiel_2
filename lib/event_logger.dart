@@ -32,7 +32,8 @@ class EventLogger {
   String? mode;
   LogUploader? _uploader;
   LogUploader? _audioMatchUploader;
-  final List<String> _pendingUpload = []; // Zeilen, die noch hochgeladen werden.
+  final List<String> _pendingUpload =
+      []; // Zeilen, die noch hochgeladen werden.
   final List<String> _pendingAudioMatchUpload = [];
   bool _uploading = false;
   bool _uploadScheduled = false;
@@ -96,6 +97,34 @@ class EventLogger {
 
   Future<void> endSession() async {
     await log('session_end', {});
+  }
+
+  /// Waits until pending remote uploads are drained or timeout is reached.
+  Future<void> flushPendingUploads({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    if (_uploader == null || userId.isEmpty) return;
+    final deadline = DateTime.now().add(timeout);
+    while (true) {
+      _scheduleUpload();
+      _scheduleAudioMatchUpload();
+      final idle = _pendingUpload.isEmpty &&
+          !_uploading &&
+          !_uploadScheduled &&
+          _pendingAudioMatchUpload.isEmpty &&
+          !_uploadingAudioMatches &&
+          !_uploadScheduledAudioMatches;
+      if (idle) return;
+      if (DateTime.now().isAfter(deadline)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+  }
+
+  Future<void> endSessionAndFlush({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    await endSession();
+    await flushPendingUploads(timeout: timeout);
   }
 
   Future<void> log(String type, Map<String, dynamic> data) async {

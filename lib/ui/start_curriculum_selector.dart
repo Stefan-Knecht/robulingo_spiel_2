@@ -21,15 +21,20 @@ class StartCurriculumSelector extends StatelessWidget {
     this.onPickSelected,
     this.showHistoryButton = false,
     this.onOpenHistory,
+    this.historyHasSupervisorInfo = false,
   });
 
   final void Function(String fileName) onSelect;
   final VoidCallback? onPickSelected;
   final bool showHistoryButton;
   final VoidCallback? onOpenHistory;
+  final bool historyHasSupervisorInfo;
 
   @override
   Widget build(BuildContext context) {
+    final historyIconAsset = historyHasSupervisorInfo
+        ? 'assets/icons/eye_red.webp'
+        : 'assets/icons/eye.webp';
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
     final double logoHeight = size.height * (isLandscape ? 0.16 : 0.2);
@@ -155,7 +160,7 @@ class StartCurriculumSelector extends StatelessWidget {
             child: Center(
               child: IconButton(
                 icon: Image.asset(
-                  'assets/icons/eye.webp',
+                  historyIconAsset,
                   width: 28,
                   height: 28,
                   fit: BoxFit.contain,

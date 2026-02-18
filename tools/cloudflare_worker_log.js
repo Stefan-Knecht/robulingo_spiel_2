@@ -46,6 +46,12 @@ export default {
       if (path.endsWith('/dashboard-info')) {
         return await handleDashboardInfo(request, env);
       }
+      if (path.endsWith('/learner-profile')) {
+        return await handleLearnerProfile(request, env);
+      }
+      if (path.endsWith('/supervisor-users')) {
+        return await handleSupervisorUsers(request, env);
+      }
       if (path.endsWith('/user-curriculum')) {
         return await handleCurriculum(request, env);
       }
@@ -62,7 +68,7 @@ const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,HEAD,POST,DELETE,OPTIONS',
   'access-control-allow-headers':
-    'content-type,if-none-match,x-user-id,x-session-id,content-encoding,x-app-flavor',
+    'content-type,if-none-match,x-user-id,x-session-id,content-encoding,x-app-flavor,x-supervisor-email,x-supervisor-code',
 };
 
 // ---------- /hints ----------
@@ -194,6 +200,7 @@ const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
 const SUMMARY_IDLE_CAP_SECONDS = 20;
 const SUMMARY_START_BONUS_SECONDS = 5;
 const EMOJI_QUEUE_MAX_ITEMS = 500;
+const TRAINING_PROFILE_MAX_ITEMS = 500;
 const APP_FLAVOR_DAILYWORDS = 'dailywords';
 const APP_FLAVOR_DEFAULT = 'robulingo';
 
@@ -211,6 +218,15 @@ function resolveAppFlavor(request) {
 function resolveUserDataBucket(request, env) {
   const flavor = resolveAppFlavor(request);
   if (flavor === APP_FLAVOR_DAILYWORDS && env.DAILYWORDSUSERDATA) {
+    return env.DAILYWORDSUSERDATA;
+  }
+  return env.USERDATA;
+}
+
+// Supervisor dashboard data must stay isolated in DailyWords storage.
+// This intentionally ignores x-app-flavor and query flavor hints.
+function resolveSupervisorDashboardBucket(env) {
+  if (env.DAILYWORDSUSERDATA) {
     return env.DAILYWORDSUSERDATA;
   }
   return env.USERDATA;
@@ -240,6 +256,7 @@ async function handleLog(request, env) {
 
   const sessions = new Map();
   const legacyLines = [];
+  const trainingProfileDelta = createTrainingProfileDelta();
   for (const line of lines) {
     let data;
     try {
@@ -253,6 +270,7 @@ async function handleLog(request, env) {
     legacyLines.push(normalizedLine);
     const tsMs = parseTsMs(data.ts);
     const sid = data.session || data.session_id;
+    collectTrainingProfileDelta(trainingProfileDelta, data, tsMs);
     if (tsMs == null || !sid) continue;
     if (!sessions.has(sid)) {
       sessions.set(sid, { events: [], rawLines: [] });
@@ -290,6 +308,7 @@ async function handleLog(request, env) {
   }
 
   await updateUserGeoProfile(bucket, uid, geo, sessionId);
+  await updateUserTrainingProfile(bucket, uid, trainingProfileDelta, sessionId);
 
   // Keep legacy gzip log for audit/debug (optional).
   await appendLegacyRun(bucket, uid, sessionId, legacyLines, chunk);
@@ -462,7 +481,7 @@ async function handleConsent(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
-  const bucket = resolveUserDataBucket(request, env);
+  const bucket = resolveSupervisorDashboardBucket(env);
   const now = new Date().toISOString();
   const key = consentKey(uid);
   const previous = await getJsonObject(bucket, key);
@@ -488,6 +507,7 @@ async function handleConsent(request, env) {
       pairing.active = false;
       pairing.updatedAt = now;
       await putJsonObject(bucket, pairingKey(uid), pairing);
+      await removeLearnerFromSupervisorIndex(bucket, uid, pairing);
     }
   }
   return jsonResponse({ ok: true, consent: next });
@@ -506,7 +526,7 @@ async function handlePair(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
-  const bucket = resolveUserDataBucket(request, env);
+  const bucket = resolveSupervisorDashboardBucket(env);
   const consent = await getJsonObject(bucket, consentKey(uid));
   if (!consent || consent.monitoringOn !== true) {
     return jsonResponse(
@@ -528,20 +548,37 @@ async function handlePair(request, env) {
   const internalName = cleanOptionalString(body.internal_name, 128);
   const comment = cleanOptionalString(body.comment, 1024);
   const uiLanguage = cleanOptionalString(body.ui_language, 32);
+  const emailNormalized = emailRaw.toLowerCase();
+  const supervisorCodeHash = await sha256Hex(codeRaw);
+  const supervisorEmailHash = await sha256Hex(emailNormalized);
+  const resolvedSupervisorName =
+    cleanOptionalString(body.supervisor_display_name, 128) ||
+    cleanOptionalString(body.display_name, 128) ||
+    cleanOptionalString(previous?.registrationName, 128) ||
+    cleanOptionalString(previous?.display_name, 128) ||
+    (await resolveSupervisorDisplayNameByIdentity(
+      bucket,
+      supervisorEmailHash,
+      supervisorCodeHash
+    ));
   const next = {
     userId: uid,
     active: true,
-    supervisorEmailNormalized: emailRaw.toLowerCase(),
+    supervisorEmailNormalized: emailNormalized,
+    supervisorEmailHash,
     supervisorEmailMasked: maskEmail(emailRaw),
-    supervisorCodeHash: await sha256Hex(codeRaw),
+    supervisorCodeHash,
     supervisorCodeLast2: codeRaw.slice(-2),
     internalName,
     comment,
     uiLanguage,
+    registrationName: resolvedSupervisorName || null,
+    display_name: resolvedSupervisorName || null,
     linkedAt: previous?.linkedAt || now,
     updatedAt: now,
   };
   await putJsonObject(bucket, pairingKey(uid), next);
+  await moveLearnerBetweenSupervisorIndexes(bucket, uid, previous, next);
 
   return jsonResponse({
     ok: true,
@@ -550,6 +587,8 @@ async function handlePair(request, env) {
       active: next.active,
       supervisorEmailMasked: next.supervisorEmailMasked,
       supervisorCodeLast2: next.supervisorCodeLast2,
+      registrationName: next.registrationName,
+      display_name: next.display_name,
       linkedAt: next.linkedAt,
       updatedAt: next.updatedAt,
     },
@@ -567,7 +606,7 @@ async function handleEmojiQueue(request, env) {
     if (!uid) {
       return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
     }
-    const bucket = resolveUserDataBucket(request, env);
+    const bucket = resolveSupervisorDashboardBucket(env);
     return await getEmojiQueue(request, bucket, uid, url);
   }
   if (request.method === 'DELETE') {
@@ -576,7 +615,7 @@ async function handleEmojiQueue(request, env) {
     if (!uid) {
       return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
     }
-    const bucket = resolveUserDataBucket(request, env);
+    const bucket = resolveSupervisorDashboardBucket(env);
     const queue = await loadEmojiQueue(bucket, uid);
     queue.items = [];
     queue.updatedAt = new Date().toISOString();
@@ -595,7 +634,7 @@ async function handleEmojiQueue(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
-  const bucket = resolveUserDataBucket(request, env);
+  const bucket = resolveSupervisorDashboardBucket(env);
   const source = cleanOptionalString(body.source, 64) || 'app';
   const fallbackReason = cleanOptionalString(body.reason, 64);
   const fallbackNote = cleanOptionalString(body.note, 512);
@@ -660,7 +699,7 @@ async function handleEmojiQueueAck(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
-  const bucket = resolveUserDataBucket(request, env);
+  const bucket = resolveSupervisorDashboardBucket(env);
   const ids = Array.isArray(body.ids) ? body.ids.map((v) => String(v)) : [];
   if (ids.length === 0) {
     return jsonResponse({ ok: false, error: 'missing_ids' }, 400);
@@ -706,7 +745,7 @@ async function handleDashboardInfo(request, env) {
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
-  const bucket = resolveUserDataBucket(request, env);
+  const bucket = resolveSupervisorDashboardBucket(env);
   const [consent, pairing, queue, resume, registration] = await Promise.all([
     getJsonObject(bucket, consentKey(uid)),
     getJsonObject(bucket, pairingKey(uid)),
@@ -717,11 +756,31 @@ async function handleDashboardInfo(request, env) {
   const queueSummary = summarizeEmojiQueue(queue);
   const recent = recentPending(queue.items, 8);
   const resumeInfo = summarizeResumeState(resume);
-  const registrationName = resolveSupervisorRegistrationName({
+  let registrationName = resolveSupervisorRegistrationName({
     pairing,
     consent,
     registration,
   });
+  if (!registrationName) {
+    registrationName = await resolveSupervisorDisplayNameFromPairingIdentity(
+      bucket,
+      pairing
+    );
+  }
+  if (
+    registrationName &&
+    pairing &&
+    !firstNonEmptyString(
+      pairing.registrationName,
+      pairing.display_name,
+      pairing.displayName
+    )
+  ) {
+    pairing.registrationName = registrationName;
+    pairing.display_name = registrationName;
+    pairing.updatedAt = new Date().toISOString();
+    await putJsonObject(bucket, pairingKey(uid), pairing);
+  }
   return jsonResponse({
     ok: true,
     userId: uid,
@@ -730,9 +789,12 @@ async function handleDashboardInfo(request, env) {
       paired: !!pairing?.active,
       active: !!pairing?.active,
       supervisorEmailMasked: pairing?.supervisorEmailMasked || null,
+      supervisorCodeLast2: pairing?.supervisorCodeLast2 || null,
       linkedAt: pairing?.linkedAt || null,
       updatedAt: pairing?.updatedAt || null,
       registrationName: registrationName || null,
+      display_name: registrationName || null,
+      displayName: registrationName || null,
       internalName: pairing?.internalName || consent?.internalName || null,
       comment: pairing?.comment || consent?.comment || null,
       uiLanguage: pairing?.uiLanguage || consent?.uiLanguage || null,
@@ -756,6 +818,105 @@ async function handleDashboardInfo(request, env) {
       queueReadEndpoint: '/api/emoji-queue?status=pending&limit=50',
       dataContractVersion: 2,
     },
+  });
+}
+
+// ---------- /learner-profile ----------
+// Enriched per-learner profile for dashboard backends.
+async function handleLearnerProfile(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  const uid = resolveUserId(request, null) || cleanOptionalString(url.searchParams.get('uid'), 128);
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  const bucket = resolveUserDataBucket(request, env);
+  const learner = await enrichSupervisorLearner(bucket, {
+    userId: uid,
+    active: true,
+    linkedAt: null,
+    updatedAt: null,
+    internalName: null,
+    comment: null,
+    uiLanguage: null,
+  });
+  return jsonResponse({
+    ok: true,
+    userId: uid,
+    generatedAt: new Date().toISOString(),
+    profile: {
+      l1: learner?.l1 ?? null,
+      l2: learner?.l2 ?? null,
+      country_code: learner?.country_code ?? null,
+      region_code: learner?.region_code ?? null,
+      region: learner?.region ?? null,
+      city: learner?.city ?? null,
+      module: learner?.module ?? null,
+      module_label: learner?.module_label ?? null,
+      module_raw: learner?.module_raw ?? null,
+      wins_you: learner?.wins_you ?? null,
+      wins_rival: learner?.wins_rival ?? null,
+      victories: learner?.victories ?? null,
+      defeats: learner?.defeats ?? null,
+      item_ids: Array.isArray(learner?.item_ids) ? learner.item_ids : [],
+      item_count: learner?.item_count ?? 0,
+      items: Array.isArray(learner?.items) ? learner.items : [],
+      resume_state: learner?.resume_state ?? null,
+    },
+  });
+}
+
+// ---------- /supervisor-users ----------
+// Canonical learner listing for a supervisor identity (email + code).
+// Reads only DailyWords supervisor data.
+async function handleSupervisorUsers(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  const emailRaw =
+    cleanOptionalString(request.headers.get('x-supervisor-email'), 256) ||
+    cleanOptionalString(url.searchParams.get('supervisor_email'), 256) ||
+    cleanOptionalString(url.searchParams.get('email'), 256);
+  const codeRaw =
+    cleanOptionalString(request.headers.get('x-supervisor-code'), 64) ||
+    cleanOptionalString(url.searchParams.get('supervisor_code'), 64) ||
+    cleanOptionalString(url.searchParams.get('code'), 64);
+  if (!emailRaw || !codeRaw) {
+    return jsonResponse(
+      { ok: false, error: 'missing_supervisor_credentials', message: 'provide supervisor_email and supervisor_code' },
+      400
+    );
+  }
+  if (!/^[A-Za-z0-9]{5}$/.test(codeRaw)) {
+    return jsonResponse({ ok: false, error: 'invalid_supervisor_code', expectedLength: 5 }, 400);
+  }
+  if (!emailRaw.includes('@')) {
+    return jsonResponse({ ok: false, error: 'invalid_supervisor_email' }, 400);
+  }
+  const bucket = resolveSupervisorDashboardBucket(env);
+  const emailNormalized = emailRaw.toLowerCase();
+  const emailHash = await sha256Hex(emailNormalized);
+  const codeHash = await sha256Hex(codeRaw);
+  let index = await loadSupervisorIndex(bucket, emailHash, codeHash);
+  if (Object.keys(index.learners).length === 0) {
+    index = await rebuildSupervisorIndexFromPairings(bucket, emailHash, codeHash);
+  }
+  const rawLearners = Object.values(index.learners).sort((a, b) =>
+    Date.parse(b.updatedAt || b.linkedAt || 0) - Date.parse(a.updatedAt || a.linkedAt || 0)
+  );
+  const learners = await Promise.all(rawLearners.map((learner) => enrichSupervisorLearner(bucket, learner)));
+  return jsonResponse({
+    ok: true,
+    supervisor: {
+      emailMasked: maskEmail(emailRaw),
+      codeLast2: codeRaw.slice(-2),
+      learnerCount: learners.length,
+      updatedAt: index.updatedAt || null,
+    },
+    learners,
   });
 }
 
@@ -837,6 +998,149 @@ function enrichLogEventWithGeo(event, geo) {
   return enriched;
 }
 
+function createTrainingProfileDelta() {
+  return {
+    l1: null,
+    l2: null,
+    moduleRaw: null,
+    winsYouDelta: 0,
+    winsRivalDelta: 0,
+    runEvents: 0,
+    itemIds: [],
+    _itemIdSet: new Set(),
+    lastEventTsMs: null,
+  };
+}
+
+function collectTrainingProfileDelta(delta, event, tsMs) {
+  if (!delta || !event || typeof event !== 'object' || Array.isArray(event)) return;
+  const l1 = firstNonEmptyString(event.l1, event.native, event.nativeLang, event.native_lang);
+  const l2 = firstNonEmptyString(event.l2, event.lang, event.language, event.l2Lang, event.l2_lang);
+  const moduleRaw = firstNonEmptyString(
+    event.module,
+    event.module_raw,
+    event.start_key,
+    event.startKey
+  );
+  if (l1) delta.l1 = cleanOptionalString(l1, 32) || delta.l1;
+  if (l2) delta.l2 = cleanOptionalString(l2, 32) || delta.l2;
+  if (moduleRaw) delta.moduleRaw = cleanOptionalString(moduleRaw, 128) || delta.moduleRaw;
+
+  const type = cleanOptionalString(event.type, 64);
+  if (type === 'trial_result' || type === 'naming_result') {
+    delta.runEvents += 1;
+  }
+  if (type === 'win') {
+    const side = cleanOptionalString(event.side || event.winner, 32)?.toLowerCase();
+    if (side === 'you') delta.winsYouDelta += 1;
+    if (side === 'rival') delta.winsRivalDelta += 1;
+  }
+
+  const itemId = cleanOptionalString(event.item_id || event.uuid, 128);
+  if (itemId && !delta._itemIdSet.has(itemId)) {
+    delta._itemIdSet.add(itemId);
+    delta.itemIds.push(itemId);
+  }
+
+  if (Number.isFinite(tsMs)) {
+    delta.lastEventTsMs = Math.max(Number(delta.lastEventTsMs || 0), Math.floor(tsMs));
+  }
+}
+
+function toNonNegativeInt(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function mergeRecentItemIds(previousRaw, incomingRaw, maxItems = TRAINING_PROFILE_MAX_ITEMS) {
+  const out = [];
+  const seen = new Set();
+  const apply = (raw) => {
+    const id = cleanOptionalString(raw, 128);
+    if (!id) return;
+    const existingIdx = out.indexOf(id);
+    if (existingIdx >= 0) {
+      out.splice(existingIdx, 1);
+    } else {
+      seen.add(id);
+    }
+    out.push(id);
+    while (out.length > maxItems) {
+      const removed = out.shift();
+      if (removed) seen.delete(removed);
+    }
+  };
+  if (Array.isArray(previousRaw)) {
+    for (const raw of previousRaw) apply(raw);
+  }
+  if (Array.isArray(incomingRaw)) {
+    for (const raw of incomingRaw) apply(raw);
+  }
+  return out;
+}
+
+function moduleDisplayName(raw) {
+  const value = cleanOptionalString(raw, 128);
+  if (!value) return null;
+  const lowered = value.toLowerCase();
+  if (lowered === 'start_curriculum_a' || lowered === 'start_curriculum_a.json') {
+    return 'Daily Words';
+  }
+  if (lowered === 'start_curriculum_b' || lowered === 'start_curriculum_b.json') {
+    return 'Foundational Words';
+  }
+  return value;
+}
+
+async function updateUserTrainingProfile(bucket, uid, delta, sessionId) {
+  if (!bucket || !uid || !delta || typeof delta !== 'object') return;
+  const key = `${uid}/profile/training.json`;
+  const previous = (await getJsonObject(bucket, key)) || {};
+  const now = new Date().toISOString();
+
+  const l1 = cleanOptionalString(delta.l1, 32) || cleanOptionalString(previous.l1, 32) || null;
+  const l2 = cleanOptionalString(delta.l2, 32) || cleanOptionalString(previous.l2, 32) || null;
+  const moduleRaw =
+    cleanOptionalString(delta.moduleRaw, 128) ||
+    cleanOptionalString(previous.module_raw, 128) ||
+    cleanOptionalString(previous.module, 128) ||
+    null;
+  const moduleLabel = moduleDisplayName(moduleRaw) || cleanOptionalString(previous.module_label, 128) || null;
+  const mergedItems = mergeRecentItemIds(previous.itemIds, delta.itemIds);
+
+  const winsYou = toNonNegativeInt(previous.winsYou) + toNonNegativeInt(delta.winsYouDelta);
+  const winsRival = toNonNegativeInt(previous.winsRival) + toNonNegativeInt(delta.winsRivalDelta);
+  const runsSeen = toNonNegativeInt(previous.runsSeen) + toNonNegativeInt(delta.runEvents);
+
+  const previousLastTs = Number(previous.lastEventTsMs);
+  const deltaLastTs = Number(delta.lastEventTsMs);
+  const lastEventTsMs = Math.max(
+    Number.isFinite(previousLastTs) ? Math.floor(previousLastTs) : 0,
+    Number.isFinite(deltaLastTs) ? Math.floor(deltaLastTs) : 0
+  );
+
+  const next = {
+    userId: uid,
+    l1,
+    l2,
+    module_raw: moduleRaw,
+    module_label: moduleLabel,
+    module: moduleLabel || moduleRaw || null,
+    winsYou,
+    winsRival,
+    runsSeen,
+    itemIds: mergedItems,
+    itemCount: mergedItems.length,
+    lastItemId: mergedItems.length > 0 ? mergedItems[mergedItems.length - 1] : null,
+    lastSessionId:
+      cleanOptionalString(sessionId, 128) || cleanOptionalString(previous.lastSessionId, 128) || null,
+    lastEventTsMs: lastEventTsMs > 0 ? lastEventTsMs : null,
+    updatedAt: now,
+  };
+  await putJsonObject(bucket, key, next);
+}
+
 function resolveUserId(request, body) {
   const fromHeader = cleanOptionalString(request.headers.get('x-user-id'), 128);
   if (fromHeader) return fromHeader;
@@ -909,6 +1213,10 @@ function supervisorRegistrationKey(uid) {
   return `${uid}/supervisor/registration.json`;
 }
 
+function supervisorIndexKey(emailHash, codeHash) {
+  return `supervisors/${emailHash}/${codeHash}/learners.json`;
+}
+
 function emojiQueueKey(uid) {
   return `${uid}/supervisor/emoji_queue.json`;
 }
@@ -929,6 +1237,170 @@ async function putJsonObject(bucket, key, value) {
   });
 }
 
+function emptySupervisorIndex(emailHash, codeHash) {
+  return {
+    version: 1,
+    supervisorEmailHash: emailHash,
+    supervisorCodeHash: codeHash,
+    updatedAt: null,
+    learners: {},
+  };
+}
+
+function normalizeSupervisorLearner(raw, fallbackUserId = null) {
+  if (!raw || typeof raw !== 'object') return null;
+  const userId = cleanOptionalString(raw.userId || fallbackUserId, 128);
+  if (!userId) return null;
+  return {
+    userId,
+    active: raw.active !== false,
+    linkedAt: cleanOptionalString(raw.linkedAt, 64) || null,
+    updatedAt: cleanOptionalString(raw.updatedAt, 64) || null,
+    internalName: cleanOptionalString(raw.internalName, 128) || null,
+    comment: cleanOptionalString(raw.comment, 1024) || null,
+    uiLanguage: cleanOptionalString(raw.uiLanguage, 32) || null,
+  };
+}
+
+async function loadSupervisorIndex(bucket, emailHash, codeHash) {
+  const key = supervisorIndexKey(emailHash, codeHash);
+  const raw = await getJsonObject(bucket, key);
+  const base = emptySupervisorIndex(emailHash, codeHash);
+  if (!raw || typeof raw !== 'object') return base;
+  const normalized = {
+    ...base,
+    version: Number(raw.version) || 1,
+    updatedAt: cleanOptionalString(raw.updatedAt, 64) || null,
+    learners: {},
+  };
+  const learnersRaw = raw.learners;
+  if (Array.isArray(learnersRaw)) {
+    for (const item of learnersRaw) {
+      const learner = normalizeSupervisorLearner(item);
+      if (!learner) continue;
+      normalized.learners[learner.userId] = learner;
+    }
+    return normalized;
+  }
+  if (!learnersRaw || typeof learnersRaw !== 'object') {
+    return normalized;
+  }
+  for (const [uid, item] of Object.entries(learnersRaw)) {
+    const learner = normalizeSupervisorLearner(item, uid);
+    if (!learner) continue;
+    normalized.learners[learner.userId] = learner;
+  }
+  return normalized;
+}
+
+async function saveSupervisorIndex(bucket, emailHash, codeHash, index) {
+  const payload = {
+    version: 1,
+    supervisorEmailHash: emailHash,
+    supervisorCodeHash: codeHash,
+    updatedAt: cleanOptionalString(index.updatedAt, 64) || new Date().toISOString(),
+    learners: index.learners || {},
+  };
+  await putJsonObject(bucket, supervisorIndexKey(emailHash, codeHash), payload);
+}
+
+async function supervisorIdentityFromPairing(pairing) {
+  if (!pairing || typeof pairing !== 'object') return null;
+  const codeHash = cleanOptionalString(pairing.supervisorCodeHash, 128);
+  if (!codeHash) return null;
+  const emailHash =
+    cleanOptionalString(pairing.supervisorEmailHash, 128) ||
+    (cleanOptionalString(pairing.supervisorEmailNormalized, 256)
+      ? await sha256Hex(cleanOptionalString(pairing.supervisorEmailNormalized, 256).toLowerCase())
+      : null);
+  if (!emailHash) return null;
+  return { emailHash, codeHash };
+}
+
+async function removeLearnerFromSupervisorIndex(bucket, userId, pairing) {
+  const identity = await supervisorIdentityFromPairing(pairing);
+  if (!identity) return;
+  const index = await loadSupervisorIndex(bucket, identity.emailHash, identity.codeHash);
+  if (!index.learners[userId]) return;
+  delete index.learners[userId];
+  index.updatedAt = new Date().toISOString();
+  await saveSupervisorIndex(bucket, identity.emailHash, identity.codeHash, index);
+}
+
+async function upsertLearnerInSupervisorIndex(bucket, userId, pairing) {
+  const identity = await supervisorIdentityFromPairing(pairing);
+  if (!identity) return;
+  const now = new Date().toISOString();
+  const index = await loadSupervisorIndex(bucket, identity.emailHash, identity.codeHash);
+  index.learners[userId] = {
+    userId,
+    active: pairing?.active !== false,
+    linkedAt: cleanOptionalString(pairing?.linkedAt, 64) || now,
+    updatedAt: cleanOptionalString(pairing?.updatedAt, 64) || now,
+    internalName: cleanOptionalString(pairing?.internalName, 128) || null,
+    comment: cleanOptionalString(pairing?.comment, 1024) || null,
+    uiLanguage: cleanOptionalString(pairing?.uiLanguage, 32) || null,
+  };
+  index.updatedAt = now;
+  await saveSupervisorIndex(bucket, identity.emailHash, identity.codeHash, index);
+}
+
+async function moveLearnerBetweenSupervisorIndexes(bucket, userId, previousPairing, nextPairing) {
+  const previousIdentity = await supervisorIdentityFromPairing(previousPairing);
+  const nextIdentity = await supervisorIdentityFromPairing(nextPairing);
+  if (
+    previousIdentity &&
+    nextIdentity &&
+    previousIdentity.emailHash === nextIdentity.emailHash &&
+    previousIdentity.codeHash === nextIdentity.codeHash
+  ) {
+    await upsertLearnerInSupervisorIndex(bucket, userId, nextPairing);
+    return;
+  }
+  if (previousIdentity) {
+    await removeLearnerFromSupervisorIndex(bucket, userId, previousPairing);
+  }
+  if (nextIdentity) {
+    await upsertLearnerInSupervisorIndex(bucket, userId, nextPairing);
+  }
+}
+
+async function rebuildSupervisorIndexFromPairings(bucket, emailHash, codeHash) {
+  const rebuilt = emptySupervisorIndex(emailHash, codeHash);
+  const now = new Date().toISOString();
+  let cursor = undefined;
+  let guard = 0;
+  do {
+    const page = await bucket.list({ cursor, limit: 1000 });
+    const objects = Array.isArray(page?.objects) ? page.objects : [];
+    for (const obj of objects) {
+      const key = cleanOptionalString(obj?.key, 1024);
+      if (!key || !key.endsWith('/supervisor/pairing.json')) continue;
+      const uid = cleanOptionalString(key.slice(0, -'/supervisor/pairing.json'.length), 128);
+      if (!uid) continue;
+      const pairing = await getJsonObject(bucket, key);
+      if (!pairing || pairing.active === false) continue;
+      const identity = await supervisorIdentityFromPairing(pairing);
+      if (!identity) continue;
+      if (identity.emailHash !== emailHash || identity.codeHash !== codeHash) continue;
+      rebuilt.learners[uid] = {
+        userId: uid,
+        active: true,
+        linkedAt: cleanOptionalString(pairing.linkedAt, 64) || now,
+        updatedAt: cleanOptionalString(pairing.updatedAt, 64) || now,
+        internalName: cleanOptionalString(pairing.internalName, 128) || null,
+        comment: cleanOptionalString(pairing.comment, 1024) || null,
+        uiLanguage: cleanOptionalString(pairing.uiLanguage, 32) || null,
+      };
+    }
+    cursor = page?.truncated ? page?.cursor : undefined;
+    guard += 1;
+  } while (cursor && guard < 200);
+  rebuilt.updatedAt = now;
+  await saveSupervisorIndex(bucket, emailHash, codeHash, rebuilt);
+  return rebuilt;
+}
+
 async function loadSupervisorRegistration(bucket, uid) {
   const candidateKeys = [
     supervisorRegistrationKey(uid),
@@ -944,20 +1416,118 @@ async function loadSupervisorRegistration(bucket, uid) {
   return null;
 }
 
+async function resolveSupervisorDisplayNameFromPairingIdentity(bucket, pairing) {
+  const identity = await supervisorIdentityFromPairing(pairing);
+  if (!identity) return null;
+  return resolveSupervisorDisplayNameByIdentity(
+    bucket,
+    identity.emailHash,
+    identity.codeHash
+  );
+}
+
+async function resolveSupervisorDisplayNameByIdentity(
+  bucket,
+  emailHash,
+  codeHash
+) {
+  if (!emailHash || !codeHash) return null;
+  const registration = await loadSupervisorRegistrationByIdentity(
+    bucket,
+    emailHash,
+    codeHash
+  );
+  if (!registration) return null;
+  return resolveSupervisorRegistrationName({
+    pairing: null,
+    consent: null,
+    registration,
+  });
+}
+
+async function loadSupervisorRegistrationByIdentity(bucket, emailHash, codeHash) {
+  const prefix = `supervisors/${emailHash}/${codeHash}`;
+  const directKeys = [
+    `${prefix}/registration.json`,
+    `${prefix}/register.json`,
+    `${prefix}/profile.json`,
+    `${prefix}/supervisor.json`,
+    `${prefix}/account.json`,
+    `${prefix}/metadata.json`,
+  ];
+  for (const key of directKeys) {
+    const value = await getJsonObject(bucket, key);
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  const index = await getJsonObject(bucket, supervisorIndexKey(emailHash, codeHash));
+  if (index && typeof index === 'object' && !Array.isArray(index)) {
+    const nameFromIndex = resolveSupervisorRegistrationName({
+      pairing: null,
+      consent: null,
+      registration: index,
+    });
+    if (nameFromIndex) return index;
+  }
+
+  try {
+    const page = await bucket.list({ prefix: `${prefix}/`, limit: 50 });
+    const objects = Array.isArray(page?.objects) ? page.objects : [];
+    const keys = objects
+      .map((obj) => cleanOptionalString(obj?.key, 1024))
+      .filter((key) => key && key.endsWith('.json') && !key.endsWith('/learners.json'))
+      .sort((a, b) => {
+        const score = (key) => (/display|profile|register|supervisor|meta|account/i.test(key) ? 0 : 1);
+        return score(a) - score(b);
+      });
+    for (const key of keys) {
+      const value = await getJsonObject(bucket, key);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const name = resolveSupervisorRegistrationName({
+        pairing: null,
+        consent: null,
+        registration: value,
+      });
+      if (name) return value;
+    }
+  } catch (_) {
+    // best-effort lookup
+  }
+  return null;
+}
+
 function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
   return firstNonEmptyString(
+    // DailyWords registration page field:
+    // "Display name (shown to participants)" -> display_name
+    registration?.display_name,
+    registration?.displayName,
+    registration?.profile?.display_name,
+    registration?.profile?.displayName,
+    registration?.participant_display_name,
+    registration?.participantDisplayName,
+    registration?.registration_name,
     registration?.supervisorName,
     registration?.registeredName,
     registration?.registrationName,
-    registration?.displayName,
     registration?.name,
+    pairing?.supervisor_display_name,
+    pairing?.supervisorDisplayName,
+    pairing?.display_name,
+    pairing?.displayName,
+    pairing?.registration_name,
     pairing?.registrationName,
     pairing?.supervisorName,
-    pairing?.displayName,
     pairing?.name,
+    consent?.supervisor_display_name,
+    consent?.supervisorDisplayName,
+    consent?.display_name,
+    consent?.registration_name,
+    consent?.displayName,
     consent?.registrationName,
     consent?.supervisorName,
-    consent?.displayName,
     consent?.name
   );
 }
@@ -1137,6 +1707,174 @@ function summarizeResumeState(resume) {
     lastEntryDate: latest?.date || null,
     lastStartKey: latest?.startKey || null,
     lastLang: latest?.lang || null,
+  };
+}
+
+function latestResumeEntry(resume) {
+  if (!resume || typeof resume !== 'object') return null;
+  const entries = Array.isArray(resume.entries) ? resume.entries : [];
+  let latest = null;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const date = cleanOptionalString(entry.date, 64);
+    if (!date) continue;
+    const ts = Date.parse(date);
+    if (!Number.isFinite(ts)) continue;
+    if (!latest || ts > latest.ts) {
+      latest = {
+        ts,
+        date,
+        cursor: Number.isFinite(Number(entry.cursor)) ? Math.max(0, Math.floor(Number(entry.cursor))) : null,
+        moduleRaw: cleanOptionalString(entry.startKey || entry.start_key || entry.module, 128),
+        l1: cleanOptionalString(entry.l1 || entry.nativeLang || entry.native || entry.native_lang, 32),
+        l2: cleanOptionalString(entry.l2 || entry.lang || entry.language, 32),
+        winsYou: Number.isFinite(Number(entry.winsYou || entry.wins_you))
+          ? Math.max(0, Math.floor(Number(entry.winsYou || entry.wins_you)))
+          : null,
+        winsRival: Number.isFinite(Number(entry.winsRival || entry.wins_rival))
+          ? Math.max(0, Math.floor(Number(entry.winsRival || entry.wins_rival)))
+          : null,
+      };
+    }
+  }
+  return latest;
+}
+
+function normalizeItemIds(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const value of raw) {
+    const id = cleanOptionalString(value, 128);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= TRAINING_PROFILE_MAX_ITEMS) break;
+  }
+  return out;
+}
+
+async function loadRecentItemIdsFromLastSession(bucket, uid, lastSessionId) {
+  const sid = cleanOptionalString(lastSessionId, 128);
+  if (!sid) return [];
+  const sessionState = await getJsonObject(bucket, `${uid}/session_state/${sid}.json`);
+  const dayKey = cleanOptionalString(sessionState?.dayKey, 32);
+  if (!dayKey) return [];
+  const rawObj = await bucket.get(`${uid}/raw/${dayKey}/${sid}.ndjson`);
+  if (!rawObj) return [];
+  let text = '';
+  try {
+    text = await rawObj.text();
+  } catch (_) {
+    return [];
+  }
+  const out = [];
+  const seen = new Set();
+  const lines = text.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let event;
+    try {
+      event = JSON.parse(trimmed);
+    } catch (_) {
+      continue;
+    }
+    const itemId = cleanOptionalString(event?.item_id || event?.uuid, 128);
+    if (!itemId || seen.has(itemId)) continue;
+    seen.add(itemId);
+    out.push(itemId);
+    if (out.length >= TRAINING_PROFILE_MAX_ITEMS) break;
+  }
+  return out;
+}
+
+async function enrichSupervisorLearner(bucket, learner) {
+  if (!learner || typeof learner !== 'object') return learner;
+  const uid = cleanOptionalString(learner.userId, 128);
+  if (!uid) return learner;
+
+  const [geoProfile, resumeState, trainingProfile] = await Promise.all([
+    getJsonObject(bucket, `${uid}/profile/geo.json`),
+    getJsonObject(bucket, `${uid}/resume_state.json`),
+    getJsonObject(bucket, `${uid}/profile/training.json`),
+  ]);
+
+  const resume = latestResumeEntry(resumeState);
+  const l1 = firstNonEmptyString(resume?.l1, trainingProfile?.l1);
+  const l2 = firstNonEmptyString(resume?.l2, trainingProfile?.l2);
+
+  const moduleRaw = firstNonEmptyString(
+    resume?.moduleRaw,
+    trainingProfile?.module_raw,
+    trainingProfile?.module
+  );
+  const moduleLabel =
+    moduleDisplayName(moduleRaw) ||
+    cleanOptionalString(trainingProfile?.module_label, 128) ||
+    cleanOptionalString(trainingProfile?.module, 128) ||
+    null;
+
+  const trainingWinsYou = Number.isFinite(Number(trainingProfile?.winsYou))
+    ? Math.max(0, Math.floor(Number(trainingProfile?.winsYou)))
+    : null;
+  const trainingWinsRival = Number.isFinite(Number(trainingProfile?.winsRival))
+    ? Math.max(0, Math.floor(Number(trainingProfile?.winsRival)))
+    : null;
+  const winsYou = Math.max(
+    resume?.winsYou ?? -1,
+    trainingWinsYou ?? -1
+  );
+  const winsRival = Math.max(
+    resume?.winsRival ?? -1,
+    trainingWinsRival ?? -1
+  );
+
+  let itemIds = normalizeItemIds(trainingProfile?.itemIds);
+  if (itemIds.length === 0) {
+    const fallbackSessionId =
+      cleanOptionalString(trainingProfile?.lastSessionId, 128) ||
+      cleanOptionalString(geoProfile?.lastSessionId, 128);
+    if (fallbackSessionId) {
+      itemIds = await loadRecentItemIdsFromLastSession(bucket, uid, fallbackSessionId);
+    }
+  }
+  const items = itemIds.map((itemId, idx) => ({
+    item_id: itemId,
+    uuid: itemId,
+    position: idx + 1,
+  }));
+
+  return {
+    ...learner,
+    l1: l1 || null,
+    l2: l2 || null,
+    country_code: cleanCountryCode(geoProfile?.country_code) || null,
+    region_code: cleanOptionalString(geoProfile?.region_code, 32) || null,
+    region: cleanOptionalString(geoProfile?.region, 128) || null,
+    city: cleanOptionalString(geoProfile?.city, 128) || null,
+    module: moduleLabel || moduleRaw || null,
+    module_label: moduleLabel || null,
+    module_raw: moduleRaw || null,
+    wins_you: winsYou >= 0 ? winsYou : null,
+    wins_rival: winsRival >= 0 ? winsRival : null,
+    victories: winsYou >= 0 ? winsYou : null,
+    defeats: winsRival >= 0 ? winsRival : null,
+    wins: winsYou >= 0 ? winsYou : null,
+    losses: winsRival >= 0 ? winsRival : null,
+    item_ids: itemIds,
+    item_list: itemIds,
+    item_count: itemIds.length,
+    items,
+    resume_state: {
+      cursor: resume?.cursor ?? null,
+      date: resume?.date || null,
+      start_key: resume?.moduleRaw || null,
+      lang: resume?.l2 || null,
+      native: resume?.l1 || null,
+      wins_you: resume?.winsYou ?? null,
+      wins_rival: resume?.winsRival ?? null,
+    },
   };
 }
 

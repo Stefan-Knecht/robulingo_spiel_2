@@ -3,6 +3,7 @@
 // Verbindung: robulingo_app.dart öffnet es über DashboardButton; liest Logs + Live-Stats.
 // Tücken: NDJSON-Logs müssen existieren; Asset-Pfade für Rival/Therapist hängen von Wins/ViewCount ab.
 // ------------------------------------------------------------
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -24,9 +25,7 @@ class DashboardScreen extends StatefulWidget {
   final List<bool> namingHistory;
   final Map<String, int> comprehensionAttempts;
   final Map<String, int> namingAttempts;
-  final VoidCallback? onExitToOpeningPanel;
-  final Future<void> Function()? onExitToResumePanel;
-  final VoidCallback? onExitApp;
+  final Future<void> Function() onExitToResumePanel;
   final Future<String> Function()? onExportProtocol;
   final VoidCallback? onReturnToGame;
 
@@ -42,9 +41,7 @@ class DashboardScreen extends StatefulWidget {
     required this.namingHistory,
     required this.comprehensionAttempts,
     required this.namingAttempts,
-    this.onExitToOpeningPanel,
-    this.onExitToResumePanel,
-    this.onExitApp,
+    required this.onExitToResumePanel,
     this.onExportProtocol,
     this.onReturnToGame,
   });
@@ -55,6 +52,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   late Future<_DashboardData> _dataFuture;
+  bool _exitInProgress = false;
   static const String _cliCommandsText = '''←    →
 F     J
 ''';
@@ -206,28 +204,9 @@ F     J
                 Positioned(
                   bottom: 16,
                   right: 16,
-                  child: GestureDetector(
-                    onTap: () async {
-                      if (widget.onExitToResumePanel != null) {
-                        await widget.onExitToResumePanel!.call();
-                        if (!context.mounted) return;
-                        Navigator.of(context)
-                            .popUntil((route) => route.isFirst);
-                        return;
-                      }
-                      Navigator.of(context).popUntil((route) => route.isFirst);
-                      if (widget.onExitApp != null) {
-                        widget.onExitApp!.call();
-                        return;
-                      }
-                      widget.onExitToOpeningPanel?.call();
-                    },
-                    child: Image.asset(
-                      'assets/icons/exit.webp',
-                      width: 86.4,
-                      height: 86.4,
-                      fit: BoxFit.contain,
-                    ),
+                  child: _ExitIconButton(
+                    busy: _exitInProgress,
+                    onPressed: _handleExitToResume,
                   ),
                 ),
                 Positioned(
@@ -255,6 +234,25 @@ F     J
                     ),
                   ),
                 ),
+                if (_exitInProgress) ...[
+                  const Positioned.fill(
+                    child: ModalBarrier(
+                      dismissible: false,
+                      color: Color(0x1A000000),
+                    ),
+                  ),
+                  const Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: CircularProgressIndicator(strokeWidth: 3),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             );
           },
@@ -263,17 +261,35 @@ F     J
     );
   }
 
+  Future<void> _handleExitToResume() async {
+    if (_exitInProgress) return;
+    setState(() {
+      _exitInProgress = true;
+    });
+    try {
+      await widget.onExitToResumePanel.call();
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (e) {
+      debugPrint('[dashboard][exit-to-resume-error] $e');
+      if (!mounted) return;
+      setState(() {
+        _exitInProgress = false;
+      });
+    }
+  }
+
   void _showCliCommandsDialog() {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
-          child: SingleChildScrollView(
+          child: const SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
-              children: const [
+              children: [
                 SelectableText(
                   _cliCommandsText,
                   style: TextStyle(fontFamily: 'monospace', fontSize: 12),
@@ -288,6 +304,96 @@ F     J
             child: const Text('Close'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ExitIconButton extends StatefulWidget {
+  const _ExitIconButton({
+    required this.onPressed,
+    this.busy = false,
+  });
+
+  final Future<void> Function() onPressed;
+  final bool busy;
+
+  @override
+  State<_ExitIconButton> createState() => _ExitIconButtonState();
+}
+
+class _ExitIconButtonState extends State<_ExitIconButton> {
+  static const _animDuration = Duration(milliseconds: 70);
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final showPressedShadow = _pressed && !widget.busy;
+    return Semantics(
+      button: true,
+      label: 'Exit to resume panel',
+      child: MouseRegion(
+        cursor: widget.busy
+            ? SystemMouseCursors.basic
+            : SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTapDown: (_) {
+            if (widget.busy) return;
+            setState(() {
+              _pressed = true;
+            });
+          },
+          onTapUp: (_) {
+            if (widget.busy) return;
+            setState(() {
+              _pressed = false;
+            });
+          },
+          onTapCancel: () {
+            if (widget.busy) return;
+            setState(() {
+              _pressed = false;
+            });
+          },
+          onTap: widget.busy ? null : widget.onPressed,
+          child: AnimatedContainer(
+            duration: _animDuration,
+            curve: Curves.easeOut,
+            decoration: BoxDecoration(
+              boxShadow: showPressedShadow
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 10,
+                        spreadRadius: 1,
+                        offset: const Offset(0, 0),
+                      ),
+                    ]
+                  : const [],
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Image.asset(
+                  'assets/icons/exit.webp',
+                  width: 86.4,
+                  height: 86.4,
+                  fit: BoxFit.contain,
+                ),
+                if (widget.busy)
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: Colors.white,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -905,7 +1011,7 @@ class _SuccessPainter extends CustomPainter {
             .fold(0, max);
     // Auto-scale y-axis to 125% of the current maximum cumulative value.
     final int yMax = max(1, (maxItems * 1.25).ceil());
-    final double xTargetRatio = 0.75;
+    const double xTargetRatio = 0.75;
     final double effectiveXMax =
         maxTrainingDay <= 0 ? 1.0 : maxTrainingDay / xTargetRatio;
 
@@ -1108,5 +1214,5 @@ class _SuccessPainter extends CustomPainter {
   }
 }
 
-// Intentionally no hard `exit(0)`: iOS/macOS/web will ignore it and it feels like "Return to game".
-// Exiting to the opening panel is handled by the host (RobuLingoApp) via `onExitToOpeningPanel`.
+// Intentionally no hard `exit(0)`: iOS/macOS/web will ignore it.
+// Dashboard exit is delegated to the host (RobuLingoApp) via `onExitToResumePanel`.
