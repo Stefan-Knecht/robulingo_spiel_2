@@ -5,8 +5,10 @@
 // bisherigen Aufrufer (robulingo_app.dart, pick_manifest_service.dart) wieder kompilieren.
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
 import '../constants.dart';
@@ -14,6 +16,7 @@ import '../constants.dart';
 class ApiClient {
   static const int _missingMp3PlaceholderLength = 11015;
   static const int _maxImageVariantsPerItem = 5; // base + 01..04
+  static const String _audioCacheDirName = 'audio_cache';
   static const List<int> _missingMp3PlaceholderHead16 = <int>[
     0x49,
     0x44,
@@ -243,8 +246,20 @@ class ApiClient {
     if (audioKeys.isEmpty) {
       throw ApiException('Audio missing ${entry.uuid} lang=$lang');
     }
-    final audioVariants =
+    final remoteAudioVariants =
         audioKeys.map((k) => _fileUri(k)).toList(growable: false);
+    final localAudioVariants = <Uri>[];
+    for (final key in audioKeys) {
+      try {
+        localAudioVariants.add(await _cacheAudioKeyToLocalUri(key));
+      } catch (_) {
+        // Keep remote fallback for this variant.
+      }
+    }
+    final audioVariants = (localAudioVariants.isNotEmpty
+            ? localAudioVariants
+            : remoteAudioVariants)
+        .toList(growable: false);
     final audioUri = audioVariants.first;
 
     final String? phonetic = _phoneticForLang(meta, lang);
@@ -323,6 +338,13 @@ class ApiClient {
   }
 
   Future<bool> audioUrlOk(Uri uri) async {
+    if (uri.scheme.toLowerCase() == 'file') {
+      try {
+        return await File.fromUri(uri).exists();
+      } catch (_) {
+        return false;
+      }
+    }
     final key = uri.queryParameters['key'] ?? '';
     if (key.toLowerCase().endsWith('.mp3')) {
       try {
@@ -586,6 +608,37 @@ class ApiClient {
       }
     }
     return true;
+  }
+
+  bool _looksLikeMissingMp3Bytes(Uint8List bytes) {
+    if (bytes.length != _missingMp3PlaceholderLength) return false;
+    if (bytes.length < _missingMp3PlaceholderHead16.length) return false;
+    for (int i = 0; i < _missingMp3PlaceholderHead16.length; i++) {
+      if (bytes[i] != _missingMp3PlaceholderHead16[i]) return false;
+    }
+    if (bytes.length >= 16) {
+      for (int i = bytes.length - 16; i < bytes.length; i++) {
+        if (bytes[i] != 0xAA) return false;
+      }
+    }
+    return true;
+  }
+
+  Future<Uri> _cacheAudioKeyToLocalUri(String key) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final audioDir = Directory('${dir.path}/$_audioCacheDirName');
+    await audioDir.create(recursive: true);
+    final safeName = Uri.encodeComponent(key);
+    final file = File('${audioDir.path}/$safeName');
+    if (await file.exists() && await file.length() > 0) {
+      return file.uri;
+    }
+    final bytes = await loadBinaryFile(key);
+    if (_looksLikeMissingMp3Bytes(bytes)) {
+      throw ApiException('Audio placeholder file for key=$key');
+    }
+    await file.writeAsBytes(bytes, flush: true);
+    return file.uri;
   }
 
   String? _audioLangKeyFromFilename(String filename) {

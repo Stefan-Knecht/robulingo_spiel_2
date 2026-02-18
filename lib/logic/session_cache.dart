@@ -9,7 +9,7 @@ import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
-const int _sessionCacheVersion = 2;
+const int _sessionCacheVersion = 3;
 
 class CachedItem {
   final String uuid;
