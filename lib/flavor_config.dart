@@ -27,7 +27,7 @@ class AppFlavorConfig {
 const AppFlavorConfig _robuLingoFlavor = AppFlavorConfig(
   id: 'robulingo',
   brandLogoAsset: 'assets/icons/RL_logo.webp',
-  dashboardLandingUrl: 'https://robulingo-landingpage.knechtipad-aec.workers.dev',
+  dashboardLandingUrl: 'https://www.dailywords-project.org/',
   consentInfoUrl: 'https://www.dailywords-project.org/trial',
   registerInfoUrl: 'https://www.dailywords-project.org/register/',
   allowedStartCurricula: <String>[
@@ -48,7 +48,7 @@ const AppFlavorConfig _robuLingoFlavor = AppFlavorConfig(
 const AppFlavorConfig _dailyWordsFlavor = AppFlavorConfig(
   id: 'dailywords',
   brandLogoAsset: 'assets/icons/DailyWords.webp',
-  dashboardLandingUrl: 'https://www.dailywords-project.org',
+  dashboardLandingUrl: 'https://www.dailywords-project.org/',
   consentInfoUrl: 'https://www.dailywords-project.org/trial',
   registerInfoUrl: 'https://www.dailywords-project.org/register/',
   allowedStartCurricula: <String>[

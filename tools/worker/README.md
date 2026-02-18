@@ -39,6 +39,7 @@ Summary endpoint:
   - optional: `x-app-flavor: dailywords` or query `app_flavor=dailywords`
 
 Supervisor/Consent endpoints (R2-backed MVP):
+- Bucket behavior: these endpoints always use `DAILYWORDSUSERDATA` (fallback `USERDATA` only if the DailyWords binding is missing), independent of `x-app-flavor`.
 - `POST https://<workerHost><apiPrefix>/consent`
   - header: `x-user-id`
   - body:
@@ -53,8 +54,39 @@ Supervisor/Consent endpoints (R2-backed MVP):
     - `supervisor_email: string`
     - `supervisor_code` or `supervisor_code_5`: 5 chars
   - requires active consent (`monitoring_on=true`)
+  - side effect: updates canonical supervisor→learner index in R2
+
+Supervisor learner listing (canonical, index-backed):
+- `GET https://<workerHost><apiPrefix>/supervisor-users`
+  - credentials:
+    - header: `x-supervisor-email` + `x-supervisor-code`
+    - or query: `supervisor_email` + `supervisor_code`
+  - flavor parameters are ignored for this endpoint (always DailyWords bucket)
+  - returns:
+    - `supervisor` metadata (`emailMasked`, `codeLast2`, `learnerCount`, `updatedAt`)
+    - `learners[]` entries:
+      - base linkage fields: `userId`, `active`, `linkedAt`, `updatedAt`, `internalName`, `comment`, `uiLanguage`
+      - language/module fields: `l1`, `l2`, `module`, `module_label`, `module_raw`
+      - geo fields: `country_code`, `region_code`, `region`, `city`
+      - outcome counters: `wins_you`, `wins_rival` (+ aliases `victories`, `defeats`, `wins`, `losses`)
+      - item list fields: `item_ids`, `item_list`, `item_count`, `items[]` (`item_id`, `uuid`, `position`)
+      - latest resume snapshot: `resume_state` (`cursor`, `date`, `start_key`, `lang`, `native`, `wins_you`, `wins_rival`)
+  - behavior:
+    - if index is empty (legacy data), endpoint auto-rebuilds index from existing `*/supervisor/pairing.json` records in the selected bucket
+    - enrichment source is learner data in `profile/training.json`, `profile/geo.json`, and `resume_state.json`
+
+Learner profile endpoint (bridge helper for dashboards):
+- `GET https://<workerHost><apiPrefix>/learner-profile`
+  - header: `x-user-id` (or `uid` query fallback)
+  - optional flavor routing: `x-app-flavor` / `app_flavor` (uses normal user-data bucket routing)
+  - returns enriched learner metadata:
+    - `l1`, `l2`, `country_code`, `region_code`, `region`, `city`
+    - `module`, `module_label`, `module_raw`
+    - `wins_you`, `wins_rival` (+ aliases)
+    - `item_ids`, `items[]`, `resume_state`
 
 Emoji queue endpoints (for dashboard integration):
+- Bucket behavior: all queue reads/writes always use the DailyWords bucket.
 - `POST https://<workerHost><apiPrefix>/emoji-queue`
   - header: `x-user-id`
   - body (single item):
@@ -77,6 +109,7 @@ Emoji queue endpoints (for dashboard integration):
 Dashboard build endpoint:
 - `GET https://<workerHost><apiPrefix>/dashboard-info`
   - header: `x-user-id` (or `uid` query fallback)
+  - flavor parameters are ignored for this endpoint (always DailyWords bucket)
   - returns:
     - `supervisor` block (paired/active/email masked/registrationName/internal name/comment/ui language)
     - `consent` block

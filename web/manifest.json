@@ -1,11 +1,11 @@
 {
-    "name": "robulingo_flutter",
-    "short_name": "robulingo_flutter",
+    "name": "DailyWords",
+    "short_name": "DailyWords",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "DailyWords web app.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

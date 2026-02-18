@@ -46,6 +46,7 @@ class SupervisorLinkService {
     required String comment,
     required String uiLanguage,
     String textVersion = 'trial_v1',
+    bool forceConsentWrite = false,
   }) async {
     final uid = userId.trim();
     final email = supervisorEmail.trim();
@@ -67,7 +68,7 @@ class SupervisorLinkService {
         code.isNotEmpty ||
         internalName.isNotEmpty ||
         note.isNotEmpty;
-    if (!hasAnyInput) return SupervisorSyncResult.skipped;
+    if (!hasAnyInput && !forceConsentWrite) return SupervisorSyncResult.skipped;
 
     if (code.isNotEmpty && !_isValidSupervisorCode(code)) {
       return const SupervisorSyncResult(

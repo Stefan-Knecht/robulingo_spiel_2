@@ -17,11 +17,13 @@ class LangSelector extends StatefulWidget {
     required this.onSelect,
     this.showHistoryButton = false,
     this.onOpenHistory,
+    this.historyHasSupervisorInfo = false,
   });
 
   final void Function(String lang) onSelect;
   final bool showHistoryButton;
   final VoidCallback? onOpenHistory;
+  final bool historyHasSupervisorInfo;
 
   @override
   State<LangSelector> createState() => _LangSelectorState();
@@ -30,6 +32,9 @@ class LangSelector extends StatefulWidget {
 class _LangSelectorState extends State<LangSelector> {
   @override
   Widget build(BuildContext context) {
+    final historyIconAsset = widget.historyHasSupervisorInfo
+        ? 'assets/icons/eye_red.webp'
+        : 'assets/icons/eye.webp';
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
     final double logoHeight = size.height * (isLandscape ? 0.16 : 0.2);
@@ -155,7 +160,7 @@ class _LangSelectorState extends State<LangSelector> {
               child: Center(
                 child: IconButton(
                   icon: Image.asset(
-                    'assets/icons/eye.webp',
+                    historyIconAsset,
                     width: 28,
                     height: 28,
                     fit: BoxFit.contain,

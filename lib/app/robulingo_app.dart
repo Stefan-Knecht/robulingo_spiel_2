@@ -30,7 +30,6 @@ import 'package:robulingo_flutter/logic/ladder_controller.dart'
 import 'package:robulingo_flutter/logic/log_storage.dart';
 import 'package:robulingo_flutter/logic/naming_controller.dart';
 import 'package:robulingo_flutter/logic/onboarding_store.dart';
-import 'package:robulingo_flutter/logic/app_exit.dart';
 import 'package:robulingo_flutter/logic/cursor_resolver.dart';
 import 'package:robulingo_flutter/logic/curriculum_loader.dart';
 import 'package:robulingo_flutter/logic/history_hint_loader.dart';
@@ -306,6 +305,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   );
   int _restartPanelInfoRequest = 0;
   bool _lifecyclePersisting = false;
+  bool _historyPanelHasSupervisorInfo = false;
   final FocusNode _keyboardFocusNode = FocusNode(debugLabel: 'AppKeyboard');
   bool _micControllerDisposed = false;
 
@@ -374,13 +374,15 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     hintsService = HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateService =
         ResumeStateService(workerHost: workerHost, apiPrefix: apiPrefix);
-    supervisorDashboardService = SupervisorDashboardService(
-        workerHost: workerHost, apiPrefix: apiPrefix);
+    supervisorDashboardService =
+        SupervisorDashboardService(workerHost: workerHost, apiPrefix: apiPrefix);
     supervisorLinkService =
         SupervisorLinkService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateController = ResumeStateController(service: resumeStateService);
     _initLogger();
     _initUserId();
+    _historyPanelHasSupervisorInfo = historyPanelHasSupervisorInfo();
+    unawaited(_restoreHistoryPanelDraft());
     _loadSavedOnboarding();
   }
 
@@ -409,6 +411,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       setState(() {
         userId = id;
       });
+      await preloadHistoryPanelDraft(userId: id);
+      await refreshHistoryPanelConsentFromServer(
+        userId: id,
+        supervisorDashboardService: supervisorDashboardService,
+      );
+      _refreshHistoryPanelIndicator();
       if (!enableRemoteUserDelta) {
         unawaited(userDeltaStore.delete(id));
       }
@@ -418,9 +426,32 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         unawaited(_updateRestartModuleProgress());
       }
       unawaited(_loadResumeStateFallback());
-    } catch (_) {
-      // ignore
+    } catch (e) {
+      debugPrint('[user-identity][init][error] $e');
     }
+  }
+
+  Future<void> _restoreHistoryPanelDraft() async {
+    final uid = userId?.trim() ?? '';
+    if (uid.isEmpty) return;
+    await preloadHistoryPanelDraft(userId: uid);
+    await refreshHistoryPanelConsentFromServer(
+      userId: uid,
+      supervisorDashboardService: supervisorDashboardService,
+    );
+    _refreshHistoryPanelIndicator();
+  }
+
+  void _refreshHistoryPanelIndicator() {
+    final hasInfo = historyPanelHasSupervisorInfo();
+    if (!mounted) {
+      _historyPanelHasSupervisorInfo = hasInfo;
+      return;
+    }
+    if (_historyPanelHasSupervisorInfo == hasInfo) return;
+    setState(() {
+      _historyPanelHasSupervisorInfo = hasInfo;
+    });
   }
 
   void _configureLoggerRemote() {
@@ -479,6 +510,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       nativeLang: nativeLang,
       resumeState: resumeStateController.state,
       resumeStateService: resumeStateService,
+      supervisorDashboardService: supervisorDashboardService,
       supervisorLinkService: supervisorLinkService,
       hintLoader: historyHintLoader,
       onApplyUserId: (id, state) async {
@@ -493,17 +525,24 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       },
       onRemoveUserId: () async {
         await userIdentity.clear();
+        final newId = await userIdentity.loadOrCreate();
         if (!mounted) return;
         setState(() {
-          userId = null;
+          userId = newId;
           resumeStateController.setState(null);
         });
-        unawaited(protocolLog.setUserId(null));
+        unawaited(protocolLog.setUserId(newId));
+        _configureLoggerRemote();
         await onboardingStore.clear();
         await sessionCacheStore.clear();
         _exitToOpeningPanel();
       },
     );
+    await refreshHistoryPanelConsentFromServer(
+      userId: userId,
+      supervisorDashboardService: supervisorDashboardService,
+    );
+    _refreshHistoryPanelIndicator();
   }
 
   Future<void> _loadSavedOnboarding() async {
@@ -2791,6 +2830,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                   activeFlavor.allowPickManifest ? _enterPickFlow : null,
               showHistoryButton: true,
               onOpenHistory: _openHistoryPanel,
+              historyHasSupervisorInfo: _historyPanelHasSupervisorInfo,
             ),
           ),
         ),
@@ -3043,11 +3083,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           onSkipNaming: _skipNaming,
           onSelect: _select,
           onOpenDashboard: () {
-            _persistUserCursor();
+            unawaited(_persistUserCursor());
             if (!sessionEnded) {
               _finishSession();
             }
-            _openDashboardPreview(context, focus: 'wins');
+            unawaited(_openDashboardPreview(context, focus: 'wins'));
           },
           onEscapeToOpeningPanel: _exitToOpeningPanel,
         );
@@ -3088,14 +3128,18 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     );
   }
 
-  void _openDashboardPreview(BuildContext context, {required String focus}) {
+  Future<void> _openDashboardPreview(BuildContext context,
+      {required String focus}) async {
+    voiceController.cancelActive();
+    await _stopAllSessionAudioPlayers();
+    if (!mounted || !context.mounted) return;
     final mastered = presentationPolicy.readyToName.length;
     final wins = ladder.winsYou;
     final rivalWins = ladder.winsRival;
     setState(() {
       dashboardViewCount++;
     });
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DashboardScreen(
           focus: focus,
@@ -3108,9 +3152,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           namingHistory: List<bool>.from(namingHistory),
           comprehensionAttempts: itemStats.comprehensionAttempts(),
           namingAttempts: itemStats.namingAttempts(),
-          onExitToOpeningPanel: _exitToOpeningPanel,
           onExitToResumePanel: _exitToResumePanelIfAvailable,
-          onExitApp: _exitAndClose,
           onExportProtocol: () => protocolLog.export(),
           onReturnToGame: () {},
         ),
@@ -3145,6 +3187,21 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     micGateActive = false;
   }
 
+  Future<void> _flushExitLogsForDailyWords() async {
+    if (!loggerReady) return;
+    if (activeFlavor.id != 'dailywords') {
+      if (sessionStart != null && !sessionEnded) {
+        unawaited(logger.endSession());
+      }
+      return;
+    }
+    if (sessionStart != null && !sessionEnded) {
+      await logger.endSessionAndFlush();
+      return;
+    }
+    await logger.flushPendingUploads();
+  }
+
   Future<void> _exitToResumePanelIfAvailable() async {
     await _persistUserCursor();
     await _pushResumeState();
@@ -3158,9 +3215,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final resumeWinsRival = saved?.winsRival ?? ladder.winsRival;
     voiceController.cancelActive();
     await _stopAllSessionAudioPlayers();
-    if (loggerReady && sessionStart != null && !sessionEnded) {
-      unawaited(logger.endSession());
-    }
+    await _flushExitLogsForDailyWords();
     setState(() {
       _invalidateActiveSessionFlow();
       lang = resumeLang;
@@ -3212,20 +3267,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       currentSlot = const PresentationSlot(
           mode: PresentationMode.comprehension, targetUuid: '');
     });
-  }
-
-  Future<void> _exitAndClose() async {
-    await _pushResumeState();
-    voiceController.cancelActive();
-    await _stopAllSessionAudioPlayers();
-    if (loggerReady && sessionStart != null && !sessionEnded) {
-      unawaited(logger.endSession());
-    }
-    if (!mounted) return;
-    setState(() {
-      _invalidateActiveSessionFlow();
-    });
-    await exitApp(context: context, onReturnToStart: _exitToOpeningPanel);
   }
 
   void _finishSession() {

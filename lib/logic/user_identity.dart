@@ -21,18 +21,29 @@ class UserIdentity {
     if (kIsWeb) {
       final existing = (getCookieValue(_cookieName) ?? '').trim();
       if (existing.isNotEmpty) return existing;
+      final fromStorage = (getWebStorageValue(_cookieName) ?? '').trim();
+      if (fromStorage.isNotEmpty) {
+        setCookieValue(_cookieName, fromStorage, maxAgeDays: 3650);
+        return fromStorage;
+      }
       final id = _generateId();
       setCookieValue(_cookieName, id, maxAgeDays: 3650);
+      setWebStorageValue(_cookieName, id);
       return id;
     }
-    final file = await _file();
-    if (await file.exists()) {
-      final existing = (await file.readAsString()).trim();
-      if (existing.isNotEmpty) return existing;
+    try {
+      final file = await _file();
+      if (await file.exists()) {
+        final existing = (await file.readAsString()).trim();
+        if (existing.isNotEmpty) return existing;
+      }
+      final id = _generateId();
+      await file.writeAsString(id);
+      return id;
+    } catch (e) {
+      debugPrint('[user-identity][loadOrCreate][fallback] $e');
+      return _generateId();
     }
-    final id = _generateId();
-    await file.writeAsString(id);
-    return id;
   }
 
   Future<void> save(String id) async {
@@ -40,20 +51,30 @@ class UserIdentity {
     if (cleaned.isEmpty) return;
     if (kIsWeb) {
       setCookieValue(_cookieName, cleaned, maxAgeDays: 3650);
+      setWebStorageValue(_cookieName, cleaned);
       return;
     }
-    final file = await _file();
-    await file.writeAsString(cleaned);
+    try {
+      final file = await _file();
+      await file.writeAsString(cleaned);
+    } catch (e) {
+      debugPrint('[user-identity][save][fallback] $e');
+    }
   }
 
   Future<void> clear() async {
     if (kIsWeb) {
       setCookieValue(_cookieName, '', maxAgeDays: 0);
+      clearWebStorageValue(_cookieName);
       return;
     }
-    final file = await _file();
-    if (await file.exists()) {
-      await file.delete();
+    try {
+      final file = await _file();
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      debugPrint('[user-identity][clear][fallback] $e');
     }
   }
 

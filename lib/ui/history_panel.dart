@@ -4,8 +4,49 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:robulingo_flutter/flavor_config.dart';
 
 import '../data/resume_state_service.dart';
+import '../data/supervisor_dashboard_service.dart';
 import '../data/supervisor_link_service.dart';
 import '../logic/history_hint_loader.dart';
+import '../logic/history_panel_draft_store.dart';
+
+final _historyPanelDraft = _HistoryPanelDraft();
+final _historyPanelDraftStore = HistoryPanelDraftStore();
+
+class _HistoryPanelDraft {
+  String progressReference = '';
+  String supervisorEmail = '';
+  String supervisorCode = '';
+  String learnerInternalName = '';
+  String comment = '';
+  bool learnerConsentConfirmed = false;
+}
+
+Future<void> preloadHistoryPanelDraft({String? userId}) =>
+    _loadHistoryPanelDraft(userId: userId, forceReload: true);
+
+bool historyPanelHasSupervisorInfo() {
+  return _historyPanelDraft.learnerConsentConfirmed;
+}
+
+Future<void> refreshHistoryPanelConsentFromServer({
+  required String? userId,
+  required SupervisorDashboardService supervisorDashboardService,
+}) async {
+  final key = _effectiveDraftUserId(
+    explicitUserId: userId,
+    progressReference: _historyPanelDraft.progressReference,
+  );
+  final remoteConsent = await _fetchRemoteMonitoringConsent(
+    userId: key,
+    supervisorDashboardService: supervisorDashboardService,
+  );
+  if (remoteConsent == null) return;
+  _historyPanelDraft.learnerConsentConfirmed = remoteConsent;
+  await _persistHistoryPanelDraftForContext(
+    explicitUserId: userId,
+    progressReference: _historyPanelDraft.progressReference,
+  );
+}
 
 Future<void> showHistoryPanel({
   required BuildContext context,
@@ -14,21 +55,53 @@ Future<void> showHistoryPanel({
   required String? nativeLang,
   required ResumeState? resumeState,
   required ResumeStateService resumeStateService,
+  required SupervisorDashboardService supervisorDashboardService,
   required SupervisorLinkService supervisorLinkService,
   required HistoryHintLoader hintLoader,
   required Future<void> Function(String id, ResumeState? state) onApplyUserId,
   required Future<void> Function() onRemoveUserId,
 }) async {
-  final controller = TextEditingController(text: userId ?? '');
-  final supervisorEmailController = TextEditingController();
-  final supervisorCodeController = TextEditingController();
-  final learnerInternalNameController = TextEditingController();
-  final commentController = TextEditingController();
+  await _loadHistoryPanelDraft(userId: userId, forceReload: true);
+  final remoteHints = await _fetchRemoteSupervisorHints(
+    userId: _effectiveDraftUserId(
+      explicitUserId: userId,
+      progressReference: _historyPanelDraft.progressReference,
+    ),
+    supervisorDashboardService: supervisorDashboardService,
+  );
+  final remoteConsent = await _fetchRemoteMonitoringConsent(
+    userId: _effectiveDraftUserId(
+      explicitUserId: userId,
+      progressReference: _historyPanelDraft.progressReference,
+    ),
+    supervisorDashboardService: supervisorDashboardService,
+  );
+  if (remoteConsent != null) {
+    _historyPanelDraft.learnerConsentConfirmed = remoteConsent;
+  }
+  if (!context.mounted) return;
+  final initialProgressReference =
+      _historyPanelDraft.progressReference.isNotEmpty
+          ? _historyPanelDraft.progressReference
+          : (userId ?? '');
+  final controller = TextEditingController(text: initialProgressReference);
+  final supervisorEmailController =
+      TextEditingController(text: _historyPanelDraft.supervisorEmail);
+  final supervisorCodeController =
+      TextEditingController(text: _historyPanelDraft.supervisorCode);
+  final learnerInternalNameController =
+      TextEditingController(text: _historyPanelDraft.learnerInternalName);
+  final commentController =
+      TextEditingController(text: _historyPanelDraft.comment);
   bool panelOpen = true;
   String progressStatus = '';
   String supervisorStatus = '';
   bool loading = false;
-  bool learnerConsentConfirmed = false;
+  bool learnerConsentConfirmed = _historyPanelDraft.learnerConsentConfirmed;
+  if (_historyPanelDraft.progressReference.isEmpty &&
+      initialProgressReference.isNotEmpty) {
+    _historyPanelDraft.progressReference = initialProgressReference;
+  }
   try {
     await showDialog<void>(
       context: context,
@@ -73,49 +146,45 @@ Future<void> showHistoryPanel({
             final cancelLabel = _textFor('cancel', uiLang);
             final removeActionLabel = _textFor('remove_action', uiLang);
             final okLabel = _textFor('ok', uiLang);
-            final applyConsentRequiredHint =
-                _textFor('apply_consent_required_hint', uiLang);
             final applySupervisorRequiredHint =
                 _textFor('apply_supervisor_required_hint', uiLang);
-            final progressId = controller.text.trim();
             final supervisorEmail = supervisorEmailController.text.trim();
             final supervisorCode = supervisorCodeController.text.trim();
-            final hasProgressId = progressId.isNotEmpty;
             final hasSupervisorEmail = supervisorEmail.isNotEmpty;
             final hasValidSupervisorEmail = _looksLikeEmail(supervisorEmail);
             final hasValidSupervisorCode =
                 _isValidSupervisorCode(supervisorCode);
-            final canApply = !loading &&
+            final canPair = !loading &&
                 learnerConsentConfirmed &&
-                hasProgressId &&
                 hasSupervisorEmail &&
                 hasValidSupervisorEmail &&
                 hasValidSupervisorCode;
+            final canRevoke = !loading && !learnerConsentConfirmed;
+            final canApply = canPair || canRevoke;
             final applyDisabledHint = !learnerConsentConfirmed
-                ? applyConsentRequiredHint
+                ? ''
                 : (!hasSupervisorEmail || supervisorCode.isEmpty)
                     ? applySupervisorRequiredHint
                     : !hasValidSupervisorEmail
                         ? _textFor('status_supervisor_invalid_email', uiLang)
                         : !hasValidSupervisorCode
                             ? _textFor('status_supervisor_invalid_code', uiLang)
-                            : !hasProgressId
-                                ? _textFor('status_progress_reference_required',
-                                    uiLang)
-                                : '';
+                            : '';
             Future<void> applyChanges() async {
-              final id = controller.text.trim();
+              final enteredId = controller.text.trim();
+              final id =
+                  enteredId.isNotEmpty ? enteredId : (userId ?? '').trim();
               final email = supervisorEmailController.text.trim();
               final code = supervisorCodeController.text.trim();
-              if (!learnerConsentConfirmed) {
+              if (!learnerConsentConfirmed && id.isEmpty) {
                 if (!canUseDialog()) return;
                 setDialogState(() {
                   supervisorStatus =
-                      _textFor('status_consent_required_for_apply', uiLang);
+                      _textFor('status_supervisor_missing_userid', uiLang);
                 });
                 return;
               }
-              if (email.isEmpty || code.isEmpty) {
+              if (learnerConsentConfirmed && (email.isEmpty || code.isEmpty)) {
                 if (!canUseDialog()) return;
                 setDialogState(() {
                   supervisorStatus =
@@ -123,7 +192,7 @@ Future<void> showHistoryPanel({
                 });
                 return;
               }
-              if (!_looksLikeEmail(email)) {
+              if (learnerConsentConfirmed && !_looksLikeEmail(email)) {
                 if (!canUseDialog()) return;
                 setDialogState(() {
                   supervisorStatus =
@@ -131,19 +200,11 @@ Future<void> showHistoryPanel({
                 });
                 return;
               }
-              if (!_isValidSupervisorCode(code)) {
+              if (learnerConsentConfirmed && !_isValidSupervisorCode(code)) {
                 if (!canUseDialog()) return;
                 setDialogState(() {
                   supervisorStatus =
                       _textFor('status_supervisor_invalid_code', uiLang);
-                });
-                return;
-              }
-              if (id.isEmpty) {
-                if (!canUseDialog()) return;
-                setDialogState(() {
-                  supervisorStatus =
-                      _textFor('status_progress_reference_required', uiLang);
                 });
                 return;
               }
@@ -153,17 +214,20 @@ Future<void> showHistoryPanel({
                 supervisorStatus = '';
               });
               try {
-                final state = await resumeStateService.fetch(userId: id);
-                await onApplyUserId(id, state);
-                if (!canUseDialog()) return;
+                if (id.isNotEmpty) {
+                  final state = await resumeStateService.fetch(userId: id);
+                  await onApplyUserId(id, state);
+                  if (!canUseDialog()) return;
+                }
                 final supervisorSync = await supervisorLinkService.sync(
                   userId: id,
-                  monitoringOn: true,
-                  supervisorEmail: email,
-                  supervisorCode: code,
+                  monitoringOn: learnerConsentConfirmed,
+                  supervisorEmail: learnerConsentConfirmed ? email : '',
+                  supervisorCode: learnerConsentConfirmed ? code : '',
                   internalLearnerName: learnerInternalNameController.text,
                   comment: commentController.text,
                   uiLanguage: uiLang,
+                  forceConsentWrite: !learnerConsentConfirmed,
                 );
                 if (!canUseDialog()) return;
                 if (!supervisorSync.success) {
@@ -176,6 +240,15 @@ Future<void> showHistoryPanel({
                   });
                   return;
                 }
+                final remoteConsent = await _fetchRemoteMonitoringConsent(
+                  userId: id,
+                  supervisorDashboardService: supervisorDashboardService,
+                );
+                if (remoteConsent != null) {
+                  learnerConsentConfirmed = remoteConsent;
+                }
+                _historyPanelDraft.learnerConsentConfirmed =
+                    learnerConsentConfirmed;
                 if (!canUseDialog()) return;
                 dialogNavigator.pop();
               } catch (_) {
@@ -206,12 +279,20 @@ Future<void> showHistoryPanel({
               try {
                 final state = await resumeStateService.fetch(userId: id);
                 await onApplyUserId(id, state);
+                final remoteConsent = await _fetchRemoteMonitoringConsent(
+                  userId: id,
+                  supervisorDashboardService: supervisorDashboardService,
+                );
                 if (!canUseDialog()) return;
                 setDialogState(() {
                   loading = false;
                   progressStatus = (state == null || state.entries.isEmpty)
                       ? _textFor('status_userid_applied_no_history', uiLang)
                       : _textFor('status_userid_updated', uiLang);
+                  if (remoteConsent != null) {
+                    learnerConsentConfirmed = remoteConsent;
+                    _historyPanelDraft.learnerConsentConfirmed = remoteConsent;
+                  }
                 });
               } catch (_) {
                 if (!canUseDialog()) return;
@@ -246,6 +327,10 @@ Future<void> showHistoryPanel({
               await onRemoveUserId();
               if (!canUseDialog()) return;
               setDialogState(() {
+                controller.clear();
+                learnerConsentConfirmed = false;
+                _historyPanelDraft.progressReference = '';
+                _historyPanelDraft.learnerConsentConfirmed = false;
                 progressStatus = _textFor('status_userid_removed', uiLang);
               });
               if (!canUseDialog()) return;
@@ -319,12 +404,18 @@ Future<void> showHistoryPanel({
                           label: supervisorEmailLabel,
                           child: TextField(
                             controller: supervisorEmailController,
-                            onChanged: (_) => setDialogState(() {}),
+                            onChanged: (value) => setDialogState(() {
+                              _historyPanelDraft.supervisorEmail = value;
+                            }),
                             keyboardType: TextInputType.emailAddress,
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
                               isDense: true,
                               hintText: supervisorEmailHint,
+                              helperText:
+                                  supervisorEmailController.text.trim().isEmpty
+                                      ? remoteHints.maskedEmailHint
+                                      : null,
                             ),
                           ),
                         ),
@@ -333,7 +424,9 @@ Future<void> showHistoryPanel({
                           label: supervisorCodeLabel,
                           child: TextField(
                             controller: supervisorCodeController,
-                            onChanged: (_) => setDialogState(() {}),
+                            onChanged: (value) => setDialogState(() {
+                              _historyPanelDraft.supervisorCode = value;
+                            }),
                             keyboardType: TextInputType.text,
                             inputFormatters: [
                               FilteringTextInputFormatter.allow(
@@ -345,6 +438,10 @@ Future<void> showHistoryPanel({
                               border: const OutlineInputBorder(),
                               isDense: true,
                               hintText: supervisorCodeHint,
+                              helperText:
+                                  supervisorCodeController.text.trim().isEmpty
+                                      ? remoteHints.codeLast2Hint
+                                      : null,
                             ),
                           ),
                         ),
@@ -374,10 +471,28 @@ Future<void> showHistoryPanel({
                           label: internalNameLabel,
                           child: TextField(
                             controller: learnerInternalNameController,
+                            onChanged: (value) {
+                              _historyPanelDraft.learnerInternalName = value;
+                            },
                             decoration: const InputDecoration(
                               border: OutlineInputBorder(),
                               isDense: true,
                               hintText: 'Max Mustermann',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        _LabeledField(
+                          label: commentOptionalLabel,
+                          child: TextField(
+                            controller: commentController,
+                            onChanged: (value) {
+                              _historyPanelDraft.comment = value;
+                            },
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                              hintText: commentHint,
                             ),
                           ),
                         ),
@@ -393,6 +508,8 @@ Future<void> showHistoryPanel({
                               onChanged: (value) {
                                 setDialogState(() {
                                   learnerConsentConfirmed = value ?? false;
+                                  _historyPanelDraft.learnerConsentConfirmed =
+                                      learnerConsentConfirmed;
                                 });
                               },
                             ),
@@ -420,18 +537,6 @@ Future<void> showHistoryPanel({
                             ),
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        _LabeledField(
-                          label: commentOptionalLabel,
-                          child: TextField(
-                            controller: commentController,
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              isDense: true,
-                              hintText: commentHint,
-                            ),
-                          ),
-                        ),
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -449,7 +554,19 @@ Future<void> showHistoryPanel({
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: controller,
-                                    onChanged: (_) => setDialogState(() {}),
+                                    onChanged: (value) => setDialogState(() {
+                                      final previous = _historyPanelDraft
+                                          .progressReference
+                                          .trim();
+                                      _historyPanelDraft.progressReference =
+                                          value;
+                                      if (value.trim() != previous &&
+                                          learnerConsentConfirmed) {
+                                        learnerConsentConfirmed = false;
+                                        _historyPanelDraft
+                                            .learnerConsentConfirmed = false;
+                                      }
+                                    }),
                                     decoration: const InputDecoration(
                                       border: OutlineInputBorder(),
                                       isDense: true,
@@ -581,6 +698,16 @@ Future<void> showHistoryPanel({
     );
   } finally {
     panelOpen = false;
+    _historyPanelDraft.progressReference = controller.text;
+    _historyPanelDraft.supervisorEmail = supervisorEmailController.text;
+    _historyPanelDraft.supervisorCode = supervisorCodeController.text;
+    _historyPanelDraft.learnerInternalName = learnerInternalNameController.text;
+    _historyPanelDraft.comment = commentController.text;
+    _historyPanelDraft.learnerConsentConfirmed = learnerConsentConfirmed;
+    await _persistHistoryPanelDraftForContext(
+      explicitUserId: userId,
+      progressReference: controller.text,
+    );
     // Delay disposal one frame to avoid transient route teardown callbacks
     // touching controllers during dialog close animations.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -591,6 +718,172 @@ Future<void> showHistoryPanel({
       commentController.dispose();
     });
   }
+}
+
+String _effectiveDraftUserId({
+  String? explicitUserId,
+  String? progressReference,
+}) {
+  final ref = (progressReference ?? '').trim();
+  if (ref.isNotEmpty) return ref;
+  final uid = (explicitUserId ?? '').trim();
+  return uid;
+}
+
+Future<void> _loadHistoryPanelDraft({
+  String? userId,
+  bool forceReload = false,
+}) async {
+  if (!forceReload && _historyPanelDraft.progressReference.trim().isNotEmpty) {
+    return;
+  }
+  final key = _effectiveDraftUserId(explicitUserId: userId);
+  final persisted = await _historyPanelDraftStore.load(userId: key);
+  if (persisted == null) {
+    if (forceReload) {
+      final previousKey = _historyPanelDraft.progressReference.trim();
+      final switchingContext =
+          previousKey.isNotEmpty && key.isNotEmpty && previousKey != key;
+      if (switchingContext) {
+        _historyPanelDraft.progressReference = key;
+        _historyPanelDraft.supervisorEmail = '';
+        _historyPanelDraft.supervisorCode = '';
+        _historyPanelDraft.learnerInternalName = '';
+        _historyPanelDraft.comment = '';
+        _historyPanelDraft.learnerConsentConfirmed = false;
+      } else if (_historyPanelDraft.progressReference.trim().isEmpty) {
+        _historyPanelDraft.progressReference = key;
+      }
+    }
+    return;
+  }
+  _historyPanelDraft.progressReference = persisted.progressReference;
+  _historyPanelDraft.supervisorEmail = persisted.supervisorEmail;
+  _historyPanelDraft.supervisorCode = persisted.supervisorCode;
+  _historyPanelDraft.learnerInternalName = persisted.learnerInternalName;
+  _historyPanelDraft.comment = persisted.comment;
+  _historyPanelDraft.learnerConsentConfirmed =
+      persisted.learnerConsentConfirmed;
+}
+
+class _RemoteSupervisorHints {
+  const _RemoteSupervisorHints({
+    required this.maskedEmailHint,
+    required this.codeLast2Hint,
+  });
+
+  final String? maskedEmailHint;
+  final String? codeLast2Hint;
+}
+
+Future<_RemoteSupervisorHints> _fetchRemoteSupervisorHints({
+  required String? userId,
+  required SupervisorDashboardService supervisorDashboardService,
+}) async {
+  final uid = (userId ?? '').trim();
+  if (uid.isEmpty) {
+    return const _RemoteSupervisorHints(
+      maskedEmailHint: null,
+      codeLast2Hint: null,
+    );
+  }
+  final payload =
+      await supervisorDashboardService.fetchDashboardInfo(userId: uid);
+  if (payload == null) {
+    return const _RemoteSupervisorHints(
+      maskedEmailHint: null,
+      codeLast2Hint: null,
+    );
+  }
+  final supervisor = payload['supervisor'];
+  if (supervisor is! Map) {
+    return const _RemoteSupervisorHints(
+      maskedEmailHint: null,
+      codeLast2Hint: null,
+    );
+  }
+  final mapped = Map<String, dynamic>.from(supervisor);
+  final maskedEmail = (mapped['supervisorEmailMasked'] ??
+          mapped['supervisor_email_masked'] ??
+          '')
+      .toString()
+      .trim();
+  final codeLast2 =
+      (mapped['supervisorCodeLast2'] ?? mapped['supervisor_code_last2'] ?? '')
+          .toString()
+          .trim();
+  return _RemoteSupervisorHints(
+    maskedEmailHint:
+        maskedEmail.isEmpty ? null : 'Saved on server: $maskedEmail',
+    codeLast2Hint: codeLast2.isEmpty
+        ? null
+        : 'Saved on server: **$codeLast2 (enter full 5-character code)',
+  );
+}
+
+Future<void> _persistHistoryPanelDraft({String? userId}) async {
+  await _historyPanelDraftStore.save(
+    HistoryPanelDraftData(
+      progressReference: _historyPanelDraft.progressReference,
+      supervisorEmail: _historyPanelDraft.supervisorEmail,
+      supervisorCode: _historyPanelDraft.supervisorCode,
+      learnerInternalName: _historyPanelDraft.learnerInternalName,
+      comment: _historyPanelDraft.comment,
+      learnerConsentConfirmed: _historyPanelDraft.learnerConsentConfirmed,
+    ),
+    userId: userId,
+  );
+}
+
+Future<void> _persistHistoryPanelDraftForContext({
+  String? explicitUserId,
+  String? progressReference,
+}) async {
+  final explicitKey = (explicitUserId ?? '').trim();
+  final refKey = (progressReference ?? '').trim();
+  final keys = <String>{};
+  if (explicitKey.isNotEmpty) keys.add(explicitKey);
+  if (refKey.isNotEmpty) keys.add(refKey);
+  if (keys.isEmpty) {
+    await _persistHistoryPanelDraft();
+    return;
+  }
+  for (final key in keys) {
+    await _persistHistoryPanelDraft(userId: key);
+  }
+}
+
+Future<bool?> _fetchRemoteMonitoringConsent({
+  required String? userId,
+  required SupervisorDashboardService supervisorDashboardService,
+}) async {
+  final uid = (userId ?? '').trim();
+  if (uid.isEmpty) return null;
+  final payload =
+      await supervisorDashboardService.fetchDashboardInfo(userId: uid);
+  if (payload == null) return null;
+  final consent = payload['consent'];
+  if (consent is Map<String, dynamic>) {
+    final value = consent['monitoringOn'];
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized == 'true') return true;
+      if (normalized == 'false') return false;
+    }
+  } else if (consent is Map) {
+    final mapped = Map<String, dynamic>.from(consent);
+    final value = mapped['monitoringOn'];
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized == 'true') return true;
+      if (normalized == 'false') return false;
+    }
+  }
+  return null;
 }
 
 String _normalizeLang(String raw) {
@@ -774,7 +1067,7 @@ const Map<String, Map<String, String>> _historyTexts = {
     'ja': '同意情報を表示',
   },
   'comment_optional': {
-    'en': 'Comment (optional):',
+    'en': 'Internal name for supervisor (or other comment to learner):',
     'de': 'Kommentar (optional):',
     'ar': 'تعليق (اختياري):',
     'fr': 'Commentaire (optionnel) :',

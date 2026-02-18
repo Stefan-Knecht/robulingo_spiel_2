@@ -13,12 +13,14 @@ class SupervisorResumePanel extends StatefulWidget {
     required this.workerHost,
     required this.apiPrefix,
     this.refreshInterval = const Duration(seconds: 20),
+    this.onVisibilityChanged,
   });
 
   final String? userId;
   final String workerHost;
   final String apiPrefix;
   final Duration refreshInterval;
+  final ValueChanged<bool>? onVisibilityChanged;
 
   @override
   State<SupervisorResumePanel> createState() => _SupervisorResumePanelState();
@@ -31,6 +33,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   Map<String, dynamic>? _data;
   List<Map<String, dynamic>> _pendingItems = const [];
   late final AnimationController _wiggleController;
+  bool _lastReportedVisible = false;
 
   @override
   void initState() {
@@ -60,6 +63,17 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         oldWidget.apiPrefix != widget.apiPrefix) {
       _load();
     }
+  }
+
+  void _reportVisible(bool visible) {
+    if (_lastReportedVisible == visible) return;
+    _lastReportedVisible = visible;
+    final callback = widget.onVisibilityChanged;
+    if (callback == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      callback(visible);
+    });
   }
 
   Future<void> _load() async {
@@ -117,7 +131,10 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   Widget build(BuildContext context) {
     final uid = widget.userId?.trim() ?? '';
     final theme = Theme.of(context);
-    if (uid.isEmpty) return const SizedBox.shrink();
+    if (uid.isEmpty) {
+      _reportVisible(false);
+      return const SizedBox.shrink();
+    }
 
     final supervisor = _data?['supervisor'] is Map
         ? Map<String, dynamic>.from(_data!['supervisor'])
@@ -130,16 +147,21 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
             (queue['itemsPreview'] as List).whereType<Map>(),
           )
         : const <Map<String, dynamic>>[];
-    final hasActiveSupervisor =
-        supervisor['active'] == true || supervisor['paired'] == true;
-    final supervisorName = _resolveSupervisorName(supervisor);
     final queuedEmoji = _resolveQueuedEmoji(
       _pendingItems,
       fallbackItems: preview,
     );
-    final showName = hasActiveSupervisor && supervisorName.isNotEmpty;
     final showEmoji = queuedEmoji.isNotEmpty;
-    if (!showName && !showEmoji) return const SizedBox.shrink();
+    final hasActiveSupervisor =
+        supervisor['active'] == true || supervisor['paired'] == true;
+    final supervisorName = _resolveSupervisorName(supervisor);
+    final showName =
+        supervisorName.isNotEmpty && (hasActiveSupervisor || showEmoji);
+    if (!showName && !showEmoji) {
+      _reportVisible(false);
+      return const SizedBox.shrink();
+    }
+    _reportVisible(true);
 
     return Container(
       decoration: BoxDecoration(
@@ -194,13 +216,14 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   }
 
   String _resolveSupervisorName(Map<String, dynamic> supervisor) {
-    final registrationName =
-        (supervisor['registrationName'] ?? '').toString().trim();
-    if (registrationName.isNotEmpty) return registrationName;
     for (final key in const [
-      'supervisorName',
-      'registeredName',
+      'display_name',
       'displayName',
+      'registrationName',
+      'registration_name',
+      'supervisorName',
+      'supervisor_name',
+      'registeredName',
       'name',
     ]) {
       final value = (supervisor[key] ?? '').toString().trim();
