@@ -6,7 +6,8 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show FlutterError, ValueNotifier, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show FlutterError, ValueNotifier, kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'package:robulingo_flutter/app/robulingo_app.dart';
@@ -19,7 +20,8 @@ void main() {
     _lastError.value = details.exceptionAsString();
   };
   PlatformDispatcher.instance.onError = (error, stack) {
-    FlutterError.reportError(FlutterErrorDetails(exception: error, stack: stack));
+    FlutterError.reportError(
+        FlutterErrorDetails(exception: error, stack: stack));
     _lastError.value = error.toString();
     return true;
   };
@@ -106,7 +108,8 @@ void main() {
       ),
     );
   }, (error, stack) {
-    FlutterError.reportError(FlutterErrorDetails(exception: error, stack: stack));
+    FlutterError.reportError(
+        FlutterErrorDetails(exception: error, stack: stack));
     _lastError.value = error.toString();
   });
 }

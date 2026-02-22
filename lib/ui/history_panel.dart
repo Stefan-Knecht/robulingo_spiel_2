@@ -140,8 +140,6 @@ Future<void> showHistoryPanel({
                 _textFor('view_consent_information', uiLang);
             final registerInfoUri = Uri.parse(activeFlavor.registerInfoUrl);
             final consentInfoUri = Uri.parse(activeFlavor.consentInfoUrl);
-            final commentOptionalLabel = _textFor('comment_optional', uiLang);
-            final commentHint = _textFor('enter_comment', uiLang);
             final areYouSureLabel = _textFor('are_you_sure', uiLang);
             final cancelLabel = _textFor('cancel', uiLang);
             final removeActionLabel = _textFor('remove_action', uiLang);
@@ -482,21 +480,6 @@ Future<void> showHistoryPanel({
                           ),
                         ),
                         const SizedBox(height: 10),
-                        _LabeledField(
-                          label: commentOptionalLabel,
-                          child: TextField(
-                            controller: commentController,
-                            onChanged: (value) {
-                              _historyPanelDraft.comment = value;
-                            },
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              isDense: true,
-                              hintText: commentHint,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
                         Text(
                           learnerConsentLabel,
                           style: const TextStyle(fontWeight: FontWeight.w600),
@@ -627,50 +610,54 @@ Future<void> showHistoryPanel({
                                 fit: BoxFit.contain,
                               ),
                             ),
-                            SizedBox(
-                              width: 180,
-                              child: GestureDetector(
-                                onTap: canApply ? applyChanges : null,
-                                child: Opacity(
-                                  opacity: canApply ? 1.0 : 0.45,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Icon(
-                                        canApply ? Icons.check_box : Icons.lock,
-                                        size: 36,
-                                        color: canApply
-                                            ? Colors.green.shade700
-                                            : Colors.grey.shade700,
-                                      ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: SizedBox(
+                            width: 180,
+                            child: GestureDetector(
+                              onTap: canApply ? applyChanges : null,
+                              child: Opacity(
+                                opacity: canApply ? 1.0 : 0.45,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Icon(
+                                      canApply ? Icons.check_box : Icons.lock,
+                                      size: 36,
+                                      color: canApply
+                                          ? Colors.green.shade700
+                                          : Colors.grey.shade700,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      applyLabel,
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    if (!canApply &&
+                                        applyDisabledHint
+                                            .trim()
+                                            .isNotEmpty) ...[
                                       const SizedBox(height: 2),
-                                      Text(
-                                        applyLabel,
-                                        style: const TextStyle(fontSize: 12),
-                                      ),
-                                      if (!canApply &&
-                                          applyDisabledHint
-                                              .trim()
-                                              .isNotEmpty) ...[
-                                        const SizedBox(height: 2),
-                                        SizedBox(
-                                          width: 160,
-                                          child: Text(
-                                            applyDisabledHint,
-                                            textAlign: TextAlign.right,
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.grey.shade700,
-                                            ),
+                                      SizedBox(
+                                        width: 160,
+                                        child: Text(
+                                          applyDisabledHint,
+                                          textAlign: TextAlign.right,
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.grey.shade700,
                                           ),
                                         ),
-                                      ],
+                                      ),
                                     ],
-                                  ),
+                                  ],
                                 ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
                         if (progressStatus.isNotEmpty) ...[
                           const SizedBox(height: 12),

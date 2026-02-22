@@ -6,6 +6,7 @@ It expects these R2 bindings:
 
 - `USERDATA` → bucket `userdata`
 - `DAILYWORDSUSERDATA` → bucket `dailywordsuserdata`
+- `DAILYWORDSAPK` → bucket `dailywords-apk`
 - `HINTS` → bucket `hints`
 
 ## Deploy via Wrangler
@@ -37,6 +38,14 @@ Summary endpoint:
 - `GET https://<workerHost><apiPrefix>/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
   - header: `x-user-id`
   - optional: `x-app-flavor: dailywords` or query `app_flavor=dailywords`
+
+Android release endpoints (DailyWords):
+- `GET https://<workerHost><apiPrefix>/android-release/latest?flavor=dailywords`
+  - returns latest release metadata (`version_name`, `version_code`, `download_url`, ...)
+- `GET https://<workerHost><apiPrefix>/android-release/download?flavor=dailywords&source=landing`
+  - logs one download event in R2 and redirects (`302`) to the current APK URL
+- `GET https://<workerHost><apiPrefix>/android-release/download-stats?flavor=dailywords&from=YYYY-MM-DD&to=YYYY-MM-DD`
+  - returns counted download events per day + total for the date range
 
 Supervisor/Consent endpoints (R2-backed MVP):
 - Bucket behavior: these endpoints always use `DAILYWORDSUSERDATA` (fallback `USERDATA` only if the DailyWords binding is missing), independent of `x-app-flavor`.
@@ -115,4 +124,4 @@ Dashboard build endpoint:
     - `consent` block
     - `emojiQueue` summary + `itemsPreview`
     - `resumeState` summary
-    - `dashboardHints` (poll interval + endpoint hints, `dataContractVersion: 2`)
+    - `dashboardHints` (poll interval + endpoint hints incl. APK update/count endpoints, `dataContractVersion: 3`)

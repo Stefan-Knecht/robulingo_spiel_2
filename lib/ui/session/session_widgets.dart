@@ -86,107 +86,107 @@ class _RestartSplashState extends State<RestartSplash> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            const SizedBox(height: 32),
-            Image.asset(activeFlavor.brandLogoAsset,
-                height: 120, fit: BoxFit.contain),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: SizedBox(
-                height: 200,
-                child: VictoryPanel(
-                  wins: widget.wins,
-                  rivalWins: widget.rivalWins,
-                  rivalAssetPath: RivalAssetResolver.pathFor(
-                    wins: widget.wins,
-                    rivalWins: widget.rivalWins,
-                    viewCount: widget.viewCount,
+    Widget buildCalendarSection() {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final showSideBySide = constraints.maxWidth >= 780;
+            final calendar = TrainingCalendarPanel(
+              userId: widget.userId,
+              workerHost: widget.workerHost,
+              apiPrefix: widget.apiPrefix,
+              thresholdMinutes: 1,
+              thresholdRuns: 10,
+              fallbackDatesUtc: widget.fallbackDatesUtc,
+            );
+            final supervisorPanel = SupervisorResumePanel(
+              userId: widget.userId,
+              workerHost: widget.workerHost,
+              apiPrefix: widget.apiPrefix,
+              onVisibilityChanged: _handleSupervisorPanelVisibilityChanged,
+            );
+            if (showSideBySide) {
+              if (!_supervisorPanelVisible) {
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    calendar,
+                    Offstage(
+                      offstage: true,
+                      child: supervisorPanel,
+                    ),
+                  ],
+                );
+              }
+              final panelWidth = constraints.maxWidth.clamp(0.0, 1200.0) * 0.22;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: panelWidth.clamp(140.0, 220.0),
+                    child: supervisorPanel,
                   ),
-                  therapistAssetPath: TherapistAssetResolver.pathFor(
-                    wins: widget.wins,
-                    rivalWins: widget.rivalWins,
+                  const SizedBox(width: 12),
+                  Expanded(child: calendar),
+                ],
+              );
+            }
+            return Column(
+              children: [
+                if (_supervisorPanelVisible) ...[
+                  SizedBox(
+                    height: 120,
+                    child: supervisorPanel,
                   ),
-                  backgroundColor: Colors.transparent,
+                  const SizedBox(height: 10),
+                ] else
+                  Offstage(
+                    offstage: true,
+                    child: supervisorPanel,
+                  ),
+                Expanded(child: calendar),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    Widget buildFooter() {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final bool compact = constraints.maxWidth < 420;
+
+            Widget moduleButton({
+              required double width,
+              required double iconSize,
+              required double gap,
+            }) {
+              return GestureDetector(
+                onTap: widget.onSelectModule,
+                behavior: HitTestBehavior.opaque,
+                child: SizedBox(
+                  width: width,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(widget.moduleProgress.iconAsset,
+                          width: iconSize,
+                          height: iconSize,
+                          fit: BoxFit.contain),
+                      SizedBox(height: gap),
+                      _RestartModuleProgressIndicator(widget.moduleProgress),
+                    ],
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final showSideBySide = constraints.maxWidth >= 780;
-                    final calendar = TrainingCalendarPanel(
-                      userId: widget.userId,
-                      workerHost: widget.workerHost,
-                      apiPrefix: widget.apiPrefix,
-                      thresholdMinutes: 1,
-                      thresholdRuns: 10,
-                      fallbackDatesUtc: widget.fallbackDatesUtc,
-                    );
-                    final supervisorPanel = SupervisorResumePanel(
-                      userId: widget.userId,
-                      workerHost: widget.workerHost,
-                      apiPrefix: widget.apiPrefix,
-                      onVisibilityChanged:
-                          _handleSupervisorPanelVisibilityChanged,
-                    );
-                    if (showSideBySide) {
-                      if (!_supervisorPanelVisible) {
-                        return Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            calendar,
-                            Offstage(
-                              offstage: true,
-                              child: supervisorPanel,
-                            ),
-                          ],
-                        );
-                      }
-                      final panelWidth =
-                          constraints.maxWidth.clamp(0.0, 1200.0) * 0.22;
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(
-                            width: panelWidth.clamp(140.0, 220.0),
-                            child: supervisorPanel,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(child: calendar),
-                        ],
-                      );
-                    }
-                    return Column(
-                      children: [
-                        if (_supervisorPanelVisible) ...[
-                          SizedBox(
-                            height: 120,
-                            child: supervisorPanel,
-                          ),
-                          const SizedBox(height: 10),
-                        ] else
-                          Offstage(
-                            offstage: true,
-                            child: supervisorPanel,
-                          ),
-                        Expanded(child: calendar),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ),
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-              child: Row(
+              );
+            }
+
+            if (!compact) {
+              return Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   GestureDetector(
@@ -196,23 +196,7 @@ class _RestartSplashState extends State<RestartSplash> {
                   ),
                   Expanded(
                     child: Center(
-                      child: GestureDetector(
-                        onTap: widget.onSelectModule,
-                        behavior: HitTestBehavior.opaque,
-                        child: SizedBox(
-                          width: 140,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Image.asset(widget.moduleProgress.iconAsset,
-                                  width: 64, height: 64, fit: BoxFit.contain),
-                              const SizedBox(height: 10),
-                              _RestartModuleProgressIndicator(
-                                  widget.moduleProgress),
-                            ],
-                          ),
-                        ),
-                      ),
+                      child: moduleButton(width: 140, iconSize: 64, gap: 10),
                     ),
                   ),
                   GestureDetector(
@@ -221,9 +205,114 @@ class _RestartSplashState extends State<RestartSplash> {
                         width: 88, height: 88),
                   ),
                 ],
+              );
+            }
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: widget.onRestart,
+                      child: Image.asset('assets/icons/toolbox.webp',
+                          width: 64, height: 64),
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: widget.onStart,
+                          child: Image.asset('assets/icons/start_arrow.webp',
+                              width: 78, height: 78),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: moduleButton(width: 132, iconSize: 58, gap: 8),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    return Scaffold(
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+            final compactLayout =
+                constraints.maxHeight < 760 || textScale > 1.15;
+            final topSpacing = compactLayout ? 16.0 : 32.0;
+            final logoHeight = compactLayout ? 100.0 : 120.0;
+            final victoryHeight = compactLayout ? 170.0 : 200.0;
+            final compactCalendarHeight =
+                (constraints.maxHeight * 0.4).clamp(180.0, 280.0).toDouble();
+
+            final headSection = Column(
+              children: [
+                SizedBox(height: topSpacing),
+                Image.asset(activeFlavor.brandLogoAsset,
+                    height: logoHeight, fit: BoxFit.contain),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: SizedBox(
+                    height: victoryHeight,
+                    child: VictoryPanel(
+                      wins: widget.wins,
+                      rivalWins: widget.rivalWins,
+                      rivalAssetPath: RivalAssetResolver.pathFor(
+                        wins: widget.wins,
+                        rivalWins: widget.rivalWins,
+                        viewCount: widget.viewCount,
+                      ),
+                      therapistAssetPath: TherapistAssetResolver.pathFor(
+                        wins: widget.wins,
+                        rivalWins: widget.rivalWins,
+                      ),
+                      backgroundColor: Colors.transparent,
+                    ),
+                  ),
+                ),
+              ],
+            );
+
+            if (!compactLayout) {
+              return Column(
+                children: [
+                  headSection,
+                  const SizedBox(height: 12),
+                  Expanded(child: buildCalendarSection()),
+                  buildFooter(),
+                ],
+              );
+            }
+
+            return SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
+                  children: [
+                    headSection,
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: compactCalendarHeight,
+                      child: buildCalendarSection(),
+                    ),
+                    buildFooter(),
+                  ],
+                ),
               ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -492,6 +581,27 @@ class NamingView extends StatelessWidget {
               ),
             ),
           ),
+        if (namingStatus.trim().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3CD),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2C98A)),
+              ),
+              child: Text(
+                namingStatus,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF6A4A00),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -675,6 +785,7 @@ class SessionBody extends StatelessWidget {
     required this.namingHold,
     required this.showHourglass,
     required this.namingInProgress,
+    required this.micOn,
     required this.showTinySpinner,
     required this.liveTranscript,
     required this.targetText,
@@ -722,6 +833,7 @@ class SessionBody extends StatelessWidget {
   final bool namingHold;
   final bool showHourglass;
   final bool namingInProgress;
+  final bool micOn;
   final bool showTinySpinner;
   final String liveTranscript;
   final String targetText;
@@ -1076,7 +1188,7 @@ class SessionBody extends StatelessWidget {
             DashboardButtonRow(
               show: showDashboardButton || ladder.hasFlagAppeared,
               showHourglass: showGlobalHourglass,
-              hourglassWiggle: showGlobalHourglass,
+              hourglassWiggle: showGlobalHourglass && (!isNaming || micOn),
               onTap: onOpenDashboard,
             ),
           ],

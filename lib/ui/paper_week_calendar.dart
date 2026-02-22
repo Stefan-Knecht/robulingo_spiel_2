@@ -309,19 +309,21 @@ class _SemanticsOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final localizations = MaterialLocalizations.of(context);
     return Row(
       children: List.generate(7, (index) {
         final status = days[index];
+        final dateLabel = localizations.formatFullDate(status.date.toLocal());
         return Expanded(
           child: Semantics(
             button: onTapDay != null,
             label: status.qualified
                 ? (status.rivalQualified
-                    ? "Day ${index + 1} of 7, completed, rival trained"
-                    : "Day ${index + 1} of 7, completed")
+                    ? "$dateLabel, completed, rival trained"
+                    : "$dateLabel, completed")
                 : (status.rivalQualified
-                    ? "Day ${index + 1} of 7, rival trained"
-                    : "Day ${index + 1} of 7, not completed"),
+                    ? "$dateLabel, rival trained"
+                    : "$dateLabel, not completed"),
             onTap: onTapDay == null ? null : () => onTapDay?.call(index),
             child: const SizedBox.expand(),
           ),
@@ -366,12 +368,10 @@ class PaperCalendarPainter extends CustomPainter {
 
   void _drawNoise(Canvas canvas, Size size) {
     final rng = Random(seedBase);
-    final count = ((size.width * size.height) / 2800)
-        .round()
-        .clamp(30, 160)
-        .toInt();
-    final paint =
-        Paint()..color = Colors.black.withOpacityValue(paperStyle.noiseOpacity);
+    final count =
+        ((size.width * size.height) / 2800).round().clamp(30, 160).toInt();
+    final paint = Paint()
+      ..color = Colors.black.withOpacityValue(paperStyle.noiseOpacity);
     for (int i = 0; i < count; i++) {
       final dx = rng.nextDouble() * size.width;
       final dy = rng.nextDouble() * size.height;
@@ -388,7 +388,8 @@ class PaperCalendarPainter extends CustomPainter {
     for (int i = 0; i < holes; i++) {
       final x = layout.gridRect.left + spacing * (i + 1);
       final shadowPaint = Paint()..color = paperStyle.ringShadowColor;
-      canvas.drawCircle(Offset(x, y + 1.2), paperStyle.ringHoleRadius + 0.6, shadowPaint);
+      canvas.drawCircle(
+          Offset(x, y + 1.2), paperStyle.ringHoleRadius + 0.6, shadowPaint);
       final holePaint = Paint()..color = paperStyle.ringHoleColor;
       canvas.drawCircle(Offset(x, y), paperStyle.ringHoleRadius, holePaint);
     }
@@ -421,10 +422,14 @@ class PaperCalendarPainter extends CustomPainter {
       final br = cell.bottomRight;
       final bl = cell.bottomLeft;
       final paths = [
-        jitteredLinePath(tl, tr, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
-        jitteredLinePath(tr, br, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
-        jitteredLinePath(br, bl, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
-        jitteredLinePath(bl, tl, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
+        jitteredLinePath(tl, tr, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
+        jitteredLinePath(tr, br, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
+        jitteredLinePath(br, bl, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
+        jitteredLinePath(bl, tl, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
       ];
       for (final path in paths) {
         canvas.drawPath(path, jitterPaint);
@@ -434,7 +439,8 @@ class PaperCalendarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant PaperCalendarPainter oldDelegate) {
-    return oldDelegate.paperStyle != paperStyle || oldDelegate.seedBase != seedBase;
+    return oldDelegate.paperStyle != paperStyle ||
+        oldDelegate.seedBase != seedBase;
   }
 }
 
@@ -466,18 +472,18 @@ class MarksPainter extends CustomPainter {
       if (i == todayIndex && !days[i].qualified && todayProgress > 0) {
         _drawScribble(canvas, cell, todayProgress, seedBase + 100 + i);
       }
-          if (days[i].qualified) {
-            final progress = i < markProgress.length ? markProgress[i] : 1.0;
-            _drawPencilX(canvas, cell, progress, seedBase + 300 + i);
-          }
-          if (days[i].rivalQualified) {
-            final progress = i < markProgress.length ? markProgress[i] : 1.0;
-            _drawRivalCircle(canvas, cell, progress, seedBase + 600 + i);
-          }
-          if (i == todayIndex) {
-            _drawPaperclip(canvas, cell);
-          }
-        }
+      if (days[i].qualified) {
+        final progress = i < markProgress.length ? markProgress[i] : 1.0;
+        _drawPencilX(canvas, cell, progress, seedBase + 300 + i);
+      }
+      if (days[i].rivalQualified) {
+        final progress = i < markProgress.length ? markProgress[i] : 1.0;
+        _drawRivalCircle(canvas, cell, progress, seedBase + 600 + i);
+      }
+      if (i == todayIndex) {
+        _drawPaperclip(canvas, cell);
+      }
+    }
   }
 
   void _drawTodayGlow(Canvas canvas, Rect cell) {
@@ -498,7 +504,8 @@ class MarksPainter extends CustomPainter {
     final width = cell.width * 0.22;
     final height = cell.height * 0.22;
     final center = Offset(cell.center.dx, cell.top + height * 0.6);
-    final outerRect = Rect.fromCenter(center: center, width: width, height: height);
+    final outerRect =
+        Rect.fromCenter(center: center, width: width, height: height);
     final innerRect = outerRect
         .deflate(width * 0.18)
         .shift(Offset(width * 0.08, height * 0.08));

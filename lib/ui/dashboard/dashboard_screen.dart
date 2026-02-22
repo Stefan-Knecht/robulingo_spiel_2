@@ -98,162 +98,225 @@ F     J
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: FutureBuilder<_DashboardData>(
-          future: _dataFuture,
-          builder: (context, snapshot) {
-            final weekMinutes = snapshot.data?.weekMinutes ?? const <int>[];
-            final rivalAssetPath =
-                snapshot.data?.rivalAssetPath ?? 'assets/icons/rival.webp';
-            final therapistAssetPath = snapshot.data?.therapistAssetPath ??
-                'assets/icons/therapist_neutral.webp';
-            final successPoints =
-                snapshot.data?.successPoints ?? const <SuccessPoint>[];
-            return Stack(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: VictoryPanel(
-                          wins: widget.wins,
-                          rivalWins: widget.rivalWins,
-                          rivalAssetPath: rivalAssetPath,
-                          therapistAssetPath: therapistAssetPath,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+            final compactLayout = constraints.maxHeight < 700 || textScale > 1.15;
+            const contentHorizontal = 12.0;
+            const topReserved = 56.0;
+            const bottomReserved = 110.0;
+            final linkMaxWidth =
+                (constraints.maxWidth - 140).clamp(120.0, 360.0).toDouble();
+
+            return FutureBuilder<_DashboardData>(
+              future: _dataFuture,
+              builder: (context, snapshot) {
+                final weekMinutes = snapshot.data?.weekMinutes ?? const <int>[];
+                final rivalAssetPath =
+                    snapshot.data?.rivalAssetPath ?? 'assets/icons/rival.webp';
+                final therapistAssetPath = snapshot.data?.therapistAssetPath ??
+                    'assets/icons/therapist_neutral.webp';
+                final successPoints =
+                    snapshot.data?.successPoints ?? const <SuccessPoint>[];
+
+                Widget dashboardPanels;
+                if (compactLayout) {
+                  final usableHeight = (constraints.maxHeight -
+                          topReserved -
+                          bottomReserved)
+                      .clamp(300.0, 1400.0)
+                      .toDouble();
+                  final panelHeight =
+                      ((usableHeight - 20.0) / 3).clamp(120.0, 320.0).toDouble();
+                  dashboardPanels = SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(
+                        contentHorizontal, topReserved, contentHorizontal, bottomReserved),
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: panelHeight,
+                          child: VictoryPanel(
+                            wins: widget.wins,
+                            rivalWins: widget.rivalWins,
+                            rivalAssetPath: rivalAssetPath,
+                            therapistAssetPath: therapistAssetPath,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: panelHeight,
+                          child: CalendarPanel(
+                            weekMinutes: weekMinutes,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: panelHeight,
+                          child: SuccessPanel(
+                            points: successPoints,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                } else {
+                  dashboardPanels = Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        contentHorizontal, topReserved, contentHorizontal, bottomReserved),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: VictoryPanel(
+                            wins: widget.wins,
+                            rivalWins: widget.rivalWins,
+                            rivalAssetPath: rivalAssetPath,
+                            therapistAssetPath: therapistAssetPath,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          flex: 3,
+                          child: CalendarPanel(
+                            weekMinutes: weekMinutes,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          flex: 3,
+                          child: SuccessPanel(
+                            points: successPoints,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return Stack(
+                  children: [
+                    Positioned.fill(child: dashboardPanels),
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: IconButton(
+                        tooltip: 'Protokoll exportieren',
+                        icon: Icon(
+                          Icons.download,
+                          size: 38,
+                          color: Colors.green.shade700,
+                          weight: 800,
+                        ),
+                        onPressed: widget.onExportProtocol == null
+                            ? null
+                            : () async {
+                                try {
+                                  final msg = await widget.onExportProtocol!.call();
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(msg)),
+                                  );
+                                } catch (e) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content: Text('Export fehlgeschlagen: $e')),
+                                  );
+                                }
+                              },
+                      ),
+                    ),
+                    if (kIsWeb)
+                      Positioned(
+                        top: 8,
+                        left: 64,
+                        child: IconButton(
+                          tooltip: 'CLI commands',
+                          icon: Icon(
+                            Icons.code,
+                            size: 34,
+                            color: Colors.green.shade700,
+                            weight: 800,
+                          ),
+                          onPressed: _showCliCommandsDialog,
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      Expanded(
-                        flex: 3,
-                        child: CalendarPanel(
-                          weekMinutes: weekMinutes,
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: IconButton(
+                        icon: Icon(
+                          Icons.refresh,
+                          size: 40,
+                          color: Colors.green.shade700,
+                          weight: 800,
+                        ),
+                        onPressed: () {
+                          widget.onReturnToGame?.call();
+                          Navigator.of(context).pop();
+                        },
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 16,
+                      right: 16,
+                      child: _ExitIconButton(
+                        busy: _exitInProgress,
+                        onPressed: _handleExitToResume,
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      bottom: 12,
+                      child: SizedBox(
+                        width: linkMaxWidth,
+                        child: TextButton(
+                          style: TextButton.styleFrom(
+                            minimumSize: Size.zero,
+                            padding: EdgeInsets.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          onPressed: () async {
+                            final landingUrl = activeFlavor.dashboardLandingUrl;
+                            final uri = Uri.parse(landingUrl);
+                            await launchUrl(uri,
+                                mode: LaunchMode.externalApplication);
+                          },
+                          child: Text(
+                            activeFlavor.dashboardLandingUrl,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              decoration: TextDecoration.underline,
+                              color: Colors.blue.shade700,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      Expanded(
-                        flex: 3,
-                        child: SuccessPanel(
-                          points: successPoints,
+                    ),
+                    if (_exitInProgress) ...[
+                      const Positioned.fill(
+                        child: ModalBarrier(
+                          dismissible: false,
+                          color: Color(0x1A000000),
+                        ),
+                      ),
+                      const Positioned.fill(
+                        child: IgnorePointer(
+                          child: Center(
+                            child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: CircularProgressIndicator(strokeWidth: 3),
+                            ),
+                          ),
                         ),
                       ),
                     ],
-                  ),
-                ),
-                Positioned(
-                  top: 8,
-                  left: 8,
-                  child: IconButton(
-                    tooltip: 'Protokoll exportieren',
-                    icon: Icon(
-                      Icons.download,
-                      size: 38,
-                      color: Colors.green.shade700,
-                      weight: 800,
-                    ),
-                    onPressed: widget.onExportProtocol == null
-                        ? null
-                        : () async {
-                            try {
-                              final msg = await widget.onExportProtocol!.call();
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(msg)),
-                              );
-                            } catch (e) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                    content: Text('Export fehlgeschlagen: $e')),
-                              );
-                            }
-                          },
-                  ),
-                ),
-                if (kIsWeb)
-                  Positioned(
-                    top: 8,
-                    left: 64,
-                    child: IconButton(
-                      tooltip: 'CLI commands',
-                      icon: Icon(
-                        Icons.code,
-                        size: 34,
-                        color: Colors.green.shade700,
-                        weight: 800,
-                      ),
-                      onPressed: _showCliCommandsDialog,
-                    ),
-                  ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.refresh,
-                      size: 40,
-                      color: Colors.green.shade700,
-                      weight: 800,
-                    ),
-                    onPressed: () {
-                      widget.onReturnToGame?.call();
-                      Navigator.of(context).pop();
-                    },
-                  ),
-                ),
-                Positioned(
-                  bottom: 16,
-                  right: 16,
-                  child: _ExitIconButton(
-                    busy: _exitInProgress,
-                    onPressed: _handleExitToResume,
-                  ),
-                ),
-                Positioned(
-                  left: 12,
-                  bottom: 12,
-                  child: TextButton(
-                    style: TextButton.styleFrom(
-                      minimumSize: Size.zero,
-                      padding: EdgeInsets.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    onPressed: () async {
-                      final landingUrl = activeFlavor.dashboardLandingUrl;
-                      final uri = Uri.parse(landingUrl);
-                      await launchUrl(uri,
-                          mode: LaunchMode.externalApplication);
-                    },
-                    child: Text(
-                      activeFlavor.dashboardLandingUrl,
-                      style: TextStyle(
-                        decoration: TextDecoration.underline,
-                        color: Colors.blue.shade700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ),
-                if (_exitInProgress) ...[
-                  const Positioned.fill(
-                    child: ModalBarrier(
-                      dismissible: false,
-                      color: Color(0x1A000000),
-                    ),
-                  ),
-                  const Positioned.fill(
-                    child: IgnorePointer(
-                      child: Center(
-                        child: SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: CircularProgressIndicator(strokeWidth: 3),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
+                  ],
+                );
+              },
             );
           },
         ),
