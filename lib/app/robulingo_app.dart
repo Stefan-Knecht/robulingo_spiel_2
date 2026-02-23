@@ -7,11 +7,14 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:robulingo_flutter/constants.dart';
 import 'package:robulingo_flutter/data/api_client.dart';
+import 'package:robulingo_flutter/data/app_update_service.dart';
 import 'package:robulingo_flutter/data/pick_manifest_service.dart';
 import 'package:robulingo_flutter/data/hint_models.dart';
 import 'package:robulingo_flutter/data/hints_service.dart';
@@ -120,7 +123,7 @@ bool shouldRenderNamingView({
 //   1) Muttersprache: Anzeige nur beim ersten Durchlauf pro Item (nativeSeenCounts < 1).
 //   2) Rival-Startprognose: erste 10 Züge maxProb=0.9, danach skaliert mit letzter Accuracy.
 //   3) Benennen: Item qualifiziert nach 4/4 korrekten Comprehension-Antworten; Naming startet erst, wenn >=5 Items qualifiziert sind.
-//   4) Naming-Zeitfenster: 5s erste Aufnahme, 5s Wiederholung.
+//   4) Naming-Zeitfenster: 4s erste Aufnahme, 3s Wiederholung.
 //   5) Naming-Block: 20 Trials Pause nach Ablehnung/Timeout im Gate.
 // ------------------------------------------------------------
 class RobuLingoApp extends StatefulWidget {
@@ -140,6 +143,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool _disposed = false;
   static const int cachedItemCount = 12; // TODO: 500 im Zielzustand
   static const int namingMinUniqueItems = 5;
+  static const int namingFirstWindowSec = 4;
+  static const int namingRepeatWindowSec = 3;
+  static const int namingHintWindowSec = 3;
+  static const int namingProgressFirstRatio = 3;
+  static const int namingProgressHintRatio = 2;
+  static const int namingProgressRepeatRatio = 2;
+  static const double moveSoundVolume = 0.75;
+  static final AudioContext speechAudioContext = AudioContextConfig(
+    focus: AudioContextConfigFocus.gain,
+  ).build();
+  static final AudioContext sfxAudioContext = AudioContextConfig(
+    focus: AudioContextConfigFocus.mixWithOthers,
+  ).build();
   // Tunable: spacing between naming reward steps/beeps.
   // (bigger = slower + clearer double beep)
   int namingRewardStepSpacingMs = 320;
@@ -150,6 +166,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   late ResumeStateService resumeStateService;
   late SupervisorDashboardService supervisorDashboardService;
   late SupervisorLinkService supervisorLinkService;
+  late AppUpdateService appUpdateService;
   late ResumeStateController resumeStateController;
   String workerHost = defaultWorkerHost;
   String fileHost = defaultFileHost;
@@ -308,6 +325,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool _historyPanelHasSupervisorInfo = false;
   final FocusNode _keyboardFocusNode = FocusNode(debugLabel: 'AppKeyboard');
   bool _micControllerDisposed = false;
+  bool _updateCheckStarted = false;
+  bool _updateDialogShown = false;
+  AppUpdateInfo? _availableAppUpdate;
+  String _installedVersionLabel = '';
 
   @override
   void initState() {
@@ -327,16 +348,29 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     );
     player.setReleaseMode(ReleaseMode.stop);
     hintPlayer.setReleaseMode(ReleaseMode.stop);
+    unawaited(player.setAudioContext(speechAudioContext));
+    unawaited(hintPlayer.setAudioContext(speechAudioContext));
     playbackSub = player.onPlayerStateChanged.listen((state) {
       debugPrint(
           '[audio] state=$state playing=${state == PlayerState.playing}');
     }, onError: (Object e, StackTrace st) {
       debugPrint('[audio][error-state] $e');
     });
+    unawaited(fanfarePlayer.setAudioContext(sfxAudioContext));
     moveYouPlayer.setReleaseMode(ReleaseMode.stop);
     moveRivalPlayer.setReleaseMode(ReleaseMode.stop);
+    unawaited(moveYouPlayer.setAudioContext(sfxAudioContext));
+    unawaited(moveRivalPlayer.setAudioContext(sfxAudioContext));
+    unawaited(moveYouPlayer.setPlayerMode(PlayerMode.lowLatency));
+    unawaited(moveRivalPlayer.setPlayerMode(PlayerMode.lowLatency));
+    unawaited(moveYouPlayer.setVolume(moveSoundVolume));
+    unawaited(moveRivalPlayer.setVolume(moveSoundVolume));
     namingBeepPlayer.setReleaseMode(ReleaseMode.stop);
     namingBeepPlayer2.setReleaseMode(ReleaseMode.stop);
+    unawaited(namingBeepPlayer.setAudioContext(sfxAudioContext));
+    unawaited(namingBeepPlayer2.setAudioContext(sfxAudioContext));
+    unawaited(namingBeepPlayer.setPlayerMode(PlayerMode.lowLatency));
+    unawaited(namingBeepPlayer2.setPlayerMode(PlayerMode.lowLatency));
     micController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
@@ -374,16 +408,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     hintsService = HintsService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateService =
         ResumeStateService(workerHost: workerHost, apiPrefix: apiPrefix);
-    supervisorDashboardService =
-        SupervisorDashboardService(workerHost: workerHost, apiPrefix: apiPrefix);
+    supervisorDashboardService = SupervisorDashboardService(
+        workerHost: workerHost, apiPrefix: apiPrefix);
     supervisorLinkService =
         SupervisorLinkService(workerHost: workerHost, apiPrefix: apiPrefix);
+    appUpdateService =
+        AppUpdateService(workerHost: workerHost, apiPrefix: apiPrefix);
     resumeStateController = ResumeStateController(service: resumeStateService);
     _initLogger();
     _initUserId();
     _historyPanelHasSupervisorInfo = historyPanelHasSupervisorInfo();
     unawaited(_restoreHistoryPanelDraft());
     _loadSavedOnboarding();
+    unawaited(_checkForAppUpdateAtStartup());
   }
 
   @override
@@ -467,6 +504,65 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       startKey: activeStartCurriculumKey,
       lang: lang,
       nativeLang: nativeLang,
+    );
+  }
+
+  Future<void> _checkForAppUpdateAtStartup() async {
+    if (_updateCheckStarted) return;
+    _updateCheckStarted = true;
+    if (kIsWeb || operatingSystem != 'android') return;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final localCode = int.tryParse(packageInfo.buildNumber.trim());
+      _installedVersionLabel =
+          '${packageInfo.version.trim()} (${packageInfo.buildNumber.trim()})';
+      final info = await appUpdateService.checkForAndroidUpdate(
+        localVersionCode: localCode,
+        localVersionName: packageInfo.version,
+      );
+      if (!mounted || info == null) return;
+      setState(() {
+        _availableAppUpdate = info;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_showUpdateDialogIfNeeded());
+      });
+    } catch (e) {
+      debugPrint('[update][check-error] $e');
+    }
+  }
+
+  Future<void> _showUpdateDialogIfNeeded() async {
+    final info = _availableAppUpdate;
+    if (info == null || _updateDialogShown || !mounted) return;
+    _updateDialogShown = true;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Update verfügbar'),
+        content: Text(
+          'Installiert: ${_installedVersionLabel.isEmpty ? "-" : _installedVersionLabel}\n'
+          'Neu: ${info.versionLabel}\n\n'
+          'Möchtest du die neue APK herunterladen?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Später'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final uri = Uri.tryParse(info.downloadUrl);
+              if (uri != null) {
+                await launchUrl(uri, mode: LaunchMode.platformDefault);
+              }
+              if (ctx.mounted) Navigator.of(ctx).pop();
+            },
+            child: const Text('Herunterladen'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1064,8 +1160,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                 ..setState(resumeStateController.state);
           supervisorLinkService = SupervisorLinkService(
               workerHost: workerHost, apiPrefix: apiPrefix);
+          appUpdateService =
+              AppUpdateService(workerHost: workerHost, apiPrefix: apiPrefix);
         });
         _configureLoggerRemote();
+        _updateCheckStarted = false;
+        _updateDialogShown = false;
+        _availableAppUpdate = null;
+        unawaited(_checkForAppUpdateAtStartup());
         unawaited(_loadHintPack(forceRefresh: true));
         _loadInitial();
       }
@@ -2227,7 +2329,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       unawaited(_runNamingRewardSteps(token: token, steps: moves));
     }
     setState(() {
-      namingStatus = '';
+      if (wasCorrect) {
+        namingStatus = '';
+      }
       namingOutcome = wasCorrect;
       _liveTranscript = _liveTranscript;
       hasAnswered = false;
@@ -2295,8 +2399,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       hasAnswered = true; // block Selektionen/Advances während Naming
     });
-    const int windowFirst = 4; // mehr Zeit für erste Aufnahme
-    const int windowRepeat = 6;
     bool isCurrent() => mounted && token == currentTrialToken;
     final trial = currentTrial;
     if (trial == null) return;
@@ -2324,8 +2426,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         });
       },
       userInitiated: userInitiated,
-      firstWindow: const Duration(seconds: windowFirst),
-      repeatWindow: const Duration(seconds: windowRepeat),
+      firstWindow: const Duration(seconds: namingFirstWindowSec),
+      repeatWindow: const Duration(seconds: namingRepeatWindowSec),
     );
 
     if (!mounted || token != currentTrialToken) return;
@@ -2385,6 +2487,25 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _liveTranscript = transcript;
     final noAnswer = transcript.trim().isEmpty;
     if (!wasCorrect && noAnswer) {
+      final bool gotSound = namingController.lastListenGotSoundLevel;
+      final bool gotResult = namingController.lastListenGotResultEvent;
+      final double maxLevel = namingController.lastListenMaxSoundLevel;
+      final String localeUsed = namingController.lastListenLocale;
+      final String localeInfo =
+          localeUsed.trim().isNotEmpty && localeUsed != '-'
+              ? ' (ASR locale: $localeUsed)'
+              : '';
+      if (!gotSound) {
+        namingStatus =
+            'No microphone signal detected. Please speak closer$localeInfo.';
+      } else if (!gotResult) {
+        namingStatus =
+            'Microphone hears sound, but speech was not recognized$localeInfo.';
+      } else {
+        namingStatus = 'No transcript captured. Please try again$localeInfo.';
+      }
+      debugPrint(
+          '[naming][diag] noAnswer=true sound=$gotSound result=$gotResult max=$maxLevel locale=${namingController.lastListenLocale}');
       ladderController.tryRivalStep(probability: 0.5);
     }
     _completeNamingSession(token: token, wasCorrect: wasCorrect, moves: moves);
@@ -3049,6 +3170,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           namingHold: namingHold,
           showHourglass: showHourglass,
           namingInProgress: namingInProgress,
+          micOn: micOn,
           showTinySpinner:
               trialIsLoading && (namingBlockActive || _namingTransition),
           liveTranscript: _liveTranscript,
@@ -3097,15 +3219,33 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return _wrapWithKeyboardShortcuts(
       Scaffold(
         bottomNavigationBar: namingInProgress
-            ? SizedBox(
-                height: 48,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12.0, vertical: 8.0),
+            ? SafeArea(
+                top: false,
+                minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF3F6),
+                    borderRadius: BorderRadius.circular(14),
+                    border:
+                        Border.all(color: const Color(0xFFBEC8CF), width: 1.4),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x22000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
                   child: MicProgressBar(
-                      animation: micAnimation,
-                      micStage: micStage,
-                      micOn: micOn),
+                    animation: micAnimation,
+                    micStage: micStage,
+                    micOn: micOn,
+                    firstWindowSeconds: namingProgressFirstRatio,
+                    repeatWindowSeconds: namingProgressRepeatRatio,
+                    hintWindowSeconds: namingProgressHintRatio,
+                  ),
                 ),
               )
             : null,

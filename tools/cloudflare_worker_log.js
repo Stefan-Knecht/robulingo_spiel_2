@@ -13,6 +13,15 @@ export default {
       if (path.endsWith('/hints')) {
         return await handleHints(request, env);
       }
+      if (path.endsWith('/android-release/latest')) {
+        return await handleAndroidReleaseLatest(request, env);
+      }
+      if (path.endsWith('/android-release/download')) {
+        return await handleAndroidReleaseDownload(request, env);
+      }
+      if (path.endsWith('/android-release/download-stats')) {
+        return await handleAndroidReleaseDownloadStats(request, env);
+      }
       if (path.endsWith('/start-curriculum')) {
         return await handleStartCurriculum(request, env);
       }
@@ -112,6 +121,289 @@ async function handleHints(request, env) {
     return new Response(null, { status: 200, headers });
   }
   return new Response(obj.body, { status: 200, headers });
+}
+
+// ---------- /android-release/* ----------
+const APK_RELEASE_PREFIX_DAILYWORDS = 'releases/android/dailywords';
+const APK_RELEASE_LATEST_KEY_DAILYWORDS = `${APK_RELEASE_PREFIX_DAILYWORDS}/latest.json`;
+const APK_DOWNLOAD_EVENTS_PREFIX = 'system/apk_downloads';
+const DEFAULT_DAILYWORDS_APK_MANIFEST_URL =
+  'https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/dailywords/latest.json';
+
+async function handleAndroidReleaseLatest(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const flavor = resolveAndroidReleaseFlavor(request);
+  if (!flavor) {
+    return jsonResponse({ error: 'unsupported flavor' }, 400);
+  }
+  const manifest = await loadAndroidReleaseManifest(request, env, flavor);
+  if (!manifest || !manifest.apkUrl) {
+    return jsonResponse({ error: 'release manifest not found or missing apk_url' }, 404);
+  }
+  const payload = {
+    flavor,
+    version: manifest.version,
+    version_name: manifest.versionName,
+    version_code: manifest.versionCode,
+    uploaded_at_utc: manifest.uploadedAtUtc,
+    apk_file: manifest.apkFile,
+    sha256: manifest.sha256,
+    size_bytes: manifest.sizeBytes,
+    apk_url: manifest.apkUrl,
+    tracked_download_url: buildAndroidReleaseDownloadUrl(request, flavor, 'update_check'),
+    download_url: buildAndroidReleaseDownloadUrl(request, flavor, 'update_check'),
+  };
+  if (request.method === 'HEAD') {
+    return new Response(null, {
+      status: 200,
+      headers: { ...CORS_HEADERS, 'content-type': 'application/json', 'cache-control': 'no-store' },
+    });
+  }
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { ...CORS_HEADERS, 'content-type': 'application/json', 'cache-control': 'no-store' },
+  });
+}
+
+async function handleAndroidReleaseDownload(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const flavor = resolveAndroidReleaseFlavor(request);
+  if (!flavor) {
+    return new Response('unsupported flavor', { status: 400, headers: CORS_HEADERS });
+  }
+  const manifest = await loadAndroidReleaseManifest(request, env, flavor);
+  if (!manifest || !manifest.apkUrl) {
+    return new Response('release not found', { status: 404, headers: CORS_HEADERS });
+  }
+  if (request.method === 'GET') {
+    const source = cleanOptionalString(new URL(request.url).searchParams.get('source'), 64) || 'unknown';
+    const bucket = resolveSupervisorDashboardBucket(env);
+    if (bucket) {
+      try {
+        await writeAndroidReleaseDownloadEvent(bucket, request, flavor, source, manifest);
+      } catch (err) {
+        console.log('[apk-download][track-error]', err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  return new Response(null, {
+    status: 302,
+    headers: {
+      ...CORS_HEADERS,
+      location: manifest.apkUrl,
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+async function handleAndroidReleaseDownloadStats(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const flavor = resolveAndroidReleaseFlavor(request);
+  if (!flavor) {
+    return jsonResponse({ error: 'unsupported flavor' }, 400);
+  }
+  const bucket = resolveSupervisorDashboardBucket(env);
+  if (!bucket) {
+    return jsonResponse({ error: 'missing storage binding' }, 500);
+  }
+  const url = new URL(request.url);
+  const now = new Date();
+  const today = dateKey(now);
+  const toRaw = cleanOptionalString(url.searchParams.get('to'), 32) || today;
+  const fromRaw = cleanOptionalString(url.searchParams.get('from'), 32) || toRaw;
+  const fromDate = parseDateKey(fromRaw);
+  const toDate = parseDateKey(toRaw);
+  if (!fromDate || !toDate || fromDate > toDate) {
+    return jsonResponse({ error: 'invalid from/to date range' }, 400);
+  }
+  const diffDays = Math.floor((toDate.getTime() - fromDate.getTime()) / 86400000);
+  if (diffDays > 366) {
+    return jsonResponse({ error: 'max range is 366 days' }, 400);
+  }
+  const days = [];
+  let total = 0;
+  const cursor = new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate()));
+  const end = new Date(Date.UTC(toDate.getUTCFullYear(), toDate.getUTCMonth(), toDate.getUTCDate()));
+  while (cursor <= end) {
+    const day = dateKey(cursor);
+    const prefix = `${APK_DOWNLOAD_EVENTS_PREFIX}/${flavor}/events/${day}/`;
+    const count = await countObjectsWithPrefix(bucket, prefix);
+    days.push({ date: day, count });
+    total += count;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  const payload = {
+    flavor,
+    from: fromRaw,
+    to: toRaw,
+    total,
+    days,
+    generated_at_utc: new Date().toISOString(),
+  };
+  if (request.method === 'HEAD') {
+    return new Response(null, {
+      status: 200,
+      headers: { ...CORS_HEADERS, 'content-type': 'application/json', 'cache-control': 'no-store' },
+    });
+  }
+  return jsonResponse(payload, 200);
+}
+
+function resolveAndroidReleaseFlavor(request) {
+  const url = new URL(request.url);
+  const requested =
+    cleanOptionalString(url.searchParams.get('flavor'), 32) ||
+    cleanOptionalString(url.searchParams.get('app_flavor'), 32) ||
+    cleanOptionalString(request.headers.get('x-app-flavor'), 32) ||
+    APP_FLAVOR_DAILYWORDS;
+  const normalized = requested.toLowerCase();
+  if (normalized !== APP_FLAVOR_DAILYWORDS) return null;
+  return normalized;
+}
+
+function resolveAndroidReleaseLatestKey(flavor) {
+  if (flavor === APP_FLAVOR_DAILYWORDS) {
+    return APK_RELEASE_LATEST_KEY_DAILYWORDS;
+  }
+  return null;
+}
+
+async function loadAndroidReleaseManifest(request, env, flavor) {
+  const key = resolveAndroidReleaseLatestKey(flavor);
+  if (!key) return null;
+  const bucket = env.DAILYWORDSAPK;
+  let raw = null;
+  if (bucket) {
+    const obj = await bucket.get(key);
+    if (obj) {
+      try {
+        raw = await obj.json();
+      } catch (_) {
+        raw = null;
+      }
+    }
+  }
+  if (!raw) {
+    const manifestUrl = cleanOptionalString(env.DAILYWORDS_APK_MANIFEST_URL, 2048) || DEFAULT_DAILYWORDS_APK_MANIFEST_URL;
+    try {
+      const res = await fetch(manifestUrl, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      });
+      if (res.ok) {
+        raw = await res.json();
+      }
+    } catch (_) {
+      raw = null;
+    }
+  }
+  if (!raw) {
+    return null;
+  }
+  const baseUrl = cleanOptionalString(env.DAILYWORDS_APK_PUBLIC_BASE_URL, 1024) || null;
+  return normalizeAndroidReleaseManifest(raw, baseUrl);
+}
+
+function normalizeAndroidReleaseManifest(raw, publicBaseUrl = null) {
+  if (!raw || typeof raw !== 'object') return null;
+  const version = cleanOptionalString(raw.version, 64);
+  const versionName = cleanOptionalString(raw.version_name, 64) || version;
+  const versionCodeRaw = raw.version_code;
+  let versionCode = Number(versionCodeRaw);
+  if (!Number.isFinite(versionCode)) versionCode = 0;
+  versionCode = Math.max(0, Math.floor(versionCode));
+  const uploadedAtUtc = cleanOptionalString(raw.uploaded_at_utc, 64);
+  const apkFile = cleanOptionalString(raw.apk_file, 256);
+  const sha256 = cleanOptionalString(raw.sha256, 128);
+  const r2Key = cleanOptionalString(raw.r2_key, 1024);
+  const apkUrlRaw = cleanOptionalString(raw.apk_url, 2048);
+  let apkUrl = apkUrlRaw;
+  if (!apkUrl && publicBaseUrl && r2Key) {
+    const base = publicBaseUrl.replace(/\/+$/, '');
+    const path = r2Key.replace(/^\/+/, '');
+    apkUrl = `${base}/${path}`;
+  }
+  const sizeRaw = Number(raw.size_bytes);
+  const sizeBytes = Number.isFinite(sizeRaw) ? Math.max(0, Math.floor(sizeRaw)) : null;
+  return {
+    version,
+    versionName,
+    versionCode: versionCode > 0 ? versionCode : null,
+    uploadedAtUtc,
+    apkFile,
+    sha256,
+    sizeBytes,
+    r2Key,
+    apkUrl,
+  };
+}
+
+function buildAndroidReleaseDownloadUrl(request, flavor, source = 'update_check') {
+  const current = new URL(request.url);
+  const next = new URL(request.url);
+  next.pathname = current.pathname.replace(/\/android-release\/latest$/, '/android-release/download');
+  next.search = '';
+  next.searchParams.set('flavor', flavor);
+  if (source) next.searchParams.set('source', source);
+  return next.toString();
+}
+
+async function writeAndroidReleaseDownloadEvent(bucket, request, flavor, source, manifest) {
+  const now = new Date();
+  const day = dateKey(now);
+  const eventId = `${now.toISOString().replace(/[:.]/g, '')}-${randomHex(4)}`;
+  const key = `${APK_DOWNLOAD_EVENTS_PREFIX}/${flavor}/events/${day}/${eventId}.json`;
+  const cf = request.cf || {};
+  const ipRaw = cleanOptionalString(request.headers.get('cf-connecting-ip'), 64);
+  const referer = cleanOptionalString(request.headers.get('referer'), 1024);
+  const userAgent = cleanOptionalString(request.headers.get('user-agent'), 512);
+  const payload = {
+    ts: now.toISOString(),
+    flavor,
+    source: cleanOptionalString(source, 64) || 'unknown',
+    apk_file: manifest.apkFile || null,
+    version_name: manifest.versionName || null,
+    version_code: manifest.versionCode ?? null,
+    referer: referer || null,
+    user_agent: userAgent || null,
+    country: cleanCountryCode(cf.country) || null,
+    region_code: cleanOptionalString(cf.regionCode, 32) || null,
+    colo: cleanOptionalString(cf.colo, 32) || null,
+    ip_hash: ipRaw ? await sha256Hex(ipRaw) : null,
+  };
+  await putJsonObject(bucket, key, payload);
+}
+
+function randomHex(bytes = 4) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return Array.from(arr)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function countObjectsWithPrefix(bucket, prefix) {
+  let total = 0;
+  let cursor = undefined;
+  for (;;) {
+    const list = await bucket.list({
+      prefix,
+      cursor,
+      limit: 1000,
+    });
+    const chunk = Array.isArray(list?.objects) ? list.objects.length : 0;
+    total += chunk;
+    if (!list?.truncated) break;
+    cursor = list.cursor;
+    if (!cursor) break;
+  }
+  return total;
 }
 
 // ---------- /start-curriculum ----------
@@ -816,7 +1108,11 @@ async function handleDashboardInfo(request, env) {
       queuePollingMs: 15000,
       queueAckEndpoint: '/api/emoji-queue-ack',
       queueReadEndpoint: '/api/emoji-queue?status=pending&limit=50',
-      dataContractVersion: 2,
+      apkLatestEndpoint: '/api/android-release/latest?flavor=dailywords',
+      apkDownloadEndpoint: '/api/android-release/download?flavor=dailywords&source=dashboard',
+      apkDownloadStatsEndpoint:
+        '/api/android-release/download-stats?flavor=dailywords&from=YYYY-MM-DD&to=YYYY-MM-DD',
+      dataContractVersion: 3,
     },
   });
 }

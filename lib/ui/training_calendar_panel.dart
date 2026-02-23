@@ -4,12 +4,14 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'paper_month_calendar.dart';
 import 'paper_week_calendar.dart';
 import '../constants.dart';
 import '../data/user_log_service.dart';
 import '../data/user_summary_service.dart';
+import '../flavor_config.dart';
 import '../logic/log_storage.dart';
 
 // Kalender-Widget: liest lokale Logs und zeigt 4 Wochen pro Seite.
@@ -54,6 +56,8 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
       TrainingCalendarData.empty(thresholdSeconds: 5 * 60);
   Timer? _refreshTimer;
   bool _loading = false;
+  int _currentPage = _pageAnchor;
+  DateTime? _selectedDayKeyUtc;
 
   @override
   void initState() {
@@ -129,6 +133,61 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
     return -1;
   }
 
+  List<DayStatus> _daysForPage({
+    required int page,
+    required DateTime nowUtc,
+  }) {
+    final currentWeek = TrainingCalendarData.weekStartFor(nowUtc);
+    final baseWeek = currentWeek.subtract(const Duration(days: 7 * 2));
+    final offset = page - _pageAnchor;
+    final weekStart = baseWeek.add(Duration(days: offset * _daysPerPage));
+    return _data.buildWeeks(
+      weekStart,
+      weekCount: _weeksPerPage,
+      nowUtc: nowUtc,
+    );
+  }
+
+  DayStatus? _resolveSelectedDay(List<DayStatus> visibleDays, DateTime nowUtc) {
+    final key = _selectedDayKeyUtc;
+    if (key != null) {
+      for (final day in visibleDays) {
+        if (TrainingCalendarData.dayKey(day.date.toUtc()) == key) {
+          return day;
+        }
+      }
+    }
+    final todayIndex = _todayIndexFromDays(nowUtc, visibleDays);
+    if (todayIndex >= 0 && todayIndex < visibleDays.length) {
+      return visibleDays[todayIndex];
+    }
+    return visibleDays.isNotEmpty ? visibleDays.last : null;
+  }
+
+  String _rangeLabel(BuildContext context, List<DayStatus> days) {
+    if (days.isEmpty) return '';
+    final localizations = MaterialLocalizations.of(context);
+    final start = localizations.formatShortDate(days.first.date.toLocal());
+    final end = localizations.formatShortDate(days.last.date.toLocal());
+    return '$start - $end';
+  }
+
+  String _selectedDayLabel(BuildContext context, DayStatus day) {
+    final localizations = MaterialLocalizations.of(context);
+    final dayKey = TrainingCalendarData.dayKey(day.date.toUtc());
+    final runs = _data.runsByDay[dayKey] ?? 0;
+    final minutes = (day.activeSeconds / 60).floor();
+    final dateText = localizations.formatMediumDate(day.date.toLocal());
+    final minText = localizations.formatDecimal(minutes);
+    final runText = localizations.formatDecimal(runs);
+    return '$dateText • $minText min • $runText runs';
+  }
+
+  Future<void> _openDailyWordsProject() async {
+    final uri = Uri.parse(activeFlavor.dashboardLandingUrl);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   PaperStyle _styleForDate(DateTime date) {
     const tints = [
       Color(0xFFF4EFE6),
@@ -162,52 +221,111 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now().toUtc();
-    final currentWeek = TrainingCalendarData.weekStartFor(now);
-    final baseWeek = currentWeek.subtract(const Duration(days: 7 * 2));
+    final visibleDays = _daysForPage(page: _currentPage, nowUtc: now);
+    final selectedDay = _resolveSelectedDay(visibleDays, now);
+    final rangeLabel = _rangeLabel(context, visibleDays);
+    final selectedLabel =
+        selectedDay == null ? '' : _selectedDayLabel(context, selectedDay);
+    final headlineLabel = selectedLabel.isNotEmpty ? selectedLabel : rangeLabel;
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        return Stack(
-          clipBehavior: Clip.none,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            PageView.builder(
-              controller: _pageController,
-              itemBuilder: (context, index) {
-                final offset = index - _pageAnchor;
-                final weekStart =
-                    baseWeek.add(Duration(days: offset * _daysPerPage));
-                final days = _data.buildWeeks(
-                  weekStart,
-                  weekCount: _weeksPerPage,
-                  nowUtc: now,
-                );
-                final todayIndex = _todayIndexFromDays(now, days);
-                final style = _styleForDate(
-                  weekStart.add(const Duration(days: 14)),
-                );
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12.0, vertical: 6.0),
-                    child: PaperMonthCalendar(
-                      days: days,
-                      todayIndex: todayIndex,
-                      animateMarks: true,
-                      paperStyle: style,
-                      thresholdSeconds: _data.thresholdSeconds,
+            if (headlineLabel.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 2),
+                child: Text(
+                  headlineLabel,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF2F4B56),
+                      ),
+                ),
+              ),
+            Expanded(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  PageView.builder(
+                    controller: _pageController,
+                    onPageChanged: (index) {
+                      if (!mounted) return;
+                      setState(() {
+                        _currentPage = index;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final days = _daysForPage(page: index, nowUtc: now);
+                      final todayIndex = _todayIndexFromDays(now, days);
+                      final style = _styleForDate(
+                        days[14].date,
+                      );
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0, vertical: 6.0),
+                          child: PaperMonthCalendar(
+                            days: days,
+                            todayIndex: todayIndex,
+                            animateMarks: true,
+                            onTapDay: (dayIndex) {
+                              if (dayIndex < 0 || dayIndex >= days.length) {
+                                return;
+                              }
+                              setState(() {
+                                _selectedDayKeyUtc =
+                                    TrainingCalendarData.dayKey(
+                                  days[dayIndex].date.toUtc(),
+                                );
+                              });
+                            },
+                            paperStyle: style,
+                            thresholdSeconds: _data.thresholdSeconds,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  Positioned(
+                    right: 4,
+                    bottom: 4,
+                    child: IgnorePointer(
+                      child: Image.asset(
+                        'assets/icons/writing_hand.png',
+                        width: max(110.0, constraints.maxWidth * 0.3),
+                        fit: BoxFit.contain,
+                      ),
                     ),
                   ),
-                );
-              },
+                ],
+              ),
             ),
-            Positioned(
-              right: 4,
-              bottom: 4,
-              child: IgnorePointer(
-                child: Image.asset(
-                  'assets/icons/writing_hand.png',
-                  width: max(110.0, constraints.maxWidth * 0.3),
-                  fit: BoxFit.contain,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+              child: Center(
+                child: TextButton(
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: _openDailyWordsProject,
+                  child: Text(
+                    'DailyWord-project.org',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.blue.shade700,
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.underline,
+                        ),
+                  ),
                 ),
               ),
             ),
@@ -566,7 +684,6 @@ class TrainingCalendarData {
         qualifiedCount += 1;
         continue;
       }
-      final activeSeconds = activeSecondsByDay[key] ?? 0;
       if (_isQualified(key)) {
         qualifiedCount += 1;
       }

@@ -61,7 +61,8 @@ class _PaperMonthCalendarBody extends StatefulWidget {
   final Color? todayIncompleteColor;
 
   @override
-  State<_PaperMonthCalendarBody> createState() => _PaperMonthCalendarBodyState();
+  State<_PaperMonthCalendarBody> createState() =>
+      _PaperMonthCalendarBodyState();
 }
 
 class _PaperMonthCalendarBodyState extends State<_PaperMonthCalendarBody>
@@ -187,6 +188,11 @@ class _PaperMonthCalendarBodyState extends State<_PaperMonthCalendarBody>
                   ),
                 ),
                 Positioned.fill(
+                  child: IgnorePointer(
+                    child: _MonthDateOverlay(days: widget.days),
+                  ),
+                ),
+                Positioned.fill(
                   child: _MonthSemanticsOverlay(
                     days: widget.days,
                     onTapDay: widget.onTapDay,
@@ -197,6 +203,51 @@ class _PaperMonthCalendarBodyState extends State<_PaperMonthCalendarBody>
           );
         },
       ),
+    );
+  }
+}
+
+class _MonthDateOverlay extends StatelessWidget {
+  const _MonthDateOverlay({
+    required this.days,
+  });
+
+  final List<DayStatus> days;
+
+  @override
+  Widget build(BuildContext context) {
+    final localizations = MaterialLocalizations.of(context);
+    final textStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: const Color(0xAA2C3A42),
+        );
+    return Column(
+      children: List.generate(4, (row) {
+        return Expanded(
+          child: Row(
+            children: List.generate(7, (col) {
+              final index = row * 7 + col;
+              final date = days[index].date.toLocal();
+              final dayLabel = localizations.formatDecimal(date.day);
+              return Expanded(
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 7, top: 5),
+                    child: Text(
+                      dayLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.fade,
+                      style: textStyle,
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        );
+      }),
     );
   }
 }
@@ -212,6 +263,7 @@ class _MonthSemanticsOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final localizations = MaterialLocalizations.of(context);
     return Column(
       children: List.generate(4, (row) {
         return Expanded(
@@ -219,13 +271,16 @@ class _MonthSemanticsOverlay extends StatelessWidget {
             children: List.generate(7, (col) {
               final index = row * 7 + col;
               final status = days[index];
+              final dateLabel = localizations.formatFullDate(
+                status.date.toLocal(),
+              );
               final label = status.qualified
                   ? (status.rivalQualified
-                      ? "Day ${index + 1} of 28, completed, rival trained"
-                      : "Day ${index + 1} of 28, completed")
+                      ? "$dateLabel, completed, rival trained"
+                      : "$dateLabel, completed")
                   : (status.rivalQualified
-                      ? "Day ${index + 1} of 28, rival trained"
-                      : "Day ${index + 1} of 28, not completed");
+                      ? "$dateLabel, rival trained"
+                      : "$dateLabel, not completed");
               return Expanded(
                 child: Semantics(
                   button: onTapDay != null,
@@ -261,7 +316,8 @@ class PaperMonthCalendarPainter extends CustomPainter {
     final drawBackground = paperStyle.paperColor.a > 0;
     if (drawBackground) {
       final shadowPath = Path()..addRRect(cardRRect);
-      canvas.drawShadow(shadowPath, Colors.black.withOpacityValue(0.15), 8, true);
+      canvas.drawShadow(
+          shadowPath, Colors.black.withOpacityValue(0.15), 8, true);
       canvas.drawRRect(cardRRect, Paint()..color = paperStyle.paperColor);
     }
 
@@ -276,12 +332,10 @@ class PaperMonthCalendarPainter extends CustomPainter {
 
   void _drawNoise(Canvas canvas, Size size) {
     final rng = Random(seedBase);
-    final count = ((size.width * size.height) / 2600)
-        .round()
-        .clamp(40, 220)
-        .toInt();
-    final paint =
-        Paint()..color = Colors.black.withOpacityValue(paperStyle.noiseOpacity);
+    final count =
+        ((size.width * size.height) / 2600).round().clamp(40, 220).toInt();
+    final paint = Paint()
+      ..color = Colors.black.withOpacityValue(paperStyle.noiseOpacity);
     for (int i = 0; i < count; i++) {
       final dx = rng.nextDouble() * size.width;
       final dy = rng.nextDouble() * size.height;
@@ -298,7 +352,8 @@ class PaperMonthCalendarPainter extends CustomPainter {
     for (int i = 0; i < holes; i++) {
       final x = layout.gridRect.left + spacing * (i + 1);
       final shadowPaint = Paint()..color = paperStyle.ringShadowColor;
-      canvas.drawCircle(Offset(x, y + 1.2), paperStyle.ringHoleRadius + 0.6, shadowPaint);
+      canvas.drawCircle(
+          Offset(x, y + 1.2), paperStyle.ringHoleRadius + 0.6, shadowPaint);
       final holePaint = Paint()..color = paperStyle.ringHoleColor;
       canvas.drawCircle(Offset(x, y), paperStyle.ringHoleRadius, holePaint);
     }
@@ -331,10 +386,14 @@ class PaperMonthCalendarPainter extends CustomPainter {
       final br = cell.bottomRight;
       final bl = cell.bottomLeft;
       final paths = [
-        jitteredLinePath(tl, tr, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
-        jitteredLinePath(tr, br, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
-        jitteredLinePath(br, bl, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
-        jitteredLinePath(bl, tl, seedBase + lineIndex++, jitter: paperStyle.lineJitter),
+        jitteredLinePath(tl, tr, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
+        jitteredLinePath(tr, br, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
+        jitteredLinePath(br, bl, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
+        jitteredLinePath(bl, tl, seedBase + lineIndex++,
+            jitter: paperStyle.lineJitter),
       ];
       for (final path in paths) {
         canvas.drawPath(path, jitterPaint);
@@ -344,7 +403,8 @@ class PaperMonthCalendarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant PaperMonthCalendarPainter oldDelegate) {
-    return oldDelegate.paperStyle != paperStyle || oldDelegate.seedBase != seedBase;
+    return oldDelegate.paperStyle != paperStyle ||
+        oldDelegate.seedBase != seedBase;
   }
 }
 
@@ -376,9 +436,8 @@ class MonthMarksPainter extends CustomPainter {
     );
     for (int i = 0; i < layout.cells.length; i++) {
       final cell = layout.cells[i];
-      final isToday = localMatchIndex != -1
-          ? i == localMatchIndex
-          : i == todayIndex;
+      final isToday =
+          localMatchIndex != -1 ? i == localMatchIndex : i == todayIndex;
       Color? todayBadgeColor;
       if (isToday) {
         final activeSeconds = days[i].activeSeconds;
@@ -475,7 +534,8 @@ class MonthMarksPainter extends CustomPainter {
     final width = cell.width * 0.22;
     final height = cell.height * 0.22;
     final center = Offset(cell.center.dx, cell.top + height * 0.6);
-    final outerRect = Rect.fromCenter(center: center, width: width, height: height);
+    final outerRect =
+        Rect.fromCenter(center: center, width: width, height: height);
     final innerRect = outerRect
         .deflate(width * 0.18)
         .shift(Offset(width * 0.08, height * 0.08));

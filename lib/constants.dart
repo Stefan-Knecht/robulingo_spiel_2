@@ -42,16 +42,24 @@ const List<String> langChoices = [
   'tr',
   'ja',
 ];
-const int batchSize = 12; // Wie viele Items wir in einem Rutsch vom Worker holen
-const double prefetchThreshold = 0.6; // sobald Rest kleiner als 60% des Fensters ist, laden wir nach
-const int prefetchWindowSize = 12; // Größe des Fensters, auf das sich das Verhältnis bezieht
-const int minTrials = 10; // Mindestens so viele Übungsrunden wollen wir initial haben
-const int initialItemDownloadLimit = minTrials; // Items, deren Assets wir sofort laden (Rest per Refresh)
+const int batchSize =
+    12; // Wie viele Items wir in einem Rutsch vom Worker holen
+const double prefetchThreshold =
+    0.6; // sobald Rest kleiner als 60% des Fensters ist, laden wir nach
+const int prefetchWindowSize =
+    12; // Größe des Fensters, auf das sich das Verhältnis bezieht
+const int minTrials =
+    10; // Mindestens so viele Übungsrunden wollen wir initial haben
+const int initialItemDownloadLimit =
+    minTrials; // Items, deren Assets wir sofort laden (Rest per Refresh)
 const int seedCount = 0; // Anzahl Seed-Items (aus start_curriculum_a.json)
-const int reviewInterval = 10; // nach jeweils ~10 Trials eine Wiederholung aus der Vergangenheit
-const bool dashboardOnlyAfterSession = true; // bei true erst nach Session-Ende freischalten
+const int reviewInterval =
+    10; // nach jeweils ~10 Trials eine Wiederholung aus der Vergangenheit
+const bool dashboardOnlyAfterSession =
+    true; // bei true erst nach Session-Ende freischalten
 const int trackLength = 12;
-const int startCurriculumWindowSize = 10; // wie viele Items aus dem Start-Curriculum initial geladen werden
+const int startCurriculumWindowSize =
+    10; // wie viele Items aus dem Start-Curriculum initial geladen werden
 
 const Map<String, String> langFlags = {
   'de': '🇩🇪',
@@ -71,7 +79,7 @@ const Map<String, String> langFlags = {
 const Map<String, String> speechLocaleOverrides = {
   'de': 'de-DE',
   'en': 'en-US',
-  'ar': 'ar-AR',
+  'ar': 'ar-SA',
   'fr': 'fr-FR',
   'es': 'es-ES',
   'it': 'it-IT',

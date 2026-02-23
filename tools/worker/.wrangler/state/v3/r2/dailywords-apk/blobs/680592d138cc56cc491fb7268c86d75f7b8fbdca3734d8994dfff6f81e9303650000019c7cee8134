@@ -1,0 +1,11 @@
+{
+  "flavor": "dailywords",
+  "uploaded_at_utc": "2026-02-20T21:22:08Z",
+  "apk_file": "dailywords-latest.apk",
+  "r2_key": "releases/android/dailywords/dailywords-latest.apk",
+  "sha256": "51a511a694d6acb31e29142a921af00e593161b2455a8cef80c2a6501b0fca3f",
+  "size_bytes": 84883417,
+  "apk_url": "https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/dailywords/dailywords-latest.apk",
+  "sha256_url": "https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/dailywords/dailywords-latest.apk.sha256",
+  "metadata_url": "https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/dailywords/dailywords-latest.json"
+}

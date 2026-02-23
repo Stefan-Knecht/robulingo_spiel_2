@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:robulingo_flutter/utils/platform_info.dart';
+
 enum NamingPhase {
   idle,
   listeningFirst,
@@ -64,6 +65,28 @@ class MicInitResult {
   final bool isSpeechPermanentlyDenied;
 }
 
+class AsrProbeResult {
+  AsrProbeResult({
+    required this.transcript,
+    required this.recognizedWords,
+    required this.confidence,
+    required this.finalResult,
+    required this.gotResultEvent,
+    required this.gotSoundLevel,
+    required this.maxSoundLevel,
+    required this.localeUsed,
+  });
+
+  final String transcript;
+  final String recognizedWords;
+  final double confidence;
+  final bool finalResult;
+  final bool gotResultEvent;
+  final bool gotSoundLevel;
+  final double maxSoundLevel;
+  final String localeUsed;
+}
+
 /// Encapsulates the async mic/naming flow so it can be guarded with tokens and
 /// reused without duplicating cancellation logic in the widget.
 class NamingController {
@@ -83,11 +106,19 @@ class NamingController {
   String _lastRecognizedWords = '';
   double _lastConfidence = -1;
   bool _lastFinalResult = false;
+  bool _lastListenGotResultEvent = false;
+  bool _lastListenGotSoundLevel = false;
+  double _lastListenMaxSoundLevel = -120;
+  String _lastListenLocale = '-';
 
   String get liveTranscript => _liveTranscript;
   String get lastRecognizedWords => _lastRecognizedWords;
   double get lastConfidence => _lastConfidence;
   bool get lastFinalResult => _lastFinalResult;
+  bool get lastListenGotResultEvent => _lastListenGotResultEvent;
+  bool get lastListenGotSoundLevel => _lastListenGotSoundLevel;
+  double get lastListenMaxSoundLevel => _lastListenMaxSoundLevel;
+  String get lastListenLocale => _lastListenLocale;
 
   /// Increment the flow token to invalidate any pending async work.
   void cancel() {
@@ -135,6 +166,12 @@ class NamingController {
             if (onStatus != null) onStatus!(s);
           },
           onError: (e) => _handleInitializeError(e),
+          finalTimeout: const Duration(seconds: 4),
+          options: <stt.SpeechConfigOption>[
+            stt.SpeechToText.androidIntentLookup,
+            stt.SpeechToText.androidAlwaysUseStop,
+            stt.SpeechToText.androidNoBluetooth,
+          ],
         );
         final hasSpeechPerm = await speech.hasPermission;
         _log(
@@ -192,6 +229,49 @@ class NamingController {
     return res.ready;
   }
 
+  Future<AsrProbeResult> runAsrProbe({
+    Duration duration = const Duration(seconds: 4),
+    required bool Function() isCurrent,
+    void Function(String transcript)? onTranscript,
+    String? localeId,
+  }) async {
+    _flowToken++;
+    _sessionId++;
+    final int localFlow = _flowToken;
+    final int sessionId = _sessionId;
+
+    final transcript = await _listenForDuration(
+      duration,
+      localFlow,
+      sessionId,
+      isCurrent,
+      onTranscript ?? (_) {},
+      localeId,
+    );
+    if (!_isValid(localFlow, sessionId, isCurrent)) {
+      return AsrProbeResult(
+        transcript: '',
+        recognizedWords: '',
+        confidence: -1,
+        finalResult: false,
+        gotResultEvent: false,
+        gotSoundLevel: false,
+        maxSoundLevel: -120,
+        localeUsed: localeId ?? '-',
+      );
+    }
+    return AsrProbeResult(
+      transcript: transcript,
+      recognizedWords: _lastRecognizedWords,
+      confidence: _lastConfidence,
+      finalResult: _lastFinalResult,
+      gotResultEvent: _lastListenGotResultEvent,
+      gotSoundLevel: _lastListenGotSoundLevel,
+      maxSoundLevel: _lastListenMaxSoundLevel,
+      localeUsed: _lastListenLocale,
+    );
+  }
+
   Future<NamingFlowOutcome?> runFlow({
     required int trialToken,
     required String targetText,
@@ -200,8 +280,8 @@ class NamingController {
     required Future<void> Function() playHint,
     required void Function(NamingPhase phase) onPhase,
     required void Function(String transcript) onTranscript,
-    Duration firstWindow = const Duration(seconds: 5),
-    Duration repeatWindow = const Duration(seconds: 5),
+    Duration firstWindow = const Duration(seconds: 4),
+    Duration repeatWindow = const Duration(seconds: 3),
     bool allowRepeat = true,
     String? localeId,
   }) async {
@@ -330,6 +410,10 @@ class NamingController {
     _lastRecognizedWords = '';
     _lastConfidence = -1;
     _lastFinalResult = false;
+    _lastListenGotResultEvent = false;
+    _lastListenGotSoundLevel = false;
+    _lastListenMaxSoundLevel = -120;
+    _lastListenLocale = localeId ?? '-';
     try {
       await speech.stop();
     } catch (_) {}
@@ -341,27 +425,52 @@ class NamingController {
     bool gotResultEvent = false;
     bool gotSoundLevel = false;
     double maxSoundLevel = -120;
+    final bool isAndroid = operatingSystem == 'android';
+    final Duration phaseBudget = isAndroid
+        ? duration + const Duration(seconds: 4)
+        : duration + const Duration(seconds: 1);
+    final budgetWatch = Stopwatch()..start();
     _log(
         '[naming][listen] locale=${localeId ?? "-"} dur=${duration.inSeconds}s flow=$flowToken session=$sessionId');
-    Future<void> startListen(String? useLocale) async {
-      const listenMode =
-          kIsWeb ? stt.ListenMode.confirmation : stt.ListenMode.dictation;
-      final bool isAndroid = operatingSystem == 'android';
+    String? baseLocaleCandidate(String? rawLocale) {
+      final raw = rawLocale?.trim() ?? '';
+      if (raw.isEmpty) return null;
+      final parts = raw.split(RegExp(r'[-_]'));
+      if (parts.isEmpty) return null;
+      final base = parts.first.trim().toLowerCase();
+      if (base.isEmpty) return null;
+      if (base == raw.toLowerCase()) return null;
+      return base;
+    }
+
+    Duration remainingBudget() {
+      final left = phaseBudget - budgetWatch.elapsed;
+      return left.isNegative ? Duration.zero : left;
+    }
+
+    Future<void> startListen(
+      String? useLocale, {
+      required stt.ListenMode mode,
+      required bool onDevice,
+      required bool partialResults,
+    }) async {
+      _lastListenLocale = useLocale ?? '-';
       final Duration? listenFor = kIsWeb
           ? null
-          : (isAndroid ? duration + const Duration(seconds: 2) : duration);
+          : (isAndroid ? duration + const Duration(seconds: 3) : duration);
       final Duration? pauseFor = kIsWeb
           ? null
           : (isAndroid
-              ? const Duration(milliseconds: 1500)
+              ? const Duration(milliseconds: 2400)
               : const Duration(milliseconds: 800));
       await speech.listen(
         listenFor: listenFor,
         pauseFor: pauseFor,
         listenOptions: stt.SpeechListenOptions(
-          listenMode: listenMode,
-          partialResults: true,
-          cancelOnError: !kIsWeb,
+          listenMode: mode,
+          onDevice: onDevice,
+          partialResults: partialResults,
+          cancelOnError: false,
         ),
         localeId: useLocale,
         onSoundLevelChange: (level) {
@@ -385,28 +494,172 @@ class NamingController {
       );
     }
 
-    try {
-      await startListen(localeId);
-    } catch (e) {
-      // If the localeId is unsupported on this platform/engine, retry without it.
-      if (localeId != null && localeId.trim().isNotEmpty) {
-        _log('[naming][listen-retry] locale="$localeId" err=$e -> retry with locale="-"');
-        try {
-          await startListen(null);
-        } catch (e2) {
-          _log('[naming][listen-error] err=$e2');
-          onError?.call('listen-ex');
-          return '';
-        }
-      } else {
-        _log('[naming][listen-error] err=$e');
-        onError?.call('listen-ex');
-        return '';
+    Future<void> waitForResult(Duration timeout) async {
+      final left = remainingBudget();
+      if (left <= Duration.zero) return;
+      final effectiveTimeout = timeout <= left ? timeout : left;
+      await Future.any([completer.future, Future.delayed(effectiveTimeout)]);
+      await _stopListening();
+    }
+
+    final stt.ListenMode primaryMode = (kIsWeb || isAndroid)
+        ? stt.ListenMode.confirmation
+        : stt.ListenMode.dictation;
+    final stt.ListenMode alternateMode = primaryMode == stt.ListenMode.dictation
+        ? stt.ListenMode.confirmation
+        : stt.ListenMode.dictation;
+
+    String normalizeLocale(String raw) =>
+        raw.trim().toLowerCase().replaceAll('_', '-');
+
+    List<String> preferredLocaleVariants(String base) {
+      switch (base) {
+        case 'de':
+          return const ['de-DE', 'de-AT', 'de-CH', 'de'];
+        case 'es':
+          return const ['es-ES', 'es-MX', 'es-US', 'es-419', 'es'];
+        case 'fr':
+          return const ['fr-FR', 'fr-CA', 'fr-CH', 'fr'];
+        case 'it':
+          return const ['it-IT', 'it-CH', 'it'];
+        case 'en':
+          return const ['en-US', 'en-GB', 'en'];
+        case 'pt':
+          return const ['pt-PT', 'pt-BR', 'pt'];
+        case 'zh':
+          return const ['zh-CN', 'zh-TW', 'zh-HK', 'zh'];
+        case 'ar':
+          return const ['ar-SA', 'ar-EG', 'ar'];
+        case 'ru':
+          return const ['ru-RU', 'ru'];
+        case 'hi':
+          return const ['hi-IN', 'hi'];
+        case 'el':
+          return const ['el-GR', 'el'];
+        case 'tr':
+          return const ['tr-TR', 'tr'];
+        case 'ja':
+          return const ['ja-JP', 'ja'];
+        default:
+          return <String>[base];
       }
     }
-    final timeout = Future.delayed(duration + const Duration(seconds: 1));
-    await Future.any([completer.future, timeout]);
-    await _stopListening();
+
+    Future<List<String?>> buildLocaleAttempts() async {
+      final out = <String?>[];
+      void add(String? value) {
+        final v = value?.trim();
+        if (v == null || v.isEmpty) return;
+        final n = normalizeLocale(v);
+        final exists = out.any((e) => normalizeLocale(e ?? '') == n);
+        if (!exists) out.add(v);
+      }
+
+      final base = baseLocaleCandidate(localeId) ??
+          (() {
+            final raw = localeId?.trim() ?? '';
+            if (raw.isEmpty) return null;
+            final parts = raw.split(RegExp(r'[-_]'));
+            if (parts.isEmpty) return null;
+            final b = parts.first.trim().toLowerCase();
+            return b.isEmpty ? null : b;
+          })();
+      if (base == null) {
+        add(localeId);
+        return out;
+      }
+      try {
+        final locales = await speech.locales();
+        // Prefer locales that the recognizer explicitly reports as supported.
+        final supported = <String>[];
+        for (final locale in locales) {
+          final id = locale.localeId.trim();
+          if (id.isEmpty) continue;
+          final norm = normalizeLocale(id);
+          if (norm == base || norm.startsWith('$base-')) {
+            supported.add(id);
+          }
+        }
+        for (final id in supported) {
+          add(id);
+        }
+      } catch (_) {
+        // If locales cannot be queried, fall back to known variants.
+      }
+      // Then try strong L2 variants and the requested locale.
+      for (final candidate in preferredLocaleVariants(base)) {
+        add(candidate);
+      }
+      add(localeId);
+      add(base);
+      return out;
+    }
+
+    final localeAttempts = await buildLocaleAttempts();
+    if (localeAttempts.isEmpty &&
+        localeId != null &&
+        localeId.trim().isNotEmpty) {
+      localeAttempts.add(localeId);
+    }
+
+    for (final attemptLocale in localeAttempts) {
+      if (remainingBudget() <= Duration.zero) break;
+      try {
+        await startListen(
+          attemptLocale,
+          mode: primaryMode,
+          onDevice: false,
+          partialResults: true,
+        );
+      } catch (e) {
+        _log(
+            '[naming][listen-error] locale="$attemptLocale" mode=$primaryMode onDevice=false err=$e');
+        continue;
+      }
+      await waitForResult(
+        isAndroid
+            ? duration + const Duration(milliseconds: 2600)
+            : duration + const Duration(seconds: 1),
+      );
+      if (gotResultEvent || !_isValid(flowToken, sessionId, isCurrent)) break;
+      if (!gotSoundLevel) break;
+
+      if (remainingBudget() <= const Duration(milliseconds: 1100)) continue;
+      try {
+        await startListen(
+          attemptLocale,
+          mode: alternateMode,
+          onDevice: false,
+          partialResults: true,
+        );
+        await waitForResult(isAndroid
+            ? const Duration(milliseconds: 1800)
+            : const Duration(milliseconds: 900));
+      } catch (e) {
+        _log(
+            '[naming][listen-error] alt locale="$attemptLocale" mode=$alternateMode onDevice=false err=$e');
+      }
+      if (gotResultEvent || !_isValid(flowToken, sessionId, isCurrent)) break;
+
+      if (isAndroid &&
+          gotSoundLevel &&
+          !gotResultEvent &&
+          remainingBudget() > const Duration(milliseconds: 1200)) {
+        try {
+          await startListen(
+            attemptLocale,
+            mode: stt.ListenMode.confirmation,
+            onDevice: true,
+            partialResults: false,
+          );
+          await waitForResult(const Duration(milliseconds: 1200));
+        } catch (e) {
+          _log(
+              '[naming][listen-error] onDevice locale="$attemptLocale" mode=confirmation err=$e');
+        }
+        if (gotResultEvent || !_isValid(flowToken, sessionId, isCurrent)) break;
+      }
+    }
     if (!_isValid(flowToken, sessionId, isCurrent)) {
       return '';
     }
@@ -417,6 +670,9 @@ class NamingController {
     if (_liveTranscript.isEmpty) {
       _log('[naming][listen-empty-transcript]');
     }
+    _lastListenGotResultEvent = gotResultEvent;
+    _lastListenGotSoundLevel = gotSoundLevel;
+    _lastListenMaxSoundLevel = maxSoundLevel;
     return _liveTranscript;
   }
 

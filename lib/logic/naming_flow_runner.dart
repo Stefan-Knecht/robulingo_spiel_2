@@ -18,7 +18,7 @@ Future<NamingFlowOutcome?> runNamingFlow({
   required void Function(String transcript) onTranscript,
   required bool userInitiated,
   Duration firstWindow = const Duration(seconds: 4),
-  Duration repeatWindow = const Duration(seconds: 6),
+  Duration repeatWindow = const Duration(seconds: 3),
 }) async {
   final String? localeId = await namingLocaleHelper.resolveAndLog(
     speech: voiceController.speech,

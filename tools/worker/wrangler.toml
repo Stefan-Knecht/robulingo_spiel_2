@@ -7,6 +7,7 @@ compatibility_date = "2026-01-27"
 r2_buckets = [
   { binding = "USERDATA", bucket_name = "userdata", jurisdiction = "eu" },
   { binding = "DAILYWORDSUSERDATA", bucket_name = "dailywordsuserdata", jurisdiction = "eu" },
+  { binding = "DAILYWORDSAPK", bucket_name = "dailywords-apk", jurisdiction = "eu" },
   { binding = "HINTS", bucket_name = "hints", jurisdiction = "eu" },
   { binding = "CURRICULUM", bucket_name = "curriculum", jurisdiction = "eu" },
 ]

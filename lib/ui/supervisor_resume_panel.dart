@@ -32,6 +32,8 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   bool _loading = false;
   Map<String, dynamic>? _data;
   List<Map<String, dynamic>> _pendingItems = const [];
+  final Set<String> _ackInFlight = <String>{};
+  final Set<String> _ackSucceeded = <String>{};
   late final AnimationController _wiggleController;
   bool _lastReportedVisible = false;
 
@@ -61,6 +63,8 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     if (oldWidget.userId != widget.userId ||
         oldWidget.workerHost != widget.workerHost ||
         oldWidget.apiPrefix != widget.apiPrefix) {
+      _ackInFlight.clear();
+      _ackSucceeded.clear();
       _load();
     }
   }
@@ -147,11 +151,18 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
             (queue['itemsPreview'] as List).whereType<Map>(),
           )
         : const <Map<String, dynamic>>[];
-    final queuedEmoji = _resolveQueuedEmoji(
+    final selectedEmoji = _resolveQueuedEmoji(
       _pendingItems,
       fallbackItems: preview,
     );
+    final queuedEmoji = selectedEmoji.emoji;
     final showEmoji = queuedEmoji.isNotEmpty;
+    if (showEmoji) {
+      final selectedId = selectedEmoji.id;
+      if (selectedId != null && selectedId.isNotEmpty) {
+        _scheduleAck(uid, selectedId);
+      }
+    }
     final hasActiveSupervisor =
         supervisor['active'] == true || supervisor['paired'] == true;
     final supervisorName = _resolveSupervisorName(supervisor);
@@ -232,15 +243,76 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     return '';
   }
 
-  String _resolveQueuedEmoji(
+  void _scheduleAck(String userId, String emojiId) {
+    if (_ackSucceeded.contains(emojiId) || _ackInFlight.contains(emojiId)) {
+      return;
+    }
+    _ackInFlight.add(emojiId);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _ackInFlight.remove(emojiId);
+        return;
+      }
+      _ackPresentedEmoji(userId: userId, emojiId: emojiId);
+    });
+  }
+
+  Future<void> _ackPresentedEmoji({
+    required String userId,
+    required String emojiId,
+  }) async {
+    try {
+      final service = SupervisorDashboardService(
+        workerHost: widget.workerHost,
+        apiPrefix: widget.apiPrefix,
+      );
+      final ok = await service.ackEmojiQueue(
+        userId: userId,
+        ids: [emojiId],
+        remove: true,
+      );
+      if (!ok) return;
+      _ackSucceeded.add(emojiId);
+      if (!mounted) return;
+      setState(() {
+        _pendingItems = _pendingItems
+            .where((item) => (item['id'] ?? '').toString().trim() != emojiId)
+            .toList(growable: false);
+        final queue = _data?['emojiQueue'];
+        if (queue is Map && queue['itemsPreview'] is List) {
+          final rawPreview = (queue['itemsPreview'] as List).whereType<Map>();
+          queue['itemsPreview'] = rawPreview
+              .where((item) => (item['id'] ?? '').toString().trim() != emojiId)
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false);
+        }
+      });
+    } finally {
+      _ackInFlight.remove(emojiId);
+    }
+  }
+
+  _SelectedEmoji _resolveQueuedEmoji(
     List<Map<String, dynamic>> items, {
     List<Map<String, dynamic>> fallbackItems = const [],
   }) {
-    final primary = _pickBestEmoji(items);
-    if (primary != null && primary.isNotEmpty) return primary;
-    final fallback = _pickBestEmoji(fallbackItems);
-    if (fallback != null && fallback.isNotEmpty) return fallback;
-    return '';
+    final primary = _pickBestEmojiItem(items);
+    if (primary != null) {
+      final emoji = (primary['emoji'] ?? '').toString().trim();
+      final id = (primary['id'] ?? '').toString().trim();
+      if (emoji.isNotEmpty) {
+        return _SelectedEmoji(emoji: emoji, id: id.isEmpty ? null : id);
+      }
+    }
+    final fallback = _pickBestEmojiItem(fallbackItems);
+    if (fallback != null) {
+      final emoji = (fallback['emoji'] ?? '').toString().trim();
+      final id = (fallback['id'] ?? '').toString().trim();
+      if (emoji.isNotEmpty) {
+        return _SelectedEmoji(emoji: emoji, id: id.isEmpty ? null : id);
+      }
+    }
+    return const _SelectedEmoji(emoji: '', id: null);
   }
 
   DateTime _itemTs(Map<String, dynamic> item) {
@@ -261,19 +333,18 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     return false;
   }
 
-  String? _pickBestEmoji(List<Map<String, dynamic>> items) {
+  Map<String, dynamic>? _pickBestEmojiItem(List<Map<String, dynamic>> items) {
     if (items.isEmpty) return null;
     final candidates = items
         .where((item) => (item['emoji'] ?? '').toString().trim().isNotEmpty)
         .toList(growable: false);
     if (candidates.isEmpty) return null;
-    final sorted = <Map<String, dynamic>>[...candidates]
-      ..sort((a, b) {
+    final sorted = <Map<String, dynamic>>[...candidates]..sort((a, b) {
         final rankDiff = _emojiPriorityRank(a).compareTo(_emojiPriorityRank(b));
         if (rankDiff != 0) return rankDiff;
         return _itemTs(b).compareTo(_itemTs(a));
       });
-    return (sorted.first['emoji'] ?? '').toString().trim();
+    return sorted.first;
   }
 
   int _emojiPriorityRank(Map<String, dynamic> item) {
@@ -289,4 +360,14 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     if (!appGenerated) return 3;
     return 4;
   }
+}
+
+class _SelectedEmoji {
+  const _SelectedEmoji({
+    required this.emoji,
+    required this.id,
+  });
+
+  final String emoji;
+  final String? id;
 }

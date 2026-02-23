@@ -58,11 +58,11 @@ class VoiceController {
     }
   }
 
-  void _safeMicForward(Duration total) {
+  void _safeMicPulseLoop() {
     if (_micControllerFailed) return;
     try {
-      micController.duration = total;
-      micController.forward(from: 0);
+      micController.duration = const Duration(milliseconds: 900);
+      micController.repeat();
     } catch (_) {
       _micControllerFailed = true;
     }
@@ -124,8 +124,8 @@ class VoiceController {
     required bool Function() isCurrent,
     VoidCallback? onPermanentDisable,
     bool userInitiated = false,
-    Duration firstWindow = const Duration(seconds: 5),
-    Duration repeatWindow = const Duration(seconds: 5),
+    Duration firstWindow = const Duration(seconds: 4),
+    Duration repeatWindow = const Duration(seconds: 3),
     bool allowRepeat = false,
     String? localeId,
   }) async {
@@ -144,10 +144,10 @@ class VoiceController {
         state.micPrimed = true;
         state.micPromptActive = false;
       } else {
-      state.micPromptActive = true;
-      state.namingStatus = '';
-      onStateChanged();
-      return null;
+        state.micPromptActive = true;
+        state.namingStatus = '';
+        onStateChanged();
+        return null;
       }
     }
 
@@ -160,9 +160,7 @@ class VoiceController {
     state.micOn = true;
     state.liveTranscript = '';
     onStateChanged();
-    final totalSeconds =
-        firstWindow.inSeconds + (allowRepeat ? repeatWindow.inSeconds : 0) + 2;
-    _safeMicForward(Duration(seconds: totalSeconds));
+    _safeMicPulseLoop();
 
     final result = await namingController.runFlow(
       trialToken: token,
