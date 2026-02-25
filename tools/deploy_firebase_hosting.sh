@@ -22,11 +22,15 @@ fi
 MODE="${1:-prod}"
 SOURCE_REF="${SOURCE_REF:-origin/main}"
 CHANNEL=""
-FLAVOR="robulingo"
+LEGACY_FLAVOR_ARG=""
 
 case "$MODE" in
  prod)
-   FLAVOR="${2:-robulingo}"
+   if [[ $# -gt 2 ]]; then
+     echo "Usage: tools/deploy_firebase_hosting.sh [prod [robulingo|dailywords] | preview <channel> [robulingo|dailywords]]" >&2
+     exit 2
+   fi
+   LEGACY_FLAVOR_ARG="${2:-}"
    ;;
  preview)
    CHANNEL="${2:-}"
@@ -34,7 +38,11 @@ case "$MODE" in
      echo "Usage: tools/deploy_firebase_hosting.sh preview <channel> [robulingo|dailywords]" >&2
      exit 2
    fi
-   FLAVOR="${3:-robulingo}"
+   if [[ $# -gt 3 ]]; then
+     echo "Usage: tools/deploy_firebase_hosting.sh [prod [robulingo|dailywords] | preview <channel> [robulingo|dailywords]]" >&2
+     exit 2
+   fi
+   LEGACY_FLAVOR_ARG="${3:-}"
    ;;
  *)
    echo "Usage: tools/deploy_firebase_hosting.sh [prod [robulingo|dailywords] | preview <channel> [robulingo|dailywords]]" >&2
@@ -42,22 +50,17 @@ case "$MODE" in
    ;;
 esac
 
-TARGET=""
-APP_FLAVOR="robulingo"
-case "$FLAVOR" in
- robulingo)
-   TARGET="robulingo"
-   APP_FLAVOR="robulingo"
-   ;;
- dailywords)
-   TARGET="dailywords"
-   APP_FLAVOR="dailywords"
-   ;;
- *)
-   echo "Invalid flavor: $FLAVOR (expected: robulingo|dailywords)" >&2
-   exit 2
-   ;;
-esac
+if [[ -n "$LEGACY_FLAVOR_ARG" ]]; then
+  case "$LEGACY_FLAVOR_ARG" in
+    robulingo|dailywords)
+      echo "Note: flavor argument '$LEGACY_FLAVOR_ARG' is ignored. This script now always deploys both robulingo and dailywords."
+      ;;
+    *)
+      echo "Invalid flavor: $LEGACY_FLAVOR_ARG (expected: robulingo|dailywords)" >&2
+      exit 2
+      ;;
+  esac
+fi
 
 echo "Fetching latest refs from origin..."
 git fetch origin
@@ -73,16 +76,24 @@ echo "Creating temporary worktree at ref: $SOURCE_REF"
 git worktree add --detach "$WORKTREE_DIR" "$SOURCE_REF"
 cd "$WORKTREE_DIR"
 
-echo "Building Flutter web (release, APP_FLAVOR=$APP_FLAVOR)..."
-flutter build web --release --dart-define="APP_FLAVOR=$APP_FLAVOR"
+deploy_flavor() {
+  local flavor="$1"
+  local target="$1"
 
-case "$MODE" in
- prod)
-   echo "Deploying to Firebase Hosting target '$TARGET' (production)..."
-   firebase deploy --only "hosting:$TARGET"
-   ;;
- preview)
-   echo "Deploying to Firebase Hosting preview channel '$CHANNEL' for target '$TARGET'..."
-   firebase hosting:channel:deploy "$CHANNEL" --only "$TARGET"
-   ;;
-esac
+  echo "Building Flutter web (release, APP_FLAVOR=$flavor)..."
+  flutter build web --release --dart-define="APP_FLAVOR=$flavor"
+
+  case "$MODE" in
+    prod)
+      echo "Deploying to Firebase Hosting target '$target' (production)..."
+      firebase deploy --only "hosting:$target"
+      ;;
+    preview)
+      echo "Deploying to Firebase Hosting preview channel '$CHANNEL' for target '$target'..."
+      firebase hosting:channel:deploy "$CHANNEL" --only "$target"
+      ;;
+  esac
+}
+
+deploy_flavor "robulingo"
+deploy_flavor "dailywords"
