@@ -246,21 +246,28 @@ class ApiClient {
     if (audioKeys.isEmpty) {
       throw ApiException('Audio missing ${entry.uuid} lang=$lang');
     }
-    final remoteAudioVariants =
-        audioKeys.map((k) => _fileUri(k)).toList(growable: false);
-    final localAudioVariants = <Uri>[];
+    final localAudioByKey = <String, Uri>{};
     for (final key in audioKeys) {
       try {
-        localAudioVariants.add(await _cacheAudioKeyToLocalUri(key));
+        localAudioByKey[key] = await _cacheAudioKeyToLocalUri(key);
       } catch (_) {
-        // Keep remote fallback for this variant.
+        // Keep remote fallback for this key.
       }
     }
-    final audioVariants = (localAudioVariants.isNotEmpty
-            ? localAudioVariants
-            : remoteAudioVariants)
+    final audioVariants = <Uri>[];
+    for (final key in audioKeys) {
+      final local = localAudioByKey[key];
+      if (local != null) audioVariants.add(local);
+      audioVariants.add(_fileUri(key));
+    }
+    final seenAudioUris = <String>{};
+    final dedupedAudioVariants = audioVariants
+        .where((u) => seenAudioUris.add(u.toString()))
         .toList(growable: false);
-    final audioUri = audioVariants.first;
+    if (dedupedAudioVariants.isEmpty) {
+      throw ApiException('Audio missing ${entry.uuid} lang=$lang');
+    }
+    final audioUri = dedupedAudioVariants.first;
 
     final String? phonetic = _phoneticForLang(meta, lang);
     final String text = _textForLang(meta, lang);
@@ -300,7 +307,7 @@ class ApiClient {
       imageBytes: imageBytes,
       imageVariants: imageVariants,
       audioUri: audioUri,
-      audioVariants: audioVariants,
+      audioVariants: dedupedAudioVariants,
       imageSignature: _imageSignature(imageBytes),
     );
   }
@@ -602,10 +609,13 @@ class ApiClient {
       if (bytes[i] != _missingMp3PlaceholderHead16[i]) return false;
     }
 
-    if (bytes.length >= 16 && bytes.length == expectedLength) {
-      for (int i = bytes.length - 16; i < bytes.length; i++) {
-        if (bytes[i] != 0xAA) return false;
-      }
+    // For range responses we only see the head bytes. Don't classify as
+    // placeholder unless we have the full payload and can verify the tail.
+    if (bytes.length != expectedLength || bytes.length < 16) {
+      return false;
+    }
+    for (int i = bytes.length - 16; i < bytes.length; i++) {
+      if (bytes[i] != 0xAA) return false;
     }
     return true;
   }
@@ -630,8 +640,26 @@ class ApiClient {
     await audioDir.create(recursive: true);
     final safeName = Uri.encodeComponent(key);
     final file = File('${audioDir.path}/$safeName');
-    if (await file.exists() && await file.length() > 0) {
-      return file.uri;
+    if (await file.exists()) {
+      final cachedLen = await file.length();
+      if (cachedLen > 1024) {
+        if (cachedLen != _missingMp3PlaceholderLength) {
+          return file.uri;
+        }
+        try {
+          final cachedBytes = await file.readAsBytes();
+          if (!_looksLikeMissingMp3Bytes(cachedBytes)) {
+            return file.uri;
+          }
+        } catch (_) {
+          // Re-download below.
+        }
+      }
+      try {
+        await file.delete();
+      } catch (_) {
+        // Ignore delete issues; we'll overwrite below.
+      }
     }
     final bytes = await loadBinaryFile(key);
     if (_looksLikeMissingMp3Bytes(bytes)) {

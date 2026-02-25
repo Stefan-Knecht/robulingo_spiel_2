@@ -21,9 +21,9 @@ class ItemPresentationConfig {
     this.minQualifiedItemsToStart = 5, // >4
     this.namingMasteryCorrectThreshold = 1, // remove if correct > 1
     this.namingDownFromNamingMaxAttempts = 5, // remove if attempts > 5
-  }) : assert(comprehensionBlockSize >= 2),
-       assert(comprehensionCoreSize >= 1),
-       assert(comprehensionCoreSize < comprehensionBlockSize);
+  })  : assert(comprehensionBlockSize >= 2),
+        assert(comprehensionCoreSize >= 1),
+        assert(comprehensionCoreSize < comprehensionBlockSize);
 
   final int comprehensionBlockSize;
   final int comprehensionCoreSize;
@@ -77,10 +77,11 @@ class NamingAdvanceDecision {
 /// - up/down-from-naming removal returns items to refiller FIFO
 class ItemPresentationPolicy {
   ItemPresentationPolicy({ItemPresentationConfig? config, Random? random})
-      : config = config ?? const ItemPresentationConfig(),
+      : _config = config ?? const ItemPresentationConfig(),
         _rand = random ?? Random();
 
-  final ItemPresentationConfig config;
+  ItemPresentationConfig _config;
+  ItemPresentationConfig get config => _config;
   final Random _rand;
 
   List<String> _curriculum = const [];
@@ -133,11 +134,13 @@ class ItemPresentationPolicy {
   List<String> get refillerQueueSnapshot =>
       List<String>.unmodifiable(_refillerQueue.toList());
 
-  bool get isNamingActive => _activeNamingQueue != null && _activeNamingQueue!.isNotEmpty;
+  bool get isNamingActive =>
+      _activeNamingQueue != null && _activeNamingQueue!.isNotEmpty;
 
   bool get hasNamingPool => _namingPool.isNotEmpty;
 
-  PresentationMode get mode => isNamingActive ? PresentationMode.naming : PresentationMode.comprehension;
+  PresentationMode get mode =>
+      isNamingActive ? PresentationMode.naming : PresentationMode.comprehension;
 
   bool get isCurrentSlotFromRefiller {
     if (mode != PresentationMode.comprehension) return false;
@@ -155,7 +158,8 @@ class ItemPresentationPolicy {
       );
     }
     if (_comprehensionBlock.isEmpty) {
-      return const PresentationSlot(mode: PresentationMode.comprehension, targetUuid: '');
+      return const PresentationSlot(
+          mode: PresentationMode.comprehension, targetUuid: '');
     }
     return PresentationSlot(
       mode: PresentationMode.comprehension,
@@ -171,7 +175,8 @@ class ItemPresentationPolicy {
     _resumeComprehensionIndex ??= _comprehensionIndex;
     final blockSize = _nextNamingBlockSize();
     if (blockSize <= 0) return false;
-    _activeNamingQueue = Queue<String>.of(_buildNextNamingBlock(blockSize: blockSize));
+    _activeNamingQueue =
+        Queue<String>.of(_buildNextNamingBlock(blockSize: blockSize));
     return true;
   }
 
@@ -209,6 +214,10 @@ class ItemPresentationPolicy {
     return v;
   }
 
+  void updateConfig(ItemPresentationConfig next) {
+    _config = next;
+  }
+
   void initializeComprehensionBlock({
     required List<String> curriculumUuids,
     required int startIndex,
@@ -218,7 +227,8 @@ class ItemPresentationPolicy {
     _curriculum = List<String>.from(curriculumUuids);
     _indexByUuid
       ..clear()
-      ..addEntries(_curriculum.asMap().entries.map((e) => MapEntry(e.value, e.key)));
+      ..addEntries(
+          _curriculum.asMap().entries.map((e) => MapEntry(e.value, e.key)));
 
     if (refillerQueue.isNotEmpty) {
       _refillerQueue.addAll(refillerQueue);
@@ -359,7 +369,8 @@ class ItemPresentationPolicy {
 
     final slot = currentSlot;
     refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
-    return PresentationAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
+    return PresentationAdvanceDecision(
+        nextSlot: slot, refillerQueueDirty: refillerDirty);
   }
 
   /// Cancel the current naming block and resume comprehension.
@@ -369,7 +380,8 @@ class ItemPresentationPolicy {
     final resume = _resumeComprehensionIndex;
     _resumeComprehensionIndex = null;
     if (resume != null) {
-      _comprehensionIndex = resume.clamp(0, max(0, _comprehensionBlock.length - 1));
+      _comprehensionIndex =
+          resume.clamp(0, max(0, _comprehensionBlock.length - 1));
     }
     return currentSlot;
   }
@@ -394,9 +406,11 @@ class ItemPresentationPolicy {
         }
         final slot = currentSlot;
         refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
-        return NamingAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
+        return NamingAdvanceDecision(
+            nextSlot: slot, refillerQueueDirty: refillerDirty);
       }
-      return NamingAdvanceDecision(nextSlot: currentSlot, refillerQueueDirty: false);
+      return NamingAdvanceDecision(
+          nextSlot: currentSlot, refillerQueueDirty: false);
     }
 
     final q = _activeNamingQueue!;
@@ -433,7 +447,8 @@ class ItemPresentationPolicy {
         }
         final slot = currentSlot;
         refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
-        return NamingAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
+        return NamingAdvanceDecision(
+            nextSlot: slot, refillerQueueDirty: refillerDirty);
       }
 
       final resume = _resumeComprehensionIndex;
@@ -446,7 +461,8 @@ class ItemPresentationPolicy {
 
     final slot = currentSlot;
     refillerDirty = refillerDirty || consumeRefillerDirtyFlag();
-    return NamingAdvanceDecision(nextSlot: slot, refillerQueueDirty: refillerDirty);
+    return NamingAdvanceDecision(
+        nextSlot: slot, refillerQueueDirty: refillerDirty);
   }
 
   /// If naming stats cross thresholds, remove item from naming and enqueue it to refiller FIFO.
@@ -471,7 +487,8 @@ class ItemPresentationPolicy {
     _compLast.remove(uuid);
     if (_activeNamingQueue != null && _activeNamingQueue!.isNotEmpty) {
       final filtered = _activeNamingQueue!.where((u) => u != uuid).toList();
-      _activeNamingQueue = filtered.isEmpty ? Queue<String>() : Queue<String>.of(filtered);
+      _activeNamingQueue =
+          filtered.isEmpty ? Queue<String>() : Queue<String>.of(filtered);
       if (_activeNamingQueue!.isEmpty) {
         _activeNamingQueue = null;
       }
@@ -483,7 +500,8 @@ class ItemPresentationPolicy {
     return true;
   }
 
-  void _replaceComprehensionBlockItem(String uuid, {required bool enqueueToRefiller}) {
+  void _replaceComprehensionBlockItem(String uuid,
+      {required bool enqueueToRefiller}) {
     if (_comprehensionBlock.isEmpty) return;
     final idx = _comprehensionBlock.indexOf(uuid);
     if (idx < 0) return;

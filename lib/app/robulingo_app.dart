@@ -68,6 +68,7 @@ import 'package:robulingo_flutter/utils/text_utils.dart';
 // Languages where we *expect* a separate phonetic/reading aid to be useful.
 // Note: compare against normalized base codes (e.g. "ja-JP" -> "ja").
 const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
+const int _phoneticGlobalOverrideRuns = 40;
 
 @visibleForTesting
 bool shouldSkipComprehensionAutoAdvance({
@@ -101,6 +102,26 @@ bool shouldRenderNamingView({
       hasNamingOutcome ||
       policyNamingActive ||
       namingTransition;
+}
+
+@visibleForTesting
+ItemPresentationConfig presentationConfigForDepth(TrainingDepthMode mode) {
+  switch (mode) {
+    case TrainingDepthMode.defaultMode:
+      return const ItemPresentationConfig();
+    case TrainingDepthMode.deep:
+      return const ItemPresentationConfig(
+        // Keep comprehension-down unchanged from baseline.
+        comprehensionDownMaxAttempts: 15,
+        // Deep mode: require a full 6/6 correct window for comprehension-up.
+        compWindowSize: 6,
+        compWindowCorrectNeeded: 6,
+        // Deep mode naming thresholds:
+        // naming-up when correct > 2, naming-down when attempts > 7.
+        namingMasteryCorrectThreshold: 2,
+        namingDownFromNamingMaxAttempts: 7,
+      );
+  }
 }
 
 // ------------------------------------------------------------
@@ -249,7 +270,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   String lang = 'de';
   HintPack? hintPack;
   int hintLoadToken = 0;
-  final Set<String> hintRevealed = {};
+  String? hintRevealedUuid;
   final GlobalKey _hintPanelKey = GlobalKey();
   List<CurriculumEntry> curriculum = [];
   int curriculumStartOffset = 0; // Delta-Cursor aus user_curriculum
@@ -287,7 +308,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   int currentTrialAudioToken = -1;
   String? currentTrialAudioUuid;
   Uri? currentTrialAudioUri;
-  final ItemPresentationPolicy presentationPolicy = ItemPresentationPolicy();
+  final ItemPresentationPolicy presentationPolicy = ItemPresentationPolicy(
+    config: presentationConfigForDepth(manualTrainingDepthMode),
+  );
+  TrainingDepthMode trainingDepthMode = manualTrainingDepthMode;
   final ItemStatsTracker itemStats = ItemStatsTracker();
   final List<bool> comprehensionHistory = [];
   final List<bool> namingHistory = [];
@@ -310,8 +334,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       {}; // wie oft Ziel-Item angezeigt wurde
   final Map<String, int> phoneticSeenCounts =
       {}; // wie oft Items mit Lautschrift gezeigt wurden
-  final Map<String, int> phoneticOverrideRemaining =
-      {}; // noch aktive Phonetik-Zeichen für UUIDs
+  int phoneticGlobalOverrideRemaining = 0; // aktive Phonetik-Zeichen global
   int lastCloudLoadToken = 0;
   final NamingLocaleHelper namingLocaleHelper = NamingLocaleHelper();
   RestartModuleProgress restartModuleProgress = RestartModuleProgress(
@@ -727,7 +750,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     if (pack != null &&
         currentTrial != null &&
-        hintRevealed.contains(currentTrial!.target.uuid)) {
+        hintRevealedUuid == currentTrial!.target.uuid) {
       final normL2 = HintsService.normalizeLangCode(lang);
       final hintIds =
           currentTrial!.target.hintRefsByLang[normL2] ?? const <String>[];
@@ -742,13 +765,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void _toggleHintsForCurrent() {
     if (currentTrial == null) return;
     final uuid = currentTrial!.target.uuid;
-    final bool shouldReveal = !hintRevealed.contains(uuid);
+    final bool shouldReveal = hintRevealedUuid != uuid;
     setState(() {
-      if (hintRevealed.contains(uuid)) {
-        hintRevealed.remove(uuid);
-      } else {
-        hintRevealed.add(uuid);
-      }
+      hintRevealedUuid = shouldReveal ? uuid : null;
     });
     if (shouldReveal) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -764,6 +783,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       debugPrint(
           '[hints][item] uuid=$uuid l1=$l1 l2=$l2 ids=${hintIds.length} resolved=$resolved');
     }
+  }
+
+  void _selectTrainingDepthMode(TrainingDepthMode mode) {
+    if (trainingDepthMode == mode) return;
+    setState(() {
+      trainingDepthMode = mode;
+    });
+    presentationPolicy.updateConfig(presentationConfigForDepth(mode));
   }
 
   void _scrollHintPanelIntoView() {
@@ -1202,7 +1229,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       activeStartCurriculumKey = null;
       nativeLang = null;
       hintPack = null;
-      hintRevealed.clear();
+      hintRevealedUuid = null;
     });
   }
 
@@ -1443,7 +1470,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       nativeLang = motherLang;
       awaitingNative = false;
       hintPack = null;
-      hintRevealed.clear();
+      hintRevealedUuid = null;
     });
     unawaited(_loadHintPack(forceRefresh: true));
     await _loadInitial(startKey: sanitizeStartCurriculum(startKey));
@@ -1502,7 +1529,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     resetSessionState(
       deps: resetDeps,
       cancelNativeSelectTimer: () => nativeSelectTimer?.cancel(),
-      clearHintRevealed: () => hintRevealed.clear(),
+      clearHintRevealed: () => hintRevealedUuid = null,
     );
     setState(() {
       awaitingLang = initData.awaitingLang;
@@ -2091,9 +2118,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<bool> _audioUrlOkCached(Uri uri) async {
     final key = uri.toString();
     final cached = audioUrlOkCache[key];
-    if (cached != null) return cached;
+    if (cached == true) return true;
+    if (cached == false) {
+      // Don't keep temporary network failures sticky for the whole session.
+      audioUrlOkCache.remove(key);
+    }
     final ok = await api.audioUrlOk(uri);
-    audioUrlOkCache[key] = ok;
+    if (ok) {
+      audioUrlOkCache[key] = true;
+    } else {
+      audioUrlOkCache.remove(key);
+    }
     return ok;
   }
 
@@ -2103,19 +2138,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         currentTrialAudioUri != null;
     if (alreadyAssigned) return currentTrialAudioUri!;
     final sequence = _audioSequenceForItem(item);
-    final count = audioPlayCounts[item.uuid] ?? 0;
-    final minIndex = audioMinSequenceIndex[item.uuid];
-    final maxIndex = audioMaxSequenceIndex[item.uuid];
-    int index = count < sequence.length ? count : sequence.length - 1;
-    if (minIndex != null && minIndex > index) {
-      index = minIndex;
-    }
-    if (maxIndex != null && maxIndex < index) {
-      index = maxIndex;
-    }
+    // Keep comprehension autoplay on a stable base variant. Fallback selection
+    // is resolved per playback attempt and should not persist across trials.
+    int index = 0;
     final chosen = sequence[index];
     if (advance) {
-      audioPlayCounts[item.uuid] = count + 1;
+      audioPlayCounts[item.uuid] = (audioPlayCounts[item.uuid] ?? 0) + 1;
       currentTrialAudioToken = currentTrialToken;
       currentTrialAudioUuid = item.uuid;
       currentTrialAudioUri = chosen;
@@ -2132,6 +2160,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       debugPrint('[audio][error] url=$uri err=$e');
       return false;
     }
+  }
+
+  Future<bool> _playAudioUriWithRetry(Uri uri, {int retries = 1}) async {
+    for (int attempt = 0; attempt <= retries; attempt++) {
+      final ok = await _playAudioUri(uri);
+      if (ok) return true;
+      if (attempt < retries) {
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+    }
+    return false;
   }
 
   Source _audioSourceForUri(Uri uri) {
@@ -2151,11 +2190,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         final fallbackIndex = await _nextPlayableIndex(sequence, initialIndex);
         if (fallbackIndex != null) {
           final fallbackUri = sequence[fallbackIndex];
-          if (fallbackIndex < initialIndex) {
-            audioMaxSequenceIndex[item.uuid] = fallbackIndex;
-          } else if (fallbackIndex > initialIndex) {
-            audioMinSequenceIndex[item.uuid] = fallbackIndex;
-          }
           final bool updateCache = advance ||
               (currentTrialAudioToken == currentTrialToken &&
                   currentTrialAudioUuid == item.uuid);
@@ -2178,23 +2212,36 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           '[audio][play] idx=$trialIndex token=$currentTrialToken url=$uri');
     }
     final playedIndex = sequence.lastIndexOf(uri);
-    final ok = await _playAudioUri(uri);
+    final ok = await _playAudioUriWithRetry(uri);
     if (ok) return;
     if (playedIndex < 0) return;
-    final fallbackIndex = _previousVariantIndex(sequence, playedIndex);
-    if (fallbackIndex == null) return;
-    final fallbackUri = sequence[fallbackIndex];
-    audioMaxSequenceIndex[item.uuid] = fallbackIndex;
-    final bool updateCache = advance ||
-        (currentTrialAudioToken == currentTrialToken &&
-            currentTrialAudioUuid == item.uuid);
-    if (updateCache) {
-      currentTrialAudioToken = currentTrialToken;
-      currentTrialAudioUuid = item.uuid;
-      currentTrialAudioUri = fallbackUri;
+    final candidateIndices = <int>[];
+    for (var i = _nextVariantIndex(sequence, playedIndex);
+        i != null;
+        i = _nextVariantIndex(sequence, i)) {
+      candidateIndices.add(i);
     }
-    debugPrint('[audio][fallback] uuid=${item.uuid} from=$uri to=$fallbackUri');
-    await _playAudioUri(fallbackUri);
+    for (var i = _previousVariantIndex(sequence, playedIndex);
+        i != null;
+        i = _previousVariantIndex(sequence, i)) {
+      candidateIndices.add(i);
+    }
+    for (final fallbackIndex in candidateIndices) {
+      final fallbackUri = sequence[fallbackIndex];
+      final bool updateCache = advance ||
+          (currentTrialAudioToken == currentTrialToken &&
+              currentTrialAudioUuid == item.uuid);
+      if (updateCache) {
+        currentTrialAudioToken = currentTrialToken;
+        currentTrialAudioUuid = item.uuid;
+        currentTrialAudioUri = fallbackUri;
+      }
+      debugPrint(
+          '[audio][fallback] uuid=${item.uuid} from=$uri to=$fallbackUri');
+      final fallbackOk = await _playAudioUriWithRetry(fallbackUri);
+      if (fallbackOk) return;
+    }
+    debugPrint('[audio][silent] uuid=${item.uuid} no playable fallback');
   }
 
   Future<void> _playHintAudioForItem(ItemData item) async {
@@ -2637,6 +2684,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       return;
     }
     voiceController.cancelActive();
+    // Hints are one-run toggles: hide again on the next trial advance.
+    hintRevealedUuid = null;
     final current = currentTrial?.target;
     if (current != null) {
       if (nativeLang != null) {
@@ -2645,14 +2694,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       }
       phoneticSeenCounts[current.uuid] =
           (phoneticSeenCounts[current.uuid] ?? 0) + 1;
-      final overrideRemaining = phoneticOverrideRemaining[current.uuid];
-      if (overrideRemaining != null) {
-        final next = overrideRemaining - 1;
-        if (next > 0) {
-          phoneticOverrideRemaining[current.uuid] = next;
-        } else {
-          phoneticOverrideRemaining.remove(current.uuid);
-        }
+      if (phoneticGlobalOverrideRemaining > 0) {
+        phoneticGlobalOverrideRemaining--;
       }
     }
     if (namingBlockRemaining > 0) {
@@ -2678,9 +2721,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         '[trial][next] idx=$trialIndex token=$currentTrialToken block=$namingBlockRemaining gateGranted=$micGateGranted');
   }
 
-  void _reinstatePhoneticsFor(ItemData item) {
+  void _reinstatePhoneticsForAllItems() {
     setState(() {
-      phoneticOverrideRemaining[item.uuid] = 10;
+      phoneticGlobalOverrideRemaining = _phoneticGlobalOverrideRuns;
     });
   }
 
@@ -2981,6 +3024,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           onRestart: () => _restartOnboarding(),
           onStart: _startFromSplash,
           onSelectModule: _openModuleSelectorFromResume,
+          selectedTrainingDepth: trainingDepthMode,
+          onSelectTrainingDepth: _selectTrainingDepthMode,
           moduleProgress: restartModuleProgress,
           userId: userId,
           workerHost: workerHost,
@@ -3113,8 +3158,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             trial.target.phonetic!.isNotEmpty &&
             _phoneticEligibleLangs.contains(phoneticLang);
         final int phoneticSeen = phoneticSeenCounts[trial.target.uuid] ?? 0;
-        final int phoneticOverrideCount =
-            phoneticOverrideRemaining[trial.target.uuid] ?? 0;
+        final int phoneticOverrideCount = phoneticGlobalOverrideRemaining;
         final bool phoneticOverrideActive = phoneticOverrideCount > 0;
         final bool showPhonetic =
             hasPhoneticData && (phoneticSeen < 3 || phoneticOverrideActive);
@@ -3138,7 +3182,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             : const <HintContent>[];
         final bool hintAvailable = showHintsInline && resolvedHints.isNotEmpty;
         final bool hintRevealedForItem =
-            hintAvailable && hintRevealed.contains(trial.target.uuid);
+            hintAvailable && hintRevealedUuid == trial.target.uuid;
         final List<HintContent> hintEntries =
             hintRevealedForItem ? resolvedHints : const <HintContent>[];
         final String hintLabel =
@@ -3179,10 +3223,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
               showL2Text && showPhonetic ? trial.target.phonetic : null,
           phoneticButtonVisible: showL2Text && hasPhoneticData,
           phoneticOverrideActive: phoneticOverrideActive,
-          phoneticOverrideRemaining: phoneticOverrideCount,
-          onTogglePhonetic: hasPhoneticData
-              ? () => _reinstatePhoneticsFor(trial.target)
-              : null,
+          onTogglePhonetic:
+              hasPhoneticData ? _reinstatePhoneticsForAllItems : null,
           spokenCueText:
               !isNamingView && !trialIsLoading ? trial.target.text : null,
           nativeText: trial.target.nativeText,
@@ -3270,6 +3312,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   Future<void> _openDashboardPreview(BuildContext context,
       {required String focus}) async {
+    _invalidateActiveSessionFlow();
     voiceController.cancelActive();
     await _stopAllSessionAudioPlayers();
     if (!mounted || !context.mounted) return;
@@ -3411,6 +3454,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   void _finishSession() {
     setState(() {
+      _invalidateActiveSessionFlow();
       sessionEnded = true;
     });
     if (loggerReady) {
