@@ -9,6 +9,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:robulingo_flutter/data/hint_models.dart';
+import 'package:robulingo_flutter/constants.dart';
 import 'package:robulingo_flutter/flavor_config.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
@@ -50,6 +51,8 @@ class RestartSplash extends StatefulWidget {
     required this.onRestart,
     required this.onStart,
     required this.onSelectModule,
+    required this.selectedTrainingDepth,
+    required this.onSelectTrainingDepth,
     required this.moduleProgress,
     required this.userId,
     required this.workerHost,
@@ -63,6 +66,8 @@ class RestartSplash extends StatefulWidget {
   final VoidCallback onRestart;
   final VoidCallback onStart;
   final VoidCallback onSelectModule;
+  final TrainingDepthMode selectedTrainingDepth;
+  final ValueChanged<TrainingDepthMode> onSelectTrainingDepth;
   final RestartModuleProgress moduleProgress;
   final String? userId;
   final String workerHost;
@@ -185,57 +190,129 @@ class _RestartSplashState extends State<RestartSplash> {
               );
             }
 
-            if (!compact) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  GestureDetector(
-                    onTap: widget.onRestart,
-                    child: Image.asset('assets/icons/toolbox.webp',
-                        width: 72, height: 72),
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: moduleButton(width: 140, iconSize: 64, gap: 10),
+            Widget trainingDepthButton({
+              required String asset,
+              required TrainingDepthMode mode,
+              required double size,
+            }) {
+              final bool selected = widget.selectedTrainingDepth == mode;
+              return GestureDetector(
+                onTap: () => widget.onSelectTrainingDepth(mode),
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  curve: Curves.easeOut,
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color:
+                        selected ? const Color(0x223286E6) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color:
+                          selected ? const Color(0xFF3286E6) : Colors.black12,
+                      width: selected ? 1.6 : 1.0,
                     ),
                   ),
-                  GestureDetector(
-                    onTap: widget.onStart,
-                    child: Image.asset('assets/icons/start_arrow.webp',
-                        width: 88, height: 88),
+                  child: Image.asset(
+                    asset,
+                    width: size,
+                    height: size,
+                    fit: BoxFit.contain,
                   ),
-                ],
+                ),
               );
             }
 
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            if (!compact) {
+              return SizedBox(
+                height: 96,
+                child: Stack(
+                  alignment: Alignment.center,
                   children: [
-                    GestureDetector(
-                      onTap: widget.onRestart,
-                      child: Image.asset('assets/icons/toolbox.webp',
-                          width: 64, height: 64),
-                    ),
                     Row(
-                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            GestureDetector(
+                              onTap: widget.onRestart,
+                              child: Image.asset('assets/icons/toolbox.webp',
+                                  width: 72, height: 72),
+                            ),
+                            const SizedBox(width: 8),
+                            trainingDepthButton(
+                              asset: 'assets/icons/deep.webp',
+                              mode: TrainingDepthMode.deep,
+                              size: 50,
+                            ),
+                            const SizedBox(width: 8),
+                            trainingDepthButton(
+                              asset: 'assets/icons/default.webp',
+                              mode: TrainingDepthMode.defaultMode,
+                              size: 50,
+                            ),
+                          ],
+                        ),
                         GestureDetector(
                           onTap: widget.onStart,
                           child: Image.asset('assets/icons/start_arrow.webp',
-                              width: 78, height: 78),
+                              width: 88, height: 88),
                         ),
                       ],
                     ),
+                    Center(
+                      child: moduleButton(width: 132, iconSize: 58, gap: 8),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Center(
-                  child: moduleButton(width: 132, iconSize: 58, gap: 8),
-                ),
-              ],
+              );
+            }
+
+            return SizedBox(
+              height: 84,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: widget.onRestart,
+                            child: Image.asset('assets/icons/toolbox.webp',
+                                width: 64, height: 64),
+                          ),
+                          const SizedBox(width: 8),
+                          trainingDepthButton(
+                            asset: 'assets/icons/deep.webp',
+                            mode: TrainingDepthMode.deep,
+                            size: 44,
+                          ),
+                          const SizedBox(width: 8),
+                          trainingDepthButton(
+                            asset: 'assets/icons/default.webp',
+                            mode: TrainingDepthMode.defaultMode,
+                            size: 44,
+                          ),
+                        ],
+                      ),
+                      GestureDetector(
+                        onTap: widget.onStart,
+                        child: Image.asset('assets/icons/start_arrow.webp',
+                            width: 78, height: 78),
+                      ),
+                    ],
+                  ),
+                  Center(
+                    child: moduleButton(width: 110, iconSize: 46, gap: 6),
+                  ),
+                ],
+              ),
             );
           },
         ),
@@ -792,7 +869,6 @@ class SessionBody extends StatelessWidget {
     required this.targetPhonetic,
     required this.phoneticButtonVisible,
     required this.phoneticOverrideActive,
-    required this.phoneticOverrideRemaining,
     this.onTogglePhonetic,
     this.spokenCueText,
     required this.nativeText,
@@ -840,7 +916,6 @@ class SessionBody extends StatelessWidget {
   final String? targetPhonetic;
   final bool phoneticButtonVisible;
   final bool phoneticOverrideActive;
-  final int phoneticOverrideRemaining;
   final VoidCallback? onTogglePhonetic;
   final String? spokenCueText;
   final String? nativeText;

@@ -28,6 +28,8 @@ class SupervisorResumePanel extends StatefulWidget {
 
 class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     with SingleTickerProviderStateMixin {
+  static final RegExp _blockedBannerText =
+      RegExp(r'(?=.*\bdownload\b)(?=.*\bandroid\b)', caseSensitive: false);
   Timer? _refreshTimer;
   bool _loading = false;
   Map<String, dynamic>? _data;
@@ -238,6 +240,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       'name',
     ]) {
       final value = (supervisor[key] ?? '').toString().trim();
+      if (_blockedBannerText.hasMatch(value)) continue;
       if (value.isNotEmpty) return value;
     }
     return '';

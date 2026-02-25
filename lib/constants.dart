@@ -61,6 +61,15 @@ const int trackLength = 12;
 const int startCurriculumWindowSize =
     10; // wie viele Items aus dem Start-Curriculum initial geladen werden
 
+enum TrainingDepthMode {
+  defaultMode,
+  deep,
+}
+
+// Manual depth selector for learning criteria.
+// Switch to TrainingDepthMode.deep for stricter thresholds.
+const TrainingDepthMode manualTrainingDepthMode = TrainingDepthMode.defaultMode;
+
 const Map<String, String> langFlags = {
   'de': '🇩🇪',
   'en': '🇬🇧',
