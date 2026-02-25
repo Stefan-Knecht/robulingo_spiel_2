@@ -1,0 +1,29 @@
+POLICY
+
+1. Purpose
+This document defines how project materials are created, reviewed, and shared.
+
+2. Ownership
+- The project owner approves final policy changes.
+- Contributors may propose edits through normal version control workflows.
+
+3. Documentation Rules
+- Keep documents in plain text or markdown with clear filenames.
+- Use short headings and dated change notes.
+- Avoid storing critical policy in only one format.
+
+4. File Access and Backup
+- Maintain at least one backup copy of important policy files.
+- Prefer UTF-8 text files for maximum compatibility.
+- If a file cannot be opened, create a new text fallback in the same repository.
+
+5. Change Control
+- All policy edits must include a brief reason.
+- Significant changes should be reviewed by at least one additional person.
+
+6. Distribution
+- Keep policy files in a shared, versioned location.
+- Use consistent naming, e.g. policy.txt, for emergency fallback access.
+
+7. Effective Date
+This policy is effective immediately on creation.
