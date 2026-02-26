@@ -69,6 +69,46 @@ import 'package:robulingo_flutter/utils/text_utils.dart';
 // Note: compare against normalized base codes (e.g. "ja-JP" -> "ja").
 const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
 const int _phoneticGlobalOverrideRuns = 40;
+const Map<String, Map<String, String>> _noMicNamingTexts = {
+  'continue_without_recording': {
+    'en': 'No microphone access. Naming continues without recording.',
+    'de': 'Kein Mikrofonzugriff. Benennen läuft ohne Aufnahme weiter.',
+    'ar': 'لا يوجد وصول إلى الميكروفون. تستمر مهمة التسمية بدون تسجيل.',
+    'fr':
+        'Pas d\'accès au microphone. La dénomination continue sans enregistrement.',
+    'es': 'Sin acceso al micrófono. La denominación continúa sin grabación.',
+    'it':
+        'Nessun accesso al microfono. La denominazione continua senza registrazione.',
+    'ru': 'Нет доступа к микрофону. Называние продолжается без записи.',
+    'hi': 'माइक्रोफोन उपलब्ध नहीं है। नामकरण बिना रिकॉर्डिंग जारी रहेगा।',
+    'el': 'Χωρίς πρόσβαση στο μικρόφωνο. Η ονομασία συνεχίζεται χωρίς εγγραφή.',
+    'zh': '无法访问麦克风。命名将在不录音的情况下继续。',
+    'tr': 'Mikrofon erişimi yok. Adlandırma kayıt olmadan devam ediyor.',
+    'ja': 'マイクにアクセスできません。録音なしでネーミングを続行します。',
+  },
+  'scored_false': {
+    'en': 'No microphone access. Naming was scored as false in fallback mode.',
+    'de':
+        'Kein Mikrofonzugriff. Benennen wurde im Fallback-Modus als falsch gewertet.',
+    'ar':
+        'لا يوجد وصول إلى الميكروفون. تم احتساب التسمية كخاطئة في وضع الطوارئ.',
+    'fr':
+        'Pas d\'accès au microphone. La dénomination a été notée fausse en mode de secours.',
+    'es':
+        'Sin acceso al micrófono. La denominación se evaluó como incorrecta en modo de respaldo.',
+    'it':
+        'Nessun accesso al microfono. La denominazione è stata valutata come errata in modalità fallback.',
+    'ru':
+        'Нет доступа к микрофону. В режиме fallback называние засчитано как неверное.',
+    'hi': 'माइक्रोफोन उपलब्ध नहीं है। फॉलबैक मोड में नामकरण को गलत माना गया।',
+    'el':
+        'Χωρίς πρόσβαση στο μικρόφωνο. Η ονομασία αξιολογήθηκε ως λανθασμένη σε λειτουργία fallback.',
+    'zh': '无法访问麦克风。在回退模式下，命名被判定为错误。',
+    'tr':
+        'Mikrofon erişimi yok. Adlandırma geri dönüş modunda yanlış olarak değerlendirildi.',
+    'ja': 'マイクにアクセスできません。フォールバックモードではネーミングが不正解として判定されました。',
+  },
+};
 
 @visibleForTesting
 bool shouldSkipComprehensionAutoAdvance({
@@ -354,6 +394,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool _updateDialogShown = false;
   AppUpdateInfo? _availableAppUpdate;
   String _installedVersionLabel = '';
+
+  String _noMicNamingText(String key) {
+    final values = _noMicNamingTexts[key];
+    if (values == null) return '';
+    final preferredLang = (nativeLang != null && nativeLang!.trim().isNotEmpty)
+        ? nativeLang!
+        : lang;
+    final code = HintsService.normalizeLangCode(preferredLang);
+    return values[code] ?? values['en'] ?? '';
+  }
 
   @override
   void initState() {
@@ -2436,8 +2486,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       micPromptActive = false;
       namingHold = false;
       namingOutcome = null;
-      namingStatus =
-          'No microphone access. Naming continues without recording.';
+      namingStatus = _noMicNamingText('continue_without_recording');
       _liveTranscript = '';
       micStage = 0;
       micOn = true;
@@ -2644,8 +2693,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final noAnswer = transcript.trim().isEmpty;
     if (!wasCorrect && noAnswer) {
       if (namingNoMicMode) {
-        namingStatus =
-            'No microphone access. Naming was scored as false in fallback mode.';
+        namingStatus = _noMicNamingText('scored_false');
         ladderController.tryRivalStep(probability: 0.5);
       } else {
         final bool gotSound = namingController.lastListenGotSoundLevel;
