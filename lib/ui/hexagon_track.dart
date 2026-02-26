@@ -8,6 +8,43 @@ import 'package:flutter/material.dart';
 import '../logic/hexagon_controller.dart';
 import '../logic/hexagon_grid.dart';
 
+const Map<String, Map<String, String>> _hexTrackTooltipTexts = {
+  'virtual_rival': {
+    'en': 'Your virtual rival',
+    'de': 'Dein virtueller Gegner',
+    'ar': 'منافسك الافتراضي',
+    'fr': 'Votre rival virtuel',
+    'es': 'Tu rival virtual',
+    'it': 'Il tuo rivale virtuale',
+    'ru': 'Ваш виртуальный соперник',
+    'hi': 'आपका आभासी प्रतिद्वंद्वी',
+    'el': 'Ο εικονικός σου αντίπαλος',
+    'zh': '你的虚拟对手',
+    'tr': 'Sanal rakibin',
+    'ja': 'あなたのバーチャルライバル',
+  },
+  'you': {
+    'en': 'You',
+    'de': 'Du',
+    'ar': 'أنت',
+    'fr': 'Vous',
+    'es': 'Tú',
+    'it': 'Tu',
+    'ru': 'Вы',
+    'hi': 'आप',
+    'el': 'Εσύ',
+    'zh': '你',
+    'tr': 'Sen',
+    'ja': 'あなた',
+  },
+};
+
+String _hexTrackTooltipText(String key, String langCode) {
+  final values = _hexTrackTooltipTexts[key];
+  if (values == null) return key;
+  return values[langCode] ?? values['en'] ?? key;
+}
+
 class HexagonTrack extends StatelessWidget {
   const HexagonTrack({
     super.key,
@@ -21,6 +58,7 @@ class HexagonTrack extends StatelessWidget {
     required this.rivalFlagShowIndex,
     required this.youTrail,
     required this.rivalTrail,
+    required this.tooltipLanguageCode,
     this.uiScale = 1.0,
     this.centerGrid = false,
   });
@@ -35,11 +73,15 @@ class HexagonTrack extends StatelessWidget {
   final int rivalFlagShowIndex;
   final List<HexTrailPoint> youTrail;
   final List<HexTrailPoint> rivalTrail;
+  final String tooltipLanguageCode;
   final double uiScale;
   final bool centerGrid;
 
   @override
   Widget build(BuildContext context) {
+    final rivalTooltip =
+        _hexTrackTooltipText('virtual_rival', tooltipLanguageCode);
+    final playerTooltip = _hexTrackTooltipText('you', tooltipLanguageCode);
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
     final double scale = (kIsWeb ? 0.75 : 1.0) * uiScale;
@@ -61,8 +103,10 @@ class HexagonTrack extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final unitGrid = buildHexGrid(side: 1.0);
-          final double unitMinX = unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a < b ? a : b);
-          final double unitMaxX = unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a > b ? a : b);
+          final double unitMinX =
+              unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a < b ? a : b);
+          final double unitMaxX =
+              unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a > b ? a : b);
           final double widthFactor = unitMaxX - unitMinX;
           final double availableWidthBase = centerGrid
               ? constraints.maxWidth
@@ -74,10 +118,14 @@ class HexagonTrack extends StatelessWidget {
           final double side = availableWidth / (widthFactor + 2 * marginFactor);
 
           final grid = buildHexGrid(side: side);
-          final double minX = grid.nodes.map((p) => p.dx).reduce((a, b) => a < b ? a : b);
-          final double maxX = grid.nodes.map((p) => p.dx).reduce((a, b) => a > b ? a : b);
-          final double minY = grid.nodes.map((p) => p.dy).reduce((a, b) => a < b ? a : b);
-          final double maxY = grid.nodes.map((p) => p.dy).reduce((a, b) => a > b ? a : b);
+          final double minX =
+              grid.nodes.map((p) => p.dx).reduce((a, b) => a < b ? a : b);
+          final double maxX =
+              grid.nodes.map((p) => p.dx).reduce((a, b) => a > b ? a : b);
+          final double minY =
+              grid.nodes.map((p) => p.dy).reduce((a, b) => a < b ? a : b);
+          final double maxY =
+              grid.nodes.map((p) => p.dy).reduce((a, b) => a > b ? a : b);
           final double margin = side * marginFactor;
           final Offset translation = Offset(-minX + margin, -minY + margin);
 
@@ -99,10 +147,11 @@ class HexagonTrack extends StatelessWidget {
               .map((c) => _Edge(c.points[1], c.points[2]))
               .toList();
           final iconsHeight = iconSize * 2 + 12 * scale;
-          final baseHeight = iconsHeight > trackHeight ? iconsHeight : trackHeight;
+          final baseHeight =
+              iconsHeight > trackHeight ? iconsHeight : trackHeight;
           final totalWidth = labelWidth + trackWidth + flagColumnWidth;
-          final int playerStartIdx = grid.nodeIndexFor(2, 0, 5) ?? 0;
-          final int rivalStartIdx = grid.nodeIndexFor(0, 0, 4) ?? 0;
+          final int playerStartIdx = grid.nodeIndexFor(0, 0, 4) ?? 0;
+          final int rivalStartIdx = grid.nodeIndexFor(2, 0, 5) ?? 0;
           final Offset playerStartPos = shiftedNodes[playerStartIdx];
           final Offset rivalStartPos = shiftedNodes[rivalStartIdx];
           final double topBandStart = 0.05 * trackHeight;
@@ -113,17 +162,28 @@ class HexagonTrack extends StatelessWidget {
           final double topBandMax = topBandEnd - iconSize;
           final double bottomBandMin = bottomBandStart;
           final double bottomBandMax = bottomBandEnd - iconSize;
-          final double safeTopMax = topBandMax >= topBandMin ? topBandMax : topBandMin;
+          final double safeTopMax =
+              topBandMax >= topBandMin ? topBandMax : topBandMin;
           final double safeBottomMax =
               bottomBandMax >= bottomBandMin ? bottomBandMax : bottomBandMin;
+          double playerTop =
+              ((playerStartPos.dy - iconSize / 2).clamp(topBandMin, safeTopMax))
+                  .toDouble();
           double rivalTop = ((rivalStartPos.dy - iconSize / 2)
-                  .clamp(topBandMin, safeTopMax))
-              .toDouble();
-          double playerTop = ((playerStartPos.dy - iconSize / 2)
                   .clamp(bottomBandMin, safeBottomMax))
               .toDouble();
-          final double flagTopRival = (trackHeight / 2) - flagSize - 4;
-          final double flagTopPlayer = (trackHeight / 2) + 4;
+          final double flagTopPlayer = (trackHeight / 2) - flagSize - 4;
+          final double flagTopRival = (trackHeight / 2) + 4;
+          final bool showGoalFlags = !youFlagVisible && !rivalFlagVisible;
+          final double goalFlagsSize = flagSize * 3.0;
+          final double upperFlagTop =
+              flagTopPlayer < flagTopRival ? flagTopPlayer : flagTopRival;
+          final double lowerFlagTop =
+              flagTopPlayer > flagTopRival ? flagTopPlayer : flagTopRival;
+          final double upperFlagCenter = upperFlagTop + flagSize / 2;
+          final double lowerFlagCenter = lowerFlagTop + flagSize / 2;
+          final double goalFlagsTop =
+              ((upperFlagCenter + lowerFlagCenter) / 2) - goalFlagsSize / 2;
 
           if (centerGrid) {
             final double totalHeight = baseHeight + 24 * scale;
@@ -169,21 +229,27 @@ class HexagonTrack extends StatelessWidget {
                               Positioned(
                                 left: (labelWidth - iconSize) / 2,
                                 top: rivalTop,
-                                child: Image.asset(
-                                  'assets/icons/rival.webp',
-                                  width: iconSize,
-                                  height: iconSize,
-                                  fit: BoxFit.contain,
+                                child: Tooltip(
+                                  message: rivalTooltip,
+                                  child: Image.asset(
+                                    'assets/icons/rival.webp',
+                                    width: iconSize,
+                                    height: iconSize,
+                                    fit: BoxFit.contain,
+                                  ),
                                 ),
                               ),
                               Positioned(
                                 left: (labelWidth - iconSize) / 2,
                                 top: playerTop,
-                                child: Image.asset(
-                                  'assets/icons/player.webp',
-                                  width: iconSize,
-                                  height: iconSize,
-                                  fit: BoxFit.contain,
+                                child: Tooltip(
+                                  message: playerTooltip,
+                                  child: Image.asset(
+                                    'assets/icons/player.webp',
+                                    width: iconSize,
+                                    height: iconSize,
+                                    fit: BoxFit.contain,
+                                  ),
                                 ),
                               ),
                             ],
@@ -199,6 +265,17 @@ class HexagonTrack extends StatelessWidget {
                           child: Stack(
                             clipBehavior: Clip.none,
                             children: [
+                              if (showGoalFlags)
+                                Positioned(
+                                  left: (flagColumnWidth - goalFlagsSize) / 2,
+                                  top: goalFlagsTop,
+                                  child: Image.asset(
+                                    'assets/icons/goalflags.webp',
+                                    width: goalFlagsSize,
+                                    height: goalFlagsSize,
+                                    fit: BoxFit.contain,
+                                  ),
+                                ),
                               if (youFlagVisible)
                                 Positioned(
                                   left: (flagColumnWidth - flagSize) / 2,
@@ -256,21 +333,27 @@ class HexagonTrack extends StatelessWidget {
                           Positioned(
                             left: (labelWidth - iconSize) / 2,
                             top: rivalTop,
-                            child: Image.asset(
-                              'assets/icons/rival.webp',
-                              width: iconSize,
-                              height: iconSize,
-                              fit: BoxFit.contain,
+                            child: Tooltip(
+                              message: rivalTooltip,
+                              child: Image.asset(
+                                'assets/icons/rival.webp',
+                                width: iconSize,
+                                height: iconSize,
+                                fit: BoxFit.contain,
+                              ),
                             ),
                           ),
                           Positioned(
                             left: (labelWidth - iconSize) / 2,
                             top: playerTop,
-                            child: Image.asset(
-                              'assets/icons/player.webp',
-                              width: iconSize,
-                              height: iconSize,
-                              fit: BoxFit.contain,
+                            child: Tooltip(
+                              message: playerTooltip,
+                              child: Image.asset(
+                                'assets/icons/player.webp',
+                                width: iconSize,
+                                height: iconSize,
+                                fit: BoxFit.contain,
+                              ),
                             ),
                           ),
                         ],
@@ -301,6 +384,17 @@ class HexagonTrack extends StatelessWidget {
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
+                          if (showGoalFlags)
+                            Positioned(
+                              left: (flagColumnWidth - goalFlagsSize) / 2,
+                              top: goalFlagsTop,
+                              child: Image.asset(
+                                'assets/icons/goalflags.webp',
+                                width: goalFlagsSize,
+                                height: goalFlagsSize,
+                                fit: BoxFit.contain,
+                              ),
+                            ),
                           if (youFlagVisible)
                             Positioned(
                               left: (flagColumnWidth - flagSize) / 2,
@@ -421,13 +515,15 @@ class _HexagonPainter extends CustomPainter {
       final paint = Paint()
         ..color = Colors.blue.withValues(alpha: 0.8)
         ..style = PaintingStyle.fill;
-      canvas.drawCircle(youCenter.translate(0, -markerRadius * 0.3), markerRadius, paint);
+      canvas.drawCircle(
+          youCenter.translate(0, -markerRadius * 0.3), markerRadius, paint);
     }
     if (rivalCenter != null) {
       final paint = Paint()
         ..color = Colors.orange.withValues(alpha: 0.8)
         ..style = PaintingStyle.fill;
-      canvas.drawCircle(rivalCenter.translate(0, markerRadius * 0.3), markerRadius, paint);
+      canvas.drawCircle(
+          rivalCenter.translate(0, markerRadius * 0.3), markerRadius, paint);
     }
   }
 

@@ -4,17 +4,50 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
-import 'paper_month_calendar.dart';
 import 'paper_week_calendar.dart';
 import '../constants.dart';
 import '../data/user_log_service.dart';
 import '../data/user_summary_service.dart';
-import '../flavor_config.dart';
 import '../logic/log_storage.dart';
 
-// Kalender-Widget: liest lokale Logs und zeigt 4 Wochen pro Seite.
+const Map<String, String> _runsThisDayTooltipTexts = {
+  'en': 'Runs this day',
+  'de': 'Trainingseinheiten an diesem Tag',
+  'ar': 'عدد المحاولات في هذا اليوم',
+  'fr': 'Sessions de ce jour',
+  'es': 'Sesiones de este día',
+  'it': 'Sessioni di questo giorno',
+  'ru': 'Запуски в этот день',
+  'hi': 'इस दिन के प्रयास',
+  'el': 'Συνεδρίες αυτής της ημέρας',
+  'zh': '当天练习次数',
+  'tr': 'Bu gündeki tekrar sayısı',
+  'ja': 'この日の学習回数',
+};
+
+String _runsThisDayTooltip(String languageCode) {
+  final code = languageCode.trim().toLowerCase();
+  return _runsThisDayTooltipTexts[code] ?? _runsThisDayTooltipTexts['en']!;
+}
+
+String _normalizedLangCode(String? raw) {
+  if (raw == null) return '';
+  final trimmed = raw.trim().toLowerCase();
+  if (trimmed.isEmpty) return '';
+  final parts = trimmed.split(RegExp(r'[-_]'));
+  return parts.isNotEmpty ? parts.first : trimmed;
+}
+
+String _tooltipLanguageCode({required String? l1, required String? l2}) {
+  final l1Code = _normalizedLangCode(l1);
+  if (l1Code.isNotEmpty) return l1Code;
+  final l2Code = _normalizedLangCode(l2);
+  if (l2Code.isNotEmpty) return l2Code;
+  return 'en';
+}
+
+// Kalender-Widget: liest Logs und zeigt eine echte Monatsansicht pro Seite.
 // Die Anzeige wird regelmaessig neu geladen, damit neue Logs sichtbar sind.
 class TrainingCalendarPanel extends StatefulWidget {
   const TrainingCalendarPanel({
@@ -26,6 +59,8 @@ class TrainingCalendarPanel extends StatefulWidget {
     this.userId,
     this.workerHost,
     this.apiPrefix,
+    this.targetLanguage,
+    this.nativeLanguage,
     this.thresholdRuns = 10,
   });
 
@@ -36,6 +71,8 @@ class TrainingCalendarPanel extends StatefulWidget {
   final String? userId;
   final String? workerHost;
   final String? apiPrefix;
+  final String? targetLanguage;
+  final String? nativeLanguage;
   final int? thresholdRuns;
 
   @override
@@ -43,10 +80,6 @@ class TrainingCalendarPanel extends StatefulWidget {
 }
 
 class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
-  // Eine Seite zeigt 4 Wochen = 28 Tage.
-  static const int _weeksPerPage = 4;
-  static const int _daysPerPage = 28;
-  // Grosser Startwert, damit man nach vorne und hinten scrollen kann.
   static const int _pageAnchor = 1000;
 
   final PageController _pageController =
@@ -125,213 +158,440 @@ class _TrainingCalendarPanelState extends State<TrainingCalendarPanel> {
     return setEquals(aKeys, bKeys);
   }
 
-  int _todayIndexFromDays(DateTime today, List<DayStatus> days) {
-    final dayKey = TrainingCalendarData.dayKey(today.toUtc());
-    for (int i = 0; i < days.length; i++) {
-      if (TrainingCalendarData.dayKey(days[i].date) == dayKey) return i;
-    }
-    return -1;
-  }
-
-  List<DayStatus> _daysForPage({
+  DateTime _monthStartForPage({
     required int page,
     required DateTime nowUtc,
   }) {
-    final currentWeek = TrainingCalendarData.weekStartFor(nowUtc);
-    final baseWeek = currentWeek.subtract(const Duration(days: 7 * 2));
+    final currentMonthStart = DateTime.utc(nowUtc.year, nowUtc.month, 1);
     final offset = page - _pageAnchor;
-    final weekStart = baseWeek.add(Duration(days: offset * _daysPerPage));
-    return _data.buildWeeks(
-      weekStart,
-      weekCount: _weeksPerPage,
-      nowUtc: nowUtc,
+    return DateTime.utc(
+      currentMonthStart.year,
+      currentMonthStart.month + offset,
+      1,
     );
   }
 
-  DayStatus? _resolveSelectedDay(List<DayStatus> visibleDays, DateTime nowUtc) {
-    final key = _selectedDayKeyUtc;
-    if (key != null) {
-      for (final day in visibleDays) {
-        if (TrainingCalendarData.dayKey(day.date.toUtc()) == key) {
-          return day;
-        }
+  int _pageForMonthStart({
+    required DateTime monthStartUtc,
+    required DateTime nowUtc,
+  }) {
+    final currentMonthStart = DateTime.utc(nowUtc.year, nowUtc.month, 1);
+    final monthDiff = (monthStartUtc.year - currentMonthStart.year) * 12 +
+        (monthStartUtc.month - currentMonthStart.month);
+    return _pageAnchor + monthDiff;
+  }
+
+  _CalendarMonthPage _monthPageFor({
+    required int page,
+    required DateTime nowUtc,
+  }) {
+    final monthStart = _monthStartForPage(page: page, nowUtc: nowUtc);
+    final monthEnd = DateTime.utc(monthStart.year, monthStart.month + 1, 0);
+    final gridStart = TrainingCalendarData.weekStartFor(monthStart);
+    final coveredDays = monthEnd.difference(gridStart).inDays + 1;
+    final weekCount = ((coveredDays + 6) / 7).ceil().clamp(4, 6).toInt();
+    final days = _data.buildWeeks(
+      gridStart,
+      weekCount: weekCount,
+      nowUtc: nowUtc,
+    );
+    return _CalendarMonthPage(
+      monthStartUtc: monthStart,
+      weekCount: weekCount,
+      days: days,
+    );
+  }
+
+  Locale _localeForTargetLanguage(String? code) {
+    final norm = (code ?? '').trim().toLowerCase();
+    final localeId = speechLocaleOverrides[norm] ?? norm;
+    if (localeId.contains('-')) {
+      final parts = localeId.split('-');
+      if (parts.length >= 2) {
+        return Locale(parts[0], parts[1]);
       }
     }
-    final todayIndex = _todayIndexFromDays(nowUtc, visibleDays);
-    if (todayIndex >= 0 && todayIndex < visibleDays.length) {
-      return visibleDays[todayIndex];
+    if (localeId.contains('_')) {
+      final parts = localeId.split('_');
+      if (parts.length >= 2) {
+        return Locale(parts[0], parts[1]);
+      }
     }
-    return visibleDays.isNotEmpty ? visibleDays.last : null;
+    return Locale(norm.isEmpty ? 'en' : norm);
   }
 
-  String _rangeLabel(BuildContext context, List<DayStatus> days) {
-    if (days.isEmpty) return '';
-    final localizations = MaterialLocalizations.of(context);
-    final start = localizations.formatShortDate(days.first.date.toLocal());
-    final end = localizations.formatShortDate(days.last.date.toLocal());
-    return '$start - $end';
-  }
-
-  String _selectedDayLabel(BuildContext context, DayStatus day) {
-    final localizations = MaterialLocalizations.of(context);
-    final dayKey = TrainingCalendarData.dayKey(day.date.toUtc());
-    final runs = _data.runsByDay[dayKey] ?? 0;
-    final minutes = (day.activeSeconds / 60).floor();
-    final dateText = localizations.formatMediumDate(day.date.toLocal());
-    final minText = localizations.formatDecimal(minutes);
-    final runText = localizations.formatDecimal(runs);
-    return '$dateText • $minText min • $runText runs';
-  }
-
-  Future<void> _openDailyWordsProject() async {
-    final uri = Uri.parse(activeFlavor.dashboardLandingUrl);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  PaperStyle _styleForDate(DateTime date) {
-    const tints = [
-      Color(0xFFF4EFE6),
-      Color(0xFFF3E9DA),
-      Color(0xFFF1EDD4),
-      Color(0xFFECF2E0),
-      Color(0xFFE9F1E6),
-      Color(0xFFE6F1EC),
-      Color(0xFFE7F0F3),
-      Color(0xFFEAEAF4),
-      Color(0xFFF0E6F2),
-      Color(0xFFF3E5E7),
-      Color(0xFFF3E8DA),
-      Color(0xFFF1EEE3),
+  List<String> _weekdayLabelsMondayFirst(MaterialLocalizations localizations) {
+    final labels = localizations.narrowWeekdays;
+    return <String>[
+      ...labels.skip(1),
+      labels.first,
     ];
-    final monthIndex = (date.month - 1).clamp(0, 11).toInt();
-    final tint = tints[monthIndex];
-    final glow = Color.lerp(tint, Colors.white, 0.4) ?? tint;
-    return PaperStyle(
-      paperColor: Colors.transparent,
-      gridLineColor: Colors.black,
-      glowColor: glow,
-      playerMarkColor: const Color(0xFF2E6BCB),
-      rivalMarkColor: const Color(0xFFE27A2A),
-      textureEnabled: false,
-      showBinding: false,
-      bindingHeight: 0,
+  }
+
+  bool _sameMonth(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month;
+  }
+
+  Future<void> _handleDayTap(
+    DayStatus day,
+    DateTime visibleMonthStartUtc,
+    DateTime nowUtc,
+  ) async {
+    final dayKey = TrainingCalendarData.dayKey(day.date.toUtc());
+    setState(() {
+      _selectedDayKeyUtc = dayKey;
+    });
+    if (_sameMonth(day.date, visibleMonthStartUtc)) return;
+    final targetMonthStart = DateTime.utc(day.date.year, day.date.month, 1);
+    final targetPage = _pageForMonthStart(
+      monthStartUtc: targetMonthStart,
+      nowUtc: nowUtc,
+    );
+    if (targetPage == _currentPage) return;
+    await _pageController.animateToPage(
+      targetPage,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now().toUtc();
-    final visibleDays = _daysForPage(page: _currentPage, nowUtc: now);
-    final selectedDay = _resolveSelectedDay(visibleDays, now);
-    final rangeLabel = _rangeLabel(context, visibleDays);
-    final selectedLabel =
-        selectedDay == null ? '' : _selectedDayLabel(context, selectedDay);
-    final headlineLabel = selectedLabel.isNotEmpty ? selectedLabel : rangeLabel;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 2),
-              child: Column(
-                children: [
-                  if (headlineLabel.isNotEmpty)
-                    Text(
-                      headlineLabel,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: const Color(0xFF2F4B56),
-                          ),
-                    ),
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      minimumSize: Size.zero,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    onPressed: _openDailyWordsProject,
-                    child: Text(
-                      'DailyWord-project.org',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.blue.shade700,
-                            fontWeight: FontWeight.w600,
-                            decoration: TextDecoration.underline,
-                          ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  PageView.builder(
-                    controller: _pageController,
-                    onPageChanged: (index) {
-                      if (!mounted) return;
-                      setState(() {
-                        _currentPage = index;
-                      });
-                    },
-                    itemBuilder: (context, index) {
-                      final days = _daysForPage(page: index, nowUtc: now);
-                      final todayIndex = _todayIndexFromDays(now, days);
-                      final style = _styleForDate(
-                        days[14].date,
-                      );
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12.0, vertical: 6.0),
-                          child: PaperMonthCalendar(
-                            days: days,
-                            todayIndex: todayIndex,
-                            animateMarks: true,
-                            onTapDay: (dayIndex) {
-                              if (dayIndex < 0 || dayIndex >= days.length) {
-                                return;
-                              }
-                              setState(() {
-                                _selectedDayKeyUtc =
-                                    TrainingCalendarData.dayKey(
-                                  days[dayIndex].date.toUtc(),
-                                );
-                              });
-                            },
-                            paperStyle: style,
-                            thresholdSeconds: _data.thresholdSeconds,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  Positioned(
-                    right: 4,
-                    bottom: 4,
-                    child: IgnorePointer(
-                      child: Image.asset(
-                        'assets/icons/writing_hand.png',
-                        width: max(110.0, constraints.maxWidth * 0.3),
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
+    final locale = _localeForTargetLanguage(widget.targetLanguage);
+    final runsThisDayTooltip = _runsThisDayTooltip(
+      _tooltipLanguageCode(
+        l1: widget.nativeLanguage,
+        l2: widget.targetLanguage,
+      ),
     );
+    final todayKey = TrainingCalendarData.dayKey(now);
+    final selectedDayKey = _selectedDayKeyUtc ?? todayKey;
+    final currentMonthPage = _monthPageFor(page: _currentPage, nowUtc: now);
+
+    return Localizations.override(
+      context: context,
+      locale: locale,
+      child: Builder(
+        builder: (localizedContext) {
+          final localizations = MaterialLocalizations.of(localizedContext);
+          final monthLabel = localizations.formatMonthYear(
+            currentMonthPage.monthStartUtc.toLocal(),
+          );
+          final weekdayLabels = _weekdayLabelsMondayFirst(localizations);
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () {
+                        _pageController.previousPage(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOut,
+                        );
+                      },
+                      icon: const Icon(Icons.chevron_left),
+                    ),
+                    Expanded(
+                      child: Text(
+                        monthLabel,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(localizedContext)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF1E2936),
+                            ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () {
+                        _pageController.nextPage(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOut,
+                        );
+                      },
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                child: Row(
+                  children: List.generate(7, (index) {
+                    return Expanded(
+                      child: Center(
+                        child: Text(
+                          weekdayLabels[index],
+                          style: Theme.of(localizedContext)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF66707A),
+                              ),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+              Expanded(
+                child: PageView.builder(
+                  controller: _pageController,
+                  onPageChanged: (index) {
+                    if (!mounted) return;
+                    setState(() {
+                      _currentPage = index;
+                    });
+                  },
+                  itemBuilder: (context, index) {
+                    final page = _monthPageFor(page: index, nowUtc: now);
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                      child: _CalendarMonthView(
+                        page: page,
+                        selectedDayKeyUtc: selectedDayKey,
+                        todayDayKeyUtc: todayKey,
+                        runsByDay: _data.runsByDay,
+                        runsThisDayTooltip: runsThisDayTooltip,
+                        onTapDay: (day) {
+                          _handleDayTap(day, page.monthStartUtc, now);
+                        },
+                        dayLabelBuilder: (date) {
+                          return localizations.formatDecimal(date.day);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CalendarMonthPage {
+  const _CalendarMonthPage({
+    required this.monthStartUtc,
+    required this.weekCount,
+    required this.days,
+  });
+
+  final DateTime monthStartUtc;
+  final int weekCount;
+  final List<DayStatus> days;
+}
+
+class _CalendarMonthView extends StatelessWidget {
+  const _CalendarMonthView({
+    required this.page,
+    required this.selectedDayKeyUtc,
+    required this.todayDayKeyUtc,
+    required this.runsByDay,
+    required this.runsThisDayTooltip,
+    required this.onTapDay,
+    required this.dayLabelBuilder,
+  });
+
+  final _CalendarMonthPage page;
+  final DateTime selectedDayKeyUtc;
+  final DateTime todayDayKeyUtc;
+  final Map<DateTime, int> runsByDay;
+  final String runsThisDayTooltip;
+  final ValueChanged<DayStatus> onTapDay;
+  final String Function(DateTime date) dayLabelBuilder;
+
+  bool _sameMonth(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: List.generate(page.weekCount, (week) {
+        return Expanded(
+          child: Row(
+            children: List.generate(7, (weekday) {
+              final index = week * 7 + weekday;
+              if (index < 0 || index >= page.days.length) {
+                return const Expanded(child: SizedBox.shrink());
+              }
+              final day = page.days[index];
+              final key = TrainingCalendarData.dayKey(day.date.toUtc());
+              final inMonth = _sameMonth(day.date, page.monthStartUtc);
+              final runs = runsByDay[key] ?? 0;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: _MonthDayCell(
+                    dayLabel: dayLabelBuilder(day.date.toLocal()),
+                    inMonth: inMonth,
+                    isToday: key == todayDayKeyUtc,
+                    isSelected: key == selectedDayKeyUtc,
+                    completed: day.qualified,
+                    runCount: runs,
+                    runsThisDayTooltip: runsThisDayTooltip,
+                    onTap: () => onTapDay(day),
+                  ),
+                ),
+              );
+            }),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _MonthDayCell extends StatelessWidget {
+  const _MonthDayCell({
+    required this.dayLabel,
+    required this.inMonth,
+    required this.isToday,
+    required this.isSelected,
+    required this.completed,
+    required this.runCount,
+    required this.runsThisDayTooltip,
+    required this.onTap,
+  });
+
+  final String dayLabel;
+  final bool inMonth;
+  final bool isToday;
+  final bool isSelected;
+  final bool completed;
+  final int runCount;
+  final String runsThisDayTooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor =
+        isToday ? const Color(0xFF2E7D32) : const Color(0xFFD7DCE2);
+    final baseBgColor = inMonth ? Colors.white : const Color(0xFFF7F8FA);
+    final bool used = runCount > 0;
+    final usedBgColor =
+        (used && inMonth) ? const Color(0x0F4B7BEC) : baseBgColor;
+    final completedBgColor =
+        (completed && inMonth) ? const Color(0x144B7BEC) : usedBgColor;
+    final bgColor = isSelected ? const Color(0xFFEAF2FF) : completedBgColor;
+    final textColor =
+        inMonth ? const Color(0xFF1E2936) : const Color(0xFF9AA3AC);
+    final tallyColor =
+        completed ? const Color(0xFF2F63C8) : const Color(0xFF7F8C98);
+
+    return Material(
+      color: bgColor,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: borderColor,
+              width: isToday ? 1.6 : 1.0,
+            ),
+          ),
+          padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+          child: Stack(
+            children: [
+              Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  dayLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.fade,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: textColor,
+                      ),
+                ),
+              ),
+              if (runCount > 0)
+                Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Tooltip(
+                    message: runsThisDayTooltip,
+                    child: SizedBox(
+                      height: 16,
+                      width: double.infinity,
+                      child: CustomPaint(
+                        painter: _TallyMarksPainter(
+                          runCount: runCount,
+                          color: tallyColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TallyMarksPainter extends CustomPainter {
+  _TallyMarksPainter({
+    required this.runCount,
+    required this.color,
+  });
+
+  final int runCount;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (runCount <= 0 || size.width <= 2 || size.height <= 2) return;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 1.2;
+    const yTop = 1.0;
+    final yBottom = size.height - 1.0;
+    final groupCount = runCount ~/ 5;
+    final units = runCount + groupCount * 0.9;
+    final step = (size.width - 2.0) / max(1.0, units);
+    final lineStep = step.clamp(0.2, 1.8).toDouble();
+    final groupGap = lineStep * 0.9;
+    double x = 1.0;
+
+    for (int i = 0; i < runCount; i++) {
+      canvas.drawLine(Offset(x, yTop), Offset(x, yBottom), paint);
+      final isFifth = ((i + 1) % 5) == 0;
+      if (isFifth) {
+        final startX = x - 4 * lineStep;
+        canvas.drawLine(
+          Offset(startX - lineStep * 0.15, yBottom - 0.6),
+          Offset(x + lineStep * 0.15, yTop + 0.6),
+          paint,
+        );
+        x += groupGap;
+      } else {
+        x += lineStep;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TallyMarksPainter oldDelegate) {
+    return oldDelegate.runCount != runCount || oldDelegate.color != color;
   }
 }
 

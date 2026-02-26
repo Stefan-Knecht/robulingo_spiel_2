@@ -178,12 +178,19 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.58),
+        color: Colors.white.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: Colors.black.withValues(alpha: 0.08),
+          color: Colors.black.withValues(alpha: 0.12),
           width: 1,
         ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1A000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       child: Column(
