@@ -775,6 +775,7 @@ class NamingView extends StatelessWidget {
     required this.liveTranscript,
     required this.onStartNaming,
     required this.onOpenSettings,
+    required this.onContinueWithoutMic,
     required this.onSkip,
     this.onEscapeToOpeningPanel,
   });
@@ -796,6 +797,7 @@ class NamingView extends StatelessWidget {
   final String liveTranscript;
   final VoidCallback onStartNaming;
   final VoidCallback onOpenSettings;
+  final void Function(String reason) onContinueWithoutMic;
   final void Function(String reason) onSkip;
   final VoidCallback? onEscapeToOpeningPanel;
 
@@ -986,6 +988,37 @@ class NamingView extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
+            ),
+          ),
+        if (namingOutcome == null &&
+            (namingHold ||
+                micDenied ||
+                micPermanentlyDenied ||
+                speechPermanentlyDenied))
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: namingInProgress ? null : onStartNaming,
+                  icon: const Icon(Icons.mic, size: 16),
+                  label: const Text('Retry mic'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: namingInProgress ? null : onOpenSettings,
+                  icon: const Icon(Icons.settings, size: 16),
+                  label: const Text('Settings'),
+                ),
+                TextButton(
+                  onPressed: namingInProgress
+                      ? null
+                      : () => onContinueWithoutMic('manual_button'),
+                  child: const Text('Without mic'),
+                ),
+              ],
             ),
           ),
       ],
@@ -1195,6 +1228,7 @@ class SessionBody extends StatelessWidget {
     required this.showGlobalHourglass,
     required this.onPrimeMic,
     required this.onOpenMicSettings,
+    required this.onContinueWithoutMic,
     required this.onSkipNaming,
     required this.onSelect,
     required this.onOpenDashboard,
@@ -1243,6 +1277,7 @@ class SessionBody extends StatelessWidget {
   final bool showGlobalHourglass;
   final VoidCallback onPrimeMic;
   final VoidCallback onOpenMicSettings;
+  final void Function(String reason) onContinueWithoutMic;
   final void Function(String reason) onSkipNaming;
   final void Function(bool choseLeft) onSelect;
   final VoidCallback onOpenDashboard;
@@ -1318,6 +1353,7 @@ class SessionBody extends StatelessWidget {
             liveTranscript: liveTranscript,
             onStartNaming: onPrimeMic,
             onOpenSettings: onOpenMicSettings,
+            onContinueWithoutMic: onContinueWithoutMic,
             onSkip: onSkipNaming,
             onEscapeToOpeningPanel: onEscapeToOpeningPanel,
           )

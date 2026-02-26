@@ -19,9 +19,9 @@
 
   <h2>Kurzfassung</h2>
   <ul>
-    <li>Mikro/ASR nutzt <code>speech_to_text</code> 6.6.2 + <code>permission_handler</code> (Mikrofon + Speech), gekapselt in <code>lib/logic/naming_controller.dart</code> + <code>lib/logic/voice_state.dart</code> und getriggert aus <code>lib/app/robulingo_app.dart</code>.</li>
+    <li>Mikro/ASR nutzt <code>speech_to_text</code> 7.3.0 + <code>permission_handler</code> (Mikrofon + Speech), gekapselt in <code>lib/logic/naming_controller.dart</code> + <code>lib/logic/voice_state.dart</code> und getriggert aus <code>lib/app/robulingo_app.dart</code>.</li>
     <li>Auf dem aktuellen iPad fehlt Developer Mode; daher konnte die System-Permission nicht sauber erteilt/getestet werden (Verdacht: iPadOS &lt;16, MDM oder ScreenTime blockiert den Dev-Mode).</li>
-    <li>UI fällt aktuell mit Skip/Weiter auf 2AFC zurück, wenn Mic/Speech verweigert wird; wir unterstellen, dass Berechtigungen später oder auf anderem Gerät funktionieren.</li>
+    <li>Wenn Mic/Speech nicht bereit ist, bleibt Naming nach Gate-Allow im Hold und zeigt explizite Optionen: <code>Retry mic</code>, <code>Settings</code>, <code>Without mic</code>. Nur <code>Without mic</code> aktiviert den No-Mic-Run bewusst.</li>
   </ul>
 
   <h2>Grundannahmen &amp; Vermutungen</h2>
@@ -77,7 +77,7 @@
 
     <li><strong>Locale-Handhabung</strong> – im Haupt-Flow wird aktuell keine Locale gesetzt, um iOS-Speech-Engines nicht zu blockieren (<code>_startNamingFlow</code> in <code>lib/app/robulingo_app.dart</code>): <em>Temporär: <code>localeId = null</code></em>.</li>
 
-    <li><strong>MicGate &amp; Block</strong> – expliziter Tap auf das Mikro vor dem ersten Benennen; Ablehnung/Timeout blockt 20 Trials:
+    <li><strong>MicGate &amp; Recovery</strong> – expliziter Tap auf das Mikro vor dem ersten Benennen; bei Prime-Fehler nach Allow bleibt Naming im Hold:
       <details>
         <summary>Codeauszug: lib/ui/mic_gate.dart</summary>
         <pre><code>// Timeout nach 15s, dann onTimeout()
@@ -86,7 +86,7 @@ GestureDetector(
   child: Container(width: 110, height: 110, ... Icon(Icons.mic) ...),
 );</code></pre>
       </details>
-      Die UI zeigt bei verweigertem Mic einen Weiter-Button und Einstellungen-Link (<code>NamingView</code> in <code>lib/ui/session/session_widgets.dart</code>).</li>
+      Die UI zeigt bei verweigertem Mic explizite Aktionen (<code>Retry mic</code>, <code>Settings</code>, <code>Without mic</code>) in <code>NamingView</code> (<code>lib/ui/session/session_widgets.dart</code>).</li>
 
     <li><strong>Standalone-Demo</strong> – <code>lib/naming_demo.dart</code> als minimaler Smoke-Test (Locale <code>de_DE</code>, Start/Stop-Buttons, Debug-Anzeige der Permission-Status):
       <details>
@@ -126,8 +126,8 @@ await _speech.listen(localeId: 'de_DE', listenFor: Duration(seconds: 8), ...);</
 
   <h2>Wie wir das Problem aktuell ausklammern</h2>
   <ul>
-    <li>Benennen blockiert bei verweigertem Mic/Speech; UI bietet „Weiter“ (Skip) und „Einstellungen öffnen“, sodass der restliche 2AFC-Flow weiterläuft.</li>
-    <li>Wir gehen davon aus, dass ein späteres oder anderes Gerät (mit Developer Mode + erlaubten Berechtigungen) den Flow freischaltet; bis dahin bleibt <code>namingHold</code>/<code>micDenied</code> gesetzt.</li>
+    <li>Benennen blockiert bei verweigertem Mic/Speech; UI bietet explizit „Retry mic“, „Settings“ und „Without mic“ statt eines stillen Auto-Fallbacks.</li>
+    <li>Beim App-Resume wird Mic-Bereitschaft automatisch neu geprüft. Wenn Berechtigungen inzwischen gesetzt sind, wird No-Mic-Mode deaktiviert.</li>
     <li>Falls nötig für Tests ohne echte Permissions: <code>assumeIOSDebugSim</code> (in <code>ensureMicReadyDetailed</code>) könnte temporär auf <code>true</code> gesetzt werden, um <code>permanentlyDenied</code> zu ignorieren – nur als Dev-Hack, nicht für Produktion.</li>
     <li><code>namingDisabled</code> (State in <code>VoiceState</code>) kann gesetzt werden, um Benennen komplett auszuschalten und nur 2AFC laufen zu lassen.</li>
   </ul>

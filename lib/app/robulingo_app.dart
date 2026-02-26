@@ -394,6 +394,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool _updateDialogShown = false;
   AppUpdateInfo? _availableAppUpdate;
   String _installedVersionLabel = '';
+  bool _resumeMicRecheckInFlight = false;
 
   String _noMicNamingText(String key) {
     final values = _noMicNamingTexts[key];
@@ -503,6 +504,39 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       unawaited(_persistProgressSnapshot());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(_recheckMicPermissionAfterResume());
+    }
+  }
+
+  Future<void> _recheckMicPermissionAfterResume() async {
+    if (_resumeMicRecheckInFlight || !mounted) return;
+    final shouldCheck = namingNoMicMode ||
+        micDenied ||
+        micPermanentlyDenied ||
+        speechPermanentlyDenied;
+    if (!shouldCheck) return;
+    _resumeMicRecheckInFlight = true;
+    try {
+      final wasNoMicMode = namingNoMicMode;
+      final ready = await voiceController.ensureMicReady();
+      if (!mounted) return;
+      if (ready && wasNoMicMode) {
+        protocolLog.addNote(
+            'Naming no-mic mode disabled: token=$currentTrialToken reason=app_resumed_mic_ready');
+      }
+      setState(() {
+        micDenied = !ready;
+        micPermanentlyDenied = voiceState.micPermanentlyDenied;
+        speechPermanentlyDenied = voiceState.speechPermanentlyDenied;
+        if (ready) {
+          namingNoMicMode = false;
+          namingHold = false;
+          namingStatus = '';
+        }
+      });
+    } finally {
+      _resumeMicRecheckInFlight = false;
     }
   }
 
@@ -2431,31 +2465,28 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           !micPermanentlyDenied &&
           !speechPermanentlyDenied &&
           currentSlot.mode == PresentationMode.naming;
+      final bool permanentDeny =
+          micPermanentlyDenied || speechPermanentlyDenied;
       if (transientAfterGateAllow) {
         protocolLog.addNote(
             'Naming mic prime transient-not-ready after gate allow: token=$token action=hold_for_retry');
-        setState(() {
-          micDenied = true;
-          namingStatus = '';
-          micPrimed = false;
-          micPromptActive = true;
-          namingHold = true;
-        });
-        return;
+      } else if (permanentDeny) {
+        protocolLog.addNote(
+            'Naming mic prime blocked-permanent: token=$token action=hold_with_recovery_options');
+      } else {
+        protocolLog.addNote(
+            'Naming mic prime not-ready: token=$token action=hold_with_recovery_options');
       }
       setState(() {
         micDenied = true;
-        namingStatus = '';
-        micPrimed = true;
-        micPromptActive = false;
-        namingHold = false;
+        namingStatus = permanentDeny
+            ? 'Microphone permission is blocked by system settings.'
+            : '';
+        micPrimed = false;
+        micPromptActive = true;
+        namingHold = true;
         micGateGranted = false;
-        namingBlockRemaining = 0;
-        namingNoMicMode = true;
       });
-      protocolLog.addNote(
-          'Naming mic prime failed: token=$token action=enable_no_mic_mode_and_start');
-      await _startNamingFlow(token, skipGate: true, userInitiated: true);
       return;
     }
     if (namingNoMicMode) {
@@ -2730,6 +2761,25 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       namingStatus = '';
     });
     _advanceAfterNamingAttempt();
+  }
+
+  Future<void> _continueWithoutMicNaming(String reason) async {
+    if (!mounted) return;
+    final token = currentTrialToken;
+    protocolLog.addNote(
+        'Naming manual no-mic start: token=$token reason=$reason action=enable_no_mic_mode_and_start');
+    setState(() {
+      namingBlockRemaining = 0;
+      namingNoMicMode = true;
+      namingOutcome = null;
+      namingStatus = '';
+      micDenied = true;
+      micPrimed = true;
+      micPromptActive = false;
+      namingHold = false;
+      micGateGranted = false;
+    });
+    await _startNamingFlow(token, skipGate: true, userInitiated: true);
   }
 
   Future<void> _select(bool choseLeft) async {
@@ -3417,6 +3467,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           showGlobalHourglass: showGlobalHourglass,
           onPrimeMic: _primeMicAndStart,
           onOpenMicSettings: _openMicSettings,
+          onContinueWithoutMic: _continueWithoutMicNaming,
           onSkipNaming: _skipNaming,
           onSelect: _select,
           tooltipLanguageCode:
