@@ -81,7 +81,11 @@ deploy_flavor() {
   local target="$1"
 
   echo "Building Flutter web (release, APP_FLAVOR=$flavor)..."
-  flutter build web --release --dart-define="APP_FLAVOR=$flavor"
+  BUILD_ARGS=(flutter build web --release --dart-define="APP_FLAVOR=$flavor")
+  if [[ -n "${MEDIA_MANIFEST_VERSION:-}" ]]; then
+    BUILD_ARGS+=(--dart-define="MEDIA_MANIFEST_VERSION=$MEDIA_MANIFEST_VERSION")
+  fi
+  "${BUILD_ARGS[@]}"
 
   case "$MODE" in
     prod)

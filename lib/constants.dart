@@ -8,6 +8,11 @@ const String defaultWorkerHost = 'robulingo-api.knechtipad-aec.workers.dev';
 // Item-/Asset-Worker (JSON/WEBP/MP3).
 const String defaultFileHost = 'robulingo-worker.knechtipad-aec.workers.dev';
 const String defaultApiPrefix = '/api';
+// Bump this when cloud media files are changed, so stale cached media is invalidated.
+const String mediaManifestVersion = String.fromEnvironment(
+  'MEDIA_MANIFEST_VERSION',
+  defaultValue: '2026-02-26-02',
+);
 // Remote uploads (R2/Worker). Disable to avoid creating remote log/delta files.
 const bool enableRemoteLogUpload = true;
 const bool enableRemoteUserDelta = false;

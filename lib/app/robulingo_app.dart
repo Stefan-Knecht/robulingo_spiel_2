@@ -38,6 +38,8 @@ import 'package:robulingo_flutter/logic/curriculum_loader.dart';
 import 'package:robulingo_flutter/logic/history_hint_loader.dart';
 import 'package:robulingo_flutter/logic/naming_flow_runner.dart';
 import 'package:robulingo_flutter/logic/presentation_protocol_log.dart';
+import 'package:robulingo_flutter/logic/playback/playback_engine.dart';
+import 'package:robulingo_flutter/logic/playback/playback_engine_factory.dart';
 import 'package:robulingo_flutter/logic/resume_state_controller.dart';
 import 'package:robulingo_flutter/logic/session_cache_restorer.dart';
 import 'package:robulingo_flutter/logic/session_reset.dart';
@@ -232,8 +234,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   String workerHost = defaultWorkerHost;
   String fileHost = defaultFileHost;
   String apiPrefix = defaultApiPrefix;
-  final AudioPlayer player = AudioPlayer();
-  final AudioPlayer hintPlayer = AudioPlayer();
+  late final PlaybackEngine playbackEngine;
   final AudioPlayer fanfarePlayer = AudioPlayer();
   final AudioPlayer moveYouPlayer = AudioPlayer();
   final AudioPlayer moveRivalPlayer = AudioPlayer();
@@ -362,7 +363,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   int currentTrialToken =
       0; // entwertet alle asynchronen Tasks beim Trialwechsel/Hold
   bool sessionReady = false;
-  StreamSubscription? playbackSub;
   late final EventLogger logger;
   late final PresentationProtocolLog protocolLog;
   bool loggerReady = false;
@@ -422,16 +422,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       onError: _handleSpeechError,
       onStatus: (s) => debugPrint('[asr][status] $s'),
     );
-    player.setReleaseMode(ReleaseMode.stop);
-    hintPlayer.setReleaseMode(ReleaseMode.stop);
-    unawaited(player.setAudioContext(speechAudioContext));
-    unawaited(hintPlayer.setAudioContext(speechAudioContext));
-    playbackSub = player.onPlayerStateChanged.listen((state) {
-      debugPrint(
-          '[audio] state=$state playing=${state == PlayerState.playing}');
-    }, onError: (Object e, StackTrace st) {
-      debugPrint('[audio][error-state] $e');
-    });
+    playbackEngine = createPlaybackEngine(
+      speechContext: speechAudioContext,
+      hintContext: speechAudioContext,
+      onLog: (message) => debugPrint(message),
+    );
+    unawaited(playbackEngine.init());
     unawaited(fanfarePlayer.setAudioContext(sfxAudioContext));
     moveYouPlayer.setReleaseMode(ReleaseMode.stop);
     moveRivalPlayer.setReleaseMode(ReleaseMode.stop);
@@ -2240,14 +2236,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<bool> _playAudioUri(Uri uri) async {
-    try {
-      await player.stop();
-      await player.play(_audioSourceForUri(uri));
-      return true;
-    } catch (e) {
-      debugPrint('[audio][error] url=$uri err=$e');
-      return false;
+    final PlaybackResult result = await playbackEngine.playSpeech(uri);
+    if (!result.ok) {
+      debugPrint('[audio][error] url=$uri err=${result.error ?? "unknown"}');
     }
+    return result.ok;
   }
 
   Future<bool> _playAudioUriWithRetry(Uri uri, {int retries = 1}) async {
@@ -2261,18 +2254,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return false;
   }
 
-  Source _audioSourceForUri(Uri uri) {
-    if (uri.scheme.toLowerCase() == 'file') {
-      return DeviceFileSource(uri.toFilePath());
-    }
-    return UrlSource(uri.toString());
-  }
-
   Future<void> _playAudioForItem(ItemData item, {bool advance = false}) async {
     final sequence = _audioSequenceForItem(item);
     var uri = _audioUriForItem(item, advance: advance);
     final initialIndex = sequence.lastIndexOf(uri);
-    if (initialIndex >= 0) {
+    // Mobile web can report false negatives on URL prechecks (HEAD/range).
+    // Prefer playback-first fallback there.
+    final bool shouldPrecheck = !kIsWeb;
+    if (shouldPrecheck && initialIndex >= 0) {
       final ok = await _audioUrlOkCached(uri);
       if (!ok) {
         final fallbackIndex = await _nextPlayableIndex(sequence, initialIndex);
@@ -2340,12 +2329,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _playHintUri(Uri uri) async {
-    try {
-      await hintPlayer.stop();
-      await hintPlayer.play(_audioSourceForUri(uri));
-      await hintPlayer.onPlayerComplete.first;
-    } catch (e) {
-      debugPrint('[audio][hint-error] url=$uri err=$e');
+    final result = await playbackEngine.playHint(uri);
+    if (!result.ok) {
+      debugPrint(
+          '[audio][hint-error] url=$uri err=${result.error ?? "unknown"}');
     }
   }
 
@@ -3147,9 +3134,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void dispose() {
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
-    playbackSub?.cancel();
-    player.dispose();
-    hintPlayer.dispose();
+    unawaited(playbackEngine.dispose());
     fanfarePlayer.dispose();
     moveYouPlayer.dispose();
     moveRivalPlayer.dispose();
@@ -3572,9 +3557,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _stopAllSessionAudioPlayers() async {
+    try {
+      await playbackEngine.stopSpeech();
+    } catch (_) {}
+    try {
+      await playbackEngine.stopHint();
+    } catch (_) {}
     final players = <AudioPlayer>[
-      player,
-      hintPlayer,
       fanfarePlayer,
       moveYouPlayer,
       moveRivalPlayer,

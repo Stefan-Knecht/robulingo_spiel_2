@@ -104,6 +104,9 @@ if [[ "$SKIP_PUB_GET" -eq 0 ]]; then
 fi
 
 BUILD_CMD=(flutter build apk --release --dart-define=APP_FLAVOR=dailywords)
+if [[ -n "${MEDIA_MANIFEST_VERSION:-}" ]]; then
+  BUILD_CMD+=(--dart-define="MEDIA_MANIFEST_VERSION=$MEDIA_MANIFEST_VERSION")
+fi
 if [[ -n "$BUILD_NAME" ]]; then
   BUILD_CMD+=("--build-name=$BUILD_NAME")
 fi
