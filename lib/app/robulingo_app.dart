@@ -1304,7 +1304,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
   }
 
+  void _primeAudioForUserGesture(String source) {
+    unawaited(playbackEngine.primeForUserGesture(source: source));
+  }
+
+  void _handleResumeStartGesture(String source) {
+    _primeAudioForUserGesture(source);
+    unawaited(_startFromSplash());
+  }
+
   void _onSelectLang(String l) {
+    _primeAudioForUserGesture('target-language-flag');
     setState(() {
       lang = l;
       awaitingLang = false;
@@ -3091,7 +3101,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         return true;
       }
       if (showRestartSplash) {
-        unawaited(_startFromSplash());
+        _handleResumeStartGesture('resume-start-keyboard');
         return true;
       }
     }
@@ -3228,7 +3238,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           targetLanguage: lang,
           nativeLanguage: nativeLang,
           onRestart: () => _restartOnboarding(),
-          onStart: _startFromSplash,
+          onStart: () => _handleResumeStartGesture('resume-start-arrow'),
           onSelectModule: _openModuleSelectorFromResume,
           onOpenHistory: _openHistoryPanel,
           selectedTrainingDepth: trainingDepthMode,

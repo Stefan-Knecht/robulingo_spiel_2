@@ -23,6 +23,8 @@ class PlaybackResult {
 abstract class PlaybackEngine {
   Future<void> init();
 
+  Future<void> primeForUserGesture({String source = ''});
+
   Future<PlaybackResult> playSpeech(
     Uri uri, {
     Duration startTimeout = const Duration(seconds: 8),

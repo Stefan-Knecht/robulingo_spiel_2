@@ -67,6 +67,11 @@ class _NativePlaybackEngine implements PlaybackEngine {
   }
 
   @override
+  Future<void> primeForUserGesture({String source = ''}) async {
+    // Native platforms do not need explicit web autoplay priming.
+  }
+
+  @override
   Future<PlaybackResult> playSpeech(
     Uri uri, {
     Duration startTimeout = const Duration(seconds: 8),
