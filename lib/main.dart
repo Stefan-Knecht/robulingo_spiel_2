@@ -9,10 +9,25 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart'
     show FlutterError, ValueNotifier, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:robulingo_flutter/app/robulingo_app.dart';
 
 final ValueNotifier<String?> _lastError = ValueNotifier<String?>(null);
+const List<Locale> _supportedLocales = <Locale>[
+  Locale('en'),
+  Locale('de'),
+  Locale('ar'),
+  Locale('fr'),
+  Locale('es'),
+  Locale('it'),
+  Locale('ru'),
+  Locale('hi'),
+  Locale('el'),
+  Locale('zh'),
+  Locale('tr'),
+  Locale('ja'),
+];
 
 void main() {
   FlutterError.onError = (details) {
@@ -43,6 +58,12 @@ void main() {
     runApp(
       MaterialApp(
         debugShowCheckedModeBanner: false,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: _supportedLocales,
         theme: ThemeData(
           scaffoldBackgroundColor: Colors.white,
           dialogTheme: const DialogThemeData(

@@ -14,6 +14,114 @@ import 'package:robulingo_flutter/flavor_config.dart';
 
 import '../../logic/log_storage.dart';
 
+const Map<String, Map<String, String>> _dashboardTooltipTexts = {
+  'victory_panel': {
+    'en': "Your and rival's victories",
+    'de': 'Deine und die Siege deines Rivalen',
+    'ar': 'انتصاراتك وانتصارات منافسك',
+    'fr': 'Vos victoires et celles de votre rival',
+    'es': 'Tus victorias y las de tu rival',
+    'it': 'Le tue vittorie e quelle del tuo rivale',
+    'ru': 'Ваши победы и победы соперника',
+    'hi': 'आपकी और प्रतिद्वंद्वी की जीतें',
+    'el': 'Οι νίκες σου και του αντιπάλου',
+    'zh': '你和对手的胜利',
+    'tr': 'Senin ve rakibin galibiyetleri',
+    'ja': 'あなたとライバルの勝利数',
+  },
+  'training_panel': {
+    'en': 'Training on last days',
+    'de': 'Training an den letzten Tagen',
+    'ar': 'التدريب خلال الأيام الأخيرة',
+    'fr': 'Entraînement des derniers jours',
+    'es': 'Entrenamiento de los últimos días',
+    'it': 'Allenamento degli ultimi giorni',
+    'ru': 'Тренировки за последние дни',
+    'hi': 'पिछले दिनों का प्रशिक्षण',
+    'el': 'Προπόνηση των τελευταίων ημερών',
+    'zh': '最近几天的训练',
+    'tr': 'Son günlerdeki antrenman',
+    'ja': '直近数日のトレーニング',
+  },
+  'success_panel': {
+    'en': 'Progress in comprehension and naming',
+    'de': 'Fortschritt im Verstehen und Benennen',
+    'ar': 'التقدم في الفهم والتسمية',
+    'fr': 'Progression en compréhension et dénomination',
+    'es': 'Progreso en comprensión y denominación',
+    'it': 'Progresso in comprensione e denominazione',
+    'ru': 'Прогресс в понимании и назывании',
+    'hi': 'समझ और नामकरण में प्रगति',
+    'el': 'Πρόοδος στην κατανόηση και ονομασία',
+    'zh': '理解与命名进展',
+    'tr': 'Anlama ve adlandırmada ilerleme',
+    'ja': '理解と命名の進捗',
+  },
+  'exit_game': {
+    'en': 'Exit game',
+    'de': 'Spiel beenden',
+    'ar': 'الخروج من اللعبة',
+    'fr': 'Quitter le jeu',
+    'es': 'Salir del juego',
+    'it': 'Esci dal gioco',
+    'ru': 'Выйти из игры',
+    'hi': 'गेम से बाहर निकलें',
+    'el': 'Έξοδος από το παιχνίδι',
+    'zh': '退出游戏',
+    'tr': 'Oyundan çık',
+    'ja': 'ゲームを終了',
+  },
+  'continue_playing': {
+    'en': 'Continue playing',
+    'de': 'Weiter spielen',
+    'ar': 'متابعة اللعب',
+    'fr': 'Continuer à jouer',
+    'es': 'Seguir jugando',
+    'it': 'Continua a giocare',
+    'ru': 'Продолжить игру',
+    'hi': 'खेलना जारी रखें',
+    'el': 'Συνέχισε το παιχνίδι',
+    'zh': '继续游戏',
+    'tr': 'Oynamaya devam et',
+    'ja': 'プレイを続ける',
+  },
+  'you': {
+    'en': 'You',
+    'de': 'Du',
+    'ar': 'أنت',
+    'fr': 'Vous',
+    'es': 'Tú',
+    'it': 'Tu',
+    'ru': 'Вы',
+    'hi': 'आप',
+    'el': 'Εσύ',
+    'zh': '你',
+    'tr': 'Sen',
+    'ja': 'あなた',
+  },
+  'your_rival': {
+    'en': 'Your rival',
+    'de': 'Dein Rivale',
+    'ar': 'منافسك',
+    'fr': 'Votre rival',
+    'es': 'Tu rival',
+    'it': 'Il tuo rivale',
+    'ru': 'Ваш соперник',
+    'hi': 'आपका प्रतिद्वंद्वी',
+    'el': 'Ο αντίπαλός σου',
+    'zh': '你的对手',
+    'tr': 'Rakibin',
+    'ja': 'あなたのライバル',
+  },
+};
+
+String _dashboardTooltipText(String key, String languageCode) {
+  final byKey = _dashboardTooltipTexts[key];
+  if (byKey == null) return key;
+  final code = languageCode.trim().toLowerCase();
+  return byKey[code] ?? byKey['en'] ?? key;
+}
+
 class DashboardScreen extends StatefulWidget {
   final String focus;
   final int wins;
@@ -28,6 +136,7 @@ class DashboardScreen extends StatefulWidget {
   final Future<void> Function() onExitToResumePanel;
   final Future<String> Function()? onExportProtocol;
   final VoidCallback? onReturnToGame;
+  final String tooltipLanguageCode;
 
   const DashboardScreen({
     super.key,
@@ -42,6 +151,7 @@ class DashboardScreen extends StatefulWidget {
     required this.comprehensionAttempts,
     required this.namingAttempts,
     required this.onExitToResumePanel,
+    required this.tooltipLanguageCode,
     this.onExportProtocol,
     this.onReturnToGame,
   });
@@ -101,7 +211,8 @@ F     J
         child: LayoutBuilder(
           builder: (context, constraints) {
             final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-            final compactLayout = constraints.maxHeight < 700 || textScale > 1.15;
+            final compactLayout =
+                constraints.maxHeight < 700 || textScale > 1.15;
             const contentHorizontal = 12.0;
             const topReserved = 56.0;
             const bottomReserved = 110.0;
@@ -118,19 +229,33 @@ F     J
                     'assets/icons/therapist_neutral.webp';
                 final successPoints =
                     snapshot.data?.successPoints ?? const <SuccessPoint>[];
+                final victoryTooltip = _dashboardTooltipText(
+                    'victory_panel', widget.tooltipLanguageCode);
+                final trainingTooltip = _dashboardTooltipText(
+                    'training_panel', widget.tooltipLanguageCode);
+                final successTooltip = _dashboardTooltipText(
+                    'success_panel', widget.tooltipLanguageCode);
+                final exitGameTooltip = _dashboardTooltipText(
+                    'exit_game', widget.tooltipLanguageCode);
+                final continuePlayingTooltip = _dashboardTooltipText(
+                    'continue_playing', widget.tooltipLanguageCode);
+                final youTooltip =
+                    _dashboardTooltipText('you', widget.tooltipLanguageCode);
+                final rivalTooltip = _dashboardTooltipText(
+                    'your_rival', widget.tooltipLanguageCode);
 
                 Widget dashboardPanels;
                 if (compactLayout) {
-                  final usableHeight = (constraints.maxHeight -
-                          topReserved -
-                          bottomReserved)
-                      .clamp(300.0, 1400.0)
+                  final usableHeight =
+                      (constraints.maxHeight - topReserved - bottomReserved)
+                          .clamp(300.0, 1400.0)
+                          .toDouble();
+                  final panelHeight = ((usableHeight - 20.0) / 3)
+                      .clamp(120.0, 320.0)
                       .toDouble();
-                  final panelHeight =
-                      ((usableHeight - 20.0) / 3).clamp(120.0, 320.0).toDouble();
                   dashboardPanels = SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(
-                        contentHorizontal, topReserved, contentHorizontal, bottomReserved),
+                    padding: const EdgeInsets.fromLTRB(contentHorizontal,
+                        topReserved, contentHorizontal, bottomReserved),
                     child: Column(
                       children: [
                         SizedBox(
@@ -140,6 +265,10 @@ F     J
                             rivalWins: widget.rivalWins,
                             rivalAssetPath: rivalAssetPath,
                             therapistAssetPath: therapistAssetPath,
+                            tooltipMessage: victoryTooltip,
+                            youTooltipMessage: youTooltip,
+                            rivalTooltipMessage: rivalTooltip,
+                            showPlayerBadge: false,
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -147,6 +276,7 @@ F     J
                           height: panelHeight,
                           child: CalendarPanel(
                             weekMinutes: weekMinutes,
+                            tooltipMessage: trainingTooltip,
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -154,6 +284,7 @@ F     J
                           height: panelHeight,
                           child: SuccessPanel(
                             points: successPoints,
+                            tooltipMessage: successTooltip,
                           ),
                         ),
                       ],
@@ -161,8 +292,8 @@ F     J
                   );
                 } else {
                   dashboardPanels = Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        contentHorizontal, topReserved, contentHorizontal, bottomReserved),
+                    padding: const EdgeInsets.fromLTRB(contentHorizontal,
+                        topReserved, contentHorizontal, bottomReserved),
                     child: Column(
                       children: [
                         Expanded(
@@ -172,6 +303,10 @@ F     J
                             rivalWins: widget.rivalWins,
                             rivalAssetPath: rivalAssetPath,
                             therapistAssetPath: therapistAssetPath,
+                            tooltipMessage: victoryTooltip,
+                            youTooltipMessage: youTooltip,
+                            rivalTooltipMessage: rivalTooltip,
+                            showPlayerBadge: false,
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -179,6 +314,7 @@ F     J
                           flex: 3,
                           child: CalendarPanel(
                             weekMinutes: weekMinutes,
+                            tooltipMessage: trainingTooltip,
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -186,6 +322,7 @@ F     J
                           flex: 3,
                           child: SuccessPanel(
                             points: successPoints,
+                            tooltipMessage: successTooltip,
                           ),
                         ),
                       ],
@@ -211,7 +348,8 @@ F     J
                             ? null
                             : () async {
                                 try {
-                                  final msg = await widget.onExportProtocol!.call();
+                                  final msg =
+                                      await widget.onExportProtocol!.call();
                                   if (!context.mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(content: Text(msg)),
@@ -220,7 +358,8 @@ F     J
                                   if (!context.mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                        content: Text('Export fehlgeschlagen: $e')),
+                                        content:
+                                            Text('Export fehlgeschlagen: $e')),
                                   );
                                 }
                               },
@@ -245,6 +384,7 @@ F     J
                       top: 8,
                       right: 8,
                       child: IconButton(
+                        tooltip: continuePlayingTooltip,
                         icon: Icon(
                           Icons.refresh,
                           size: 40,
@@ -260,9 +400,12 @@ F     J
                     Positioned(
                       bottom: 16,
                       right: 16,
-                      child: _ExitIconButton(
-                        busy: _exitInProgress,
-                        onPressed: _handleExitToResume,
+                      child: Tooltip(
+                        message: exitGameTooltip,
+                        child: _ExitIconButton(
+                          busy: _exitInProgress,
+                          onPressed: _handleExitToResume,
+                        ),
                       ),
                     ),
                     Positioned(
@@ -396,9 +539,8 @@ class _ExitIconButtonState extends State<_ExitIconButton> {
       button: true,
       label: 'Exit to resume panel',
       child: MouseRegion(
-        cursor: widget.busy
-            ? SystemMouseCursors.basic
-            : SystemMouseCursors.click,
+        cursor:
+            widget.busy ? SystemMouseCursors.basic : SystemMouseCursors.click,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onTapDown: (_) {
@@ -749,6 +891,10 @@ class VictoryPanel extends StatelessWidget {
   final String rivalAssetPath;
   final String therapistAssetPath;
   final Color? backgroundColor;
+  final String tooltipMessage;
+  final String youTooltipMessage;
+  final String rivalTooltipMessage;
+  final bool showPlayerBadge;
 
   const VictoryPanel({
     super.key,
@@ -756,11 +902,28 @@ class VictoryPanel extends StatelessWidget {
     required this.rivalWins,
     required this.rivalAssetPath,
     required this.therapistAssetPath,
+    this.tooltipMessage = '',
+    this.youTooltipMessage = '',
+    this.rivalTooltipMessage = '',
+    this.showPlayerBadge = true,
     this.backgroundColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final therapistImage = Image.asset(
+      therapistAssetPath,
+      width: 108,
+      height: 108,
+      fit: BoxFit.contain,
+    );
+    final therapistWidget = (!showPlayerBadge && youTooltipMessage.isNotEmpty)
+        ? Tooltip(
+            message: youTooltipMessage,
+            child: therapistImage,
+          )
+        : IgnorePointer(child: therapistImage);
+
     return Container(
       decoration: BoxDecoration(
         color: backgroundColor ?? Colors.grey.shade100,
@@ -770,37 +933,56 @@ class VictoryPanel extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Positioned.fill(
-            child: Align(
-              alignment: _trophyAlignment(),
-              child: const Padding(
-                padding: EdgeInsets.only(top: 8.0),
-                child: _WiggleTrophy(),
-              ),
+          IgnorePointer(
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: _VictoryPainter(wins: wins, rivalWins: rivalWins),
             ),
-          ),
-          CustomPaint(
-            size: Size.infinite,
-            painter: _VictoryPainter(wins: wins, rivalWins: rivalWins),
           ),
           Positioned(
             bottom: 12,
             left: 24,
-            child: Image.asset(
-              therapistAssetPath,
-              width: 108,
-              height: 108,
-              fit: BoxFit.contain,
-            ),
+            child: therapistWidget,
           ),
+          if (showPlayerBadge)
+            Positioned(
+              bottom: 14,
+              left: 124,
+              child: Tooltip(
+                message: youTooltipMessage,
+                child: Image.asset(
+                  'assets/icons/player.webp',
+                  width: 44,
+                  height: 44,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
           Positioned(
             bottom: 12,
             right: 24,
-            child: Image.asset(
-              rivalAssetPath,
-              width: 130,
-              height: 130,
-              fit: BoxFit.contain,
+            child: Tooltip(
+              message: rivalTooltipMessage,
+              child: Image.asset(
+                rivalAssetPath,
+                width: 130,
+                height: 130,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: Align(
+              alignment: _trophyAlignment(),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: tooltipMessage.trim().isEmpty
+                    ? const _WiggleTrophy()
+                    : Tooltip(
+                        message: tooltipMessage,
+                        child: const _WiggleTrophy(),
+                      ),
+              ),
             ),
           ),
         ],
@@ -927,9 +1109,11 @@ class _WiggleTrophyState extends State<_WiggleTrophy>
 
 class CalendarPanel extends StatelessWidget {
   final List<int> weekMinutes;
+  final String tooltipMessage;
   const CalendarPanel({
     super.key,
     required this.weekMinutes,
+    required this.tooltipMessage,
   });
 
   @override
@@ -945,20 +1129,25 @@ class CalendarPanel extends StatelessWidget {
       ),
       child: Stack(
         children: [
+          IgnorePointer(
+            child: Center(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18.0, vertical: 12),
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: _CalendarPainter(weekMinutes: data),
+                ),
+              ),
+            ),
+          ),
           Positioned(
             top: 12,
             left: 12,
-            child: Icon(Icons.calendar_today,
-                color: Colors.blue.shade700, size: 34),
-          ),
-          Center(
-            child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 18.0, vertical: 12),
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: _CalendarPainter(weekMinutes: data),
-              ),
+            child: Tooltip(
+              message: tooltipMessage,
+              child: Icon(Icons.calendar_today,
+                  color: Colors.blue.shade700, size: 34),
             ),
           ),
         ],
@@ -1008,10 +1197,12 @@ class _CalendarPainter extends CustomPainter {
 
 class SuccessPanel extends StatelessWidget {
   final List<SuccessPoint> points;
+  final String tooltipMessage;
 
   const SuccessPanel({
     super.key,
     required this.points,
+    required this.tooltipMessage,
   });
 
   @override
@@ -1024,22 +1215,27 @@ class SuccessPanel extends StatelessWidget {
       ),
       child: Stack(
         children: [
+          IgnorePointer(
+            child: Center(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10),
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: _SuccessPainter(
+                    points: points,
+                  ),
+                ),
+              ),
+            ),
+          ),
           Positioned(
             top: 12,
             right: 16,
-            child:
-                Icon(Icons.trending_up, color: Colors.amber.shade700, size: 36),
-          ),
-          Center(
-            child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10),
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: _SuccessPainter(
-                  points: points,
-                ),
-              ),
+            child: Tooltip(
+              message: tooltipMessage,
+              child: Icon(Icons.trending_up,
+                  color: Colors.amber.shade700, size: 36),
             ),
           ),
         ],

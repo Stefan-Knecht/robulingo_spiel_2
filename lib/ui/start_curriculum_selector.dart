@@ -158,14 +158,17 @@ class StartCurriculumSelector extends StatelessWidget {
             right: 0,
             bottom: 8,
             child: Center(
-              child: IconButton(
-                icon: Image.asset(
-                  historyIconAsset,
-                  width: 28,
-                  height: 28,
-                  fit: BoxFit.contain,
+              child: Tooltip(
+                message: 'Supervisor & progress info',
+                child: IconButton(
+                  icon: Image.asset(
+                    historyIconAsset,
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.contain,
+                  ),
+                  onPressed: onOpenHistory,
                 ),
-                onPressed: onOpenHistory,
               ),
             ),
           ),

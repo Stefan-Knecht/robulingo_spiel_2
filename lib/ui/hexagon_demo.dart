@@ -26,7 +26,8 @@ class _HexagonDemoPageState extends State<HexagonDemoPage> {
       onChanged: () => setState(() {}),
       onYouWin: () => setState(() => status = 'Du hast gewonnen!'),
       onRivalWin: () => setState(() => status = 'Rival hat gewonnen.'),
-      accuracyProvider: () => _recent.isEmpty ? [true] : List<bool>.from(_recent),
+      accuracyProvider: () =>
+          _recent.isEmpty ? [true] : List<bool>.from(_recent),
       onMove: (_) => setState(() {}),
     );
   }
@@ -89,6 +90,7 @@ class _HexagonDemoPageState extends State<HexagonDemoPage> {
                 rivalFlagShowIndex: controller.state.rivalFlagShowIndex,
                 youTrail: controller.state.youTrail,
                 rivalTrail: controller.state.rivalTrail,
+                tooltipLanguageCode: 'en',
               ),
               const SizedBox(height: 12),
               Wrap(
@@ -100,13 +102,15 @@ class _HexagonDemoPageState extends State<HexagonDemoPage> {
                     onPressed: () => _record(true),
                     icon: const Icon(Icons.check, color: Colors.white),
                     label: const Text('Richtig'),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                    style:
+                        ElevatedButton.styleFrom(backgroundColor: Colors.green),
                   ),
                   ElevatedButton.icon(
                     onPressed: () => _record(false),
                     icon: const Icon(Icons.close, color: Colors.white),
                     label: const Text('Falsch'),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                    style:
+                        ElevatedButton.styleFrom(backgroundColor: Colors.red),
                   ),
                   OutlinedButton.icon(
                     onPressed: _reset,

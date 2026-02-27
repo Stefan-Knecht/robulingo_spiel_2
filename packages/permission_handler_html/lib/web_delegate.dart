@@ -53,7 +53,9 @@ class WebDelegate {
       case _grantedPermissionStatus:
         return PermissionStatus.granted;
       case _deniedPermissionStatus:
-        return PermissionStatus.permanentlyDenied;
+        // Browsers can still allow re-prompting after deny depending on site
+        // settings/user choice. Treat as denied, not permanently denied.
+        return PermissionStatus.denied;
       case _promptPermissionStatus:
       default:
         return PermissionStatus.denied;
@@ -74,8 +76,8 @@ class WebDelegate {
     }
 
     try {
-      final mediaStreamPromise = _devices
-          ?.getUserMedia(web.MediaStreamConstraints(audio: true.toJS));
+      final mediaStreamPromise =
+          _devices?.getUserMedia(web.MediaStreamConstraints(audio: true.toJS));
       if (mediaStreamPromise == null) {
         return false;
       }
@@ -109,8 +111,8 @@ class WebDelegate {
     }
 
     try {
-      final mediaStreamPromise = _devices
-          ?.getUserMedia(web.MediaStreamConstraints(video: true.toJS));
+      final mediaStreamPromise =
+          _devices?.getUserMedia(web.MediaStreamConstraints(video: true.toJS));
       if (mediaStreamPromise == null) {
         return false;
       }
@@ -172,9 +174,7 @@ class WebDelegate {
           'The ${permission.toString()} permission is currently not supported on web.')
     };
 
-    if (!permissionGranted) {
-      return PermissionStatus.permanentlyDenied;
-    }
+    if (!permissionGranted) return PermissionStatus.denied;
     return PermissionStatus.granted;
   }
 

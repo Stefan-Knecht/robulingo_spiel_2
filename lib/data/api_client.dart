@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
@@ -59,11 +60,14 @@ class ApiClient {
   Uri _uri(String path, [Map<String, String>? query]) =>
       _uriForHost(workerHost, path, query);
 
-  Uri _fileUri(String key) => _uriForHost(fileHost, '/file', {'key': key});
+  Map<String, String> _fileQuery(String key) =>
+      <String, String>{'key': key, 'mv': mediaManifestVersion};
+
+  Uri _fileUri(String key) => _uriForHost(fileHost, '/file', _fileQuery(key));
 
   /// (alte Schnittstelle) beliebige Textdatei laden
   Future<String> loadTextFile(String key) async {
-    final res = await _http.get(_uri('/file', {'key': key}));
+    final res = await _http.get(_uri('/file', _fileQuery(key)));
     if (res.statusCode != 200) {
       throw ApiException('loadTextFile failed',
           statusCode: res.statusCode, body: res.body);
@@ -72,7 +76,7 @@ class ApiClient {
   }
 
   Future<String> _loadTextFileFromHost(String host, String key) async {
-    final res = await _http.get(_uriForHost(host, '/file', {'key': key}));
+    final res = await _http.get(_uriForHost(host, '/file', _fileQuery(key)));
     if (res.statusCode != 200) {
       throw ApiException('loadTextFile failed',
           statusCode: res.statusCode, body: res.body);
@@ -338,6 +342,9 @@ class ApiClient {
     final manifest = _buildManifest(uuid, dyn);
     final keys = _audioKeysForLang(manifest, lang);
     if (keys.isEmpty) return false;
+    // Mobile web can report false negatives for probe requests while the same
+    // URL is still playable by the media element.
+    if (kIsWeb) return true;
     for (final key in keys) {
       if (await audioUrlOk(_fileUri(key))) return true;
     }
@@ -355,6 +362,12 @@ class ApiClient {
     final key = uri.queryParameters['key'] ?? '';
     if (key.toLowerCase().endsWith('.mp3')) {
       try {
+        if (kIsWeb) {
+          final res = await _http.get(uri);
+          if (res.statusCode != 200) return false;
+          if (_looksLikeMissingMp3Bytes(res.bodyBytes)) return false;
+          return res.bodyBytes.isNotEmpty;
+        }
         final res = await _http.get(uri, headers: {'Range': 'bytes=0-1023'});
         if (res.statusCode != 200 && res.statusCode != 206) return false;
         if (_looksLikeMissingMp3Placeholder(res)) return false;
@@ -638,7 +651,7 @@ class ApiClient {
     final dir = await getApplicationDocumentsDirectory();
     final audioDir = Directory('${dir.path}/$_audioCacheDirName');
     await audioDir.create(recursive: true);
-    final safeName = Uri.encodeComponent(key);
+    final safeName = Uri.encodeComponent('${mediaManifestVersion}::$key');
     final file = File('${audioDir.path}/$safeName');
     if (await file.exists()) {
       final cachedLen = await file.length();

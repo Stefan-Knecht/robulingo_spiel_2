@@ -26,6 +26,7 @@ class VoiceState {
   bool? namingOutcome;
   bool namingDisabled = false;
   int namingBlockRemaining = 0;
+  bool namingNoMicMode = false;
   int micGateToken = -1;
   bool micGateGranted = false;
   bool micOn = false;

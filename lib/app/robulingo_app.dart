@@ -38,6 +38,8 @@ import 'package:robulingo_flutter/logic/curriculum_loader.dart';
 import 'package:robulingo_flutter/logic/history_hint_loader.dart';
 import 'package:robulingo_flutter/logic/naming_flow_runner.dart';
 import 'package:robulingo_flutter/logic/presentation_protocol_log.dart';
+import 'package:robulingo_flutter/logic/playback/playback_engine.dart';
+import 'package:robulingo_flutter/logic/playback/playback_engine_factory.dart';
 import 'package:robulingo_flutter/logic/resume_state_controller.dart';
 import 'package:robulingo_flutter/logic/session_cache_restorer.dart';
 import 'package:robulingo_flutter/logic/session_reset.dart';
@@ -69,6 +71,46 @@ import 'package:robulingo_flutter/utils/text_utils.dart';
 // Note: compare against normalized base codes (e.g. "ja-JP" -> "ja").
 const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
 const int _phoneticGlobalOverrideRuns = 40;
+const Map<String, Map<String, String>> _noMicNamingTexts = {
+  'continue_without_recording': {
+    'en': 'No microphone access. Naming continues without recording.',
+    'de': 'Kein Mikrofonzugriff. Benennen läuft ohne Aufnahme weiter.',
+    'ar': 'لا يوجد وصول إلى الميكروفون. تستمر مهمة التسمية بدون تسجيل.',
+    'fr':
+        'Pas d\'accès au microphone. La dénomination continue sans enregistrement.',
+    'es': 'Sin acceso al micrófono. La denominación continúa sin grabación.',
+    'it':
+        'Nessun accesso al microfono. La denominazione continua senza registrazione.',
+    'ru': 'Нет доступа к микрофону. Называние продолжается без записи.',
+    'hi': 'माइक्रोफोन उपलब्ध नहीं है। नामकरण बिना रिकॉर्डिंग जारी रहेगा।',
+    'el': 'Χωρίς πρόσβαση στο μικρόφωνο. Η ονομασία συνεχίζεται χωρίς εγγραφή.',
+    'zh': '无法访问麦克风。命名将在不录音的情况下继续。',
+    'tr': 'Mikrofon erişimi yok. Adlandırma kayıt olmadan devam ediyor.',
+    'ja': 'マイクにアクセスできません。録音なしでネーミングを続行します。',
+  },
+  'scored_false': {
+    'en': 'No microphone access. Naming was scored as false in fallback mode.',
+    'de':
+        'Kein Mikrofonzugriff. Benennen wurde im Fallback-Modus als falsch gewertet.',
+    'ar':
+        'لا يوجد وصول إلى الميكروفون. تم احتساب التسمية كخاطئة في وضع الطوارئ.',
+    'fr':
+        'Pas d\'accès au microphone. La dénomination a été notée fausse en mode de secours.',
+    'es':
+        'Sin acceso al micrófono. La denominación se evaluó como incorrecta en modo de respaldo.',
+    'it':
+        'Nessun accesso al microfono. La denominazione è stata valutata come errata in modalità fallback.',
+    'ru':
+        'Нет доступа к микрофону. В режиме fallback называние засчитано как неверное.',
+    'hi': 'माइक्रोफोन उपलब्ध नहीं है। फॉलबैक मोड में नामकरण को गलत माना गया।',
+    'el':
+        'Χωρίς πρόσβαση στο μικρόφωνο. Η ονομασία αξιολογήθηκε ως λανθασμένη σε λειτουργία fallback.',
+    'zh': '无法访问麦克风。在回退模式下，命名被判定为错误。',
+    'tr':
+        'Mikrofon erişimi yok. Adlandırma geri dönüş modunda yanlış olarak değerlendirildi.',
+    'ja': 'マイクにアクセスできません。フォールバックモードではネーミングが不正解として判定されました。',
+  },
+};
 
 @visibleForTesting
 bool shouldSkipComprehensionAutoAdvance({
@@ -137,7 +179,7 @@ ItemPresentationConfig presentationConfigForDepth(TrainingDepthMode mode) {
 //   - Stats: pro Item in logic/item_stats.dart; Dashboard liest Logs + Live-Daten.
 // Wichtige Tücken:
 //   - Async mit Tokens/Epoch entwerten (Trialwechsel, Rival-Move, Benennen).
-//   - Naming-Gate: erst nach Zustimmung; Block bei Ablehnung/Timeout (5 Durchläufe).
+//   - Naming-Gate: erst nach Zustimmung; bei Ablehnung/Timeout Fallback auf No-Mic-Naming.
 //   - Rückwärtszüge im Rennen: nicht zweimal hintereinander auf derselben Kante, sonst Seitenwechsel.
 //   - Seeds/Curriculum können fehlen (z.B. zh-Audio); Fehlermeldung prüfen.
 // Willkürliche Parameter (Stand jetzt):
@@ -145,7 +187,7 @@ ItemPresentationConfig presentationConfigForDepth(TrainingDepthMode mode) {
 //   2) Rival-Startprognose: erste 10 Züge maxProb=0.9, danach skaliert mit letzter Accuracy.
 //   3) Benennen: Item qualifiziert nach 4/4 korrekten Comprehension-Antworten; Naming startet erst, wenn >=5 Items qualifiziert sind.
 //   4) Naming-Zeitfenster: 4s erste Aufnahme, 3s Wiederholung.
-//   5) Naming-Block: 20 Trials Pause nach Ablehnung/Timeout im Gate.
+//   5) No-Mic-Naming: bei fehlendem Mikro läuft Naming ohne ASR weiter (wird als falsch gewertet).
 // ------------------------------------------------------------
 class RobuLingoApp extends StatefulWidget {
   const RobuLingoApp({super.key});
@@ -192,8 +234,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   String workerHost = defaultWorkerHost;
   String fileHost = defaultFileHost;
   String apiPrefix = defaultApiPrefix;
-  final AudioPlayer player = AudioPlayer();
-  final AudioPlayer hintPlayer = AudioPlayer();
+  late final PlaybackEngine playbackEngine;
   final AudioPlayer fanfarePlayer = AudioPlayer();
   final AudioPlayer moveYouPlayer = AudioPlayer();
   final AudioPlayer moveRivalPlayer = AudioPlayer();
@@ -254,6 +295,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   int get namingBlockRemaining => voiceState.namingBlockRemaining;
   set namingBlockRemaining(int value) =>
       voiceState.namingBlockRemaining = value;
+  bool get namingNoMicMode => voiceState.namingNoMicMode;
+  set namingNoMicMode(bool value) => voiceState.namingNoMicMode = value;
   int get micGateToken => voiceState.micGateToken;
   set micGateToken(int value) => voiceState.micGateToken = value;
   bool get micGateGranted => voiceState.micGateGranted;
@@ -320,7 +363,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   int currentTrialToken =
       0; // entwertet alle asynchronen Tasks beim Trialwechsel/Hold
   bool sessionReady = false;
-  StreamSubscription? playbackSub;
   late final EventLogger logger;
   late final PresentationProtocolLog protocolLog;
   bool loggerReady = false;
@@ -352,6 +394,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool _updateDialogShown = false;
   AppUpdateInfo? _availableAppUpdate;
   String _installedVersionLabel = '';
+  bool _resumeMicRecheckInFlight = false;
+
+  String _noMicNamingText(String key) {
+    final values = _noMicNamingTexts[key];
+    if (values == null) return '';
+    final preferredLang = (nativeLang != null && nativeLang!.trim().isNotEmpty)
+        ? nativeLang!
+        : lang;
+    final code = HintsService.normalizeLangCode(preferredLang);
+    return values[code] ?? values['en'] ?? '';
+  }
 
   @override
   void initState() {
@@ -369,16 +422,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       onError: _handleSpeechError,
       onStatus: (s) => debugPrint('[asr][status] $s'),
     );
-    player.setReleaseMode(ReleaseMode.stop);
-    hintPlayer.setReleaseMode(ReleaseMode.stop);
-    unawaited(player.setAudioContext(speechAudioContext));
-    unawaited(hintPlayer.setAudioContext(speechAudioContext));
-    playbackSub = player.onPlayerStateChanged.listen((state) {
-      debugPrint(
-          '[audio] state=$state playing=${state == PlayerState.playing}');
-    }, onError: (Object e, StackTrace st) {
-      debugPrint('[audio][error-state] $e');
-    });
+    playbackEngine = createPlaybackEngine(
+      speechContext: speechAudioContext,
+      hintContext: speechAudioContext,
+      onLog: (message) => debugPrint(message),
+    );
+    unawaited(playbackEngine.init());
     unawaited(fanfarePlayer.setAudioContext(sfxAudioContext));
     moveYouPlayer.setReleaseMode(ReleaseMode.stop);
     moveRivalPlayer.setReleaseMode(ReleaseMode.stop);
@@ -451,6 +500,39 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       unawaited(_persistProgressSnapshot());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(_recheckMicPermissionAfterResume());
+    }
+  }
+
+  Future<void> _recheckMicPermissionAfterResume() async {
+    if (_resumeMicRecheckInFlight || !mounted) return;
+    final shouldCheck = namingNoMicMode ||
+        micDenied ||
+        micPermanentlyDenied ||
+        speechPermanentlyDenied;
+    if (!shouldCheck) return;
+    _resumeMicRecheckInFlight = true;
+    try {
+      final wasNoMicMode = namingNoMicMode;
+      final ready = await voiceController.ensureMicReady();
+      if (!mounted) return;
+      if (ready && wasNoMicMode) {
+        protocolLog.addNote(
+            'Naming no-mic mode disabled: token=$currentTrialToken reason=app_resumed_mic_ready');
+      }
+      setState(() {
+        micDenied = !ready;
+        micPermanentlyDenied = voiceState.micPermanentlyDenied;
+        speechPermanentlyDenied = voiceState.speechPermanentlyDenied;
+        if (ready) {
+          namingNoMicMode = false;
+          namingHold = false;
+          namingStatus = '';
+        }
+      });
+    } finally {
+      _resumeMicRecheckInFlight = false;
     }
   }
 
@@ -1007,6 +1089,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         _lastNonRefillerCursorUuid = restored.savedUuid;
         namingInProgress = false;
         namingHold = false;
+        namingNoMicMode = false;
         micOn = false;
         micStage = -1;
         _imageVariantCursorByUuid.clear();
@@ -1554,6 +1637,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       namingInProgress = initData.namingInProgress;
       namingStatus = initData.namingStatus;
       namingDisabled = initData.namingDisabled;
+      namingNoMicMode = false;
       _liveTranscript = initData.liveTranscript;
       currentTrialToken = initData.currentTrialToken;
       sessionStart = initData.sessionStart;
@@ -2152,14 +2236,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<bool> _playAudioUri(Uri uri) async {
-    try {
-      await player.stop();
-      await player.play(_audioSourceForUri(uri));
-      return true;
-    } catch (e) {
-      debugPrint('[audio][error] url=$uri err=$e');
-      return false;
+    final PlaybackResult result = await playbackEngine.playSpeech(uri);
+    if (!result.ok) {
+      debugPrint('[audio][error] url=$uri err=${result.error ?? "unknown"}');
     }
+    return result.ok;
   }
 
   Future<bool> _playAudioUriWithRetry(Uri uri, {int retries = 1}) async {
@@ -2173,18 +2254,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return false;
   }
 
-  Source _audioSourceForUri(Uri uri) {
-    if (uri.scheme.toLowerCase() == 'file') {
-      return DeviceFileSource(uri.toFilePath());
-    }
-    return UrlSource(uri.toString());
-  }
-
   Future<void> _playAudioForItem(ItemData item, {bool advance = false}) async {
     final sequence = _audioSequenceForItem(item);
     var uri = _audioUriForItem(item, advance: advance);
     final initialIndex = sequence.lastIndexOf(uri);
-    if (initialIndex >= 0) {
+    // Mobile web can report false negatives on URL prechecks (HEAD/range).
+    // Prefer playback-first fallback there.
+    final bool shouldPrecheck = !kIsWeb;
+    if (shouldPrecheck && initialIndex >= 0) {
       final ok = await _audioUrlOkCached(uri);
       if (!ok) {
         final fallbackIndex = await _nextPlayableIndex(sequence, initialIndex);
@@ -2252,12 +2329,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _playHintUri(Uri uri) async {
-    try {
-      await hintPlayer.stop();
-      await hintPlayer.play(_audioSourceForUri(uri));
-      await hintPlayer.onPlayerComplete.first;
-    } catch (e) {
-      debugPrint('[audio][hint-error] url=$uri err=$e');
+    final result = await playbackEngine.playHint(uri);
+    if (!result.ok) {
+      debugPrint(
+          '[audio][hint-error] url=$uri err=${result.error ?? "unknown"}');
     }
   }
 
@@ -2308,14 +2383,20 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     await openAppSettings();
     if (!mounted) return;
+    final wasNoMicMode = namingNoMicMode;
     final ready = await voiceController.ensureMicReady();
     if (!mounted) return;
+    if (ready && wasNoMicMode) {
+      protocolLog.addNote(
+          'Naming no-mic mode disabled: token=$currentTrialToken reason=mic_settings_ready');
+    }
     setState(() {
       micDenied = !ready;
       namingHold = !ready;
       micPermanentlyDenied = voiceState.micPermanentlyDenied;
       speechPermanentlyDenied = voiceState.speechPermanentlyDenied;
       if (ready) {
+        namingNoMicMode = false;
         namingStatus = '';
       } else if (micPermanentlyDenied || speechPermanentlyDenied) {
         namingStatus = '';
@@ -2330,35 +2411,134 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final token = currentTrialToken;
     debugPrint(
         '[naming][prime] token=$token skipGate=$skipGate gateGranted=$micGateGranted primed=$micPrimed');
+    protocolLog.addNote(
+        'Naming mic prime requested: token=$token skipGate=$skipGate gateGranted=$micGateGranted');
     setState(() {
       micDenied = false;
     });
-    if (!await voiceController.ensureMicReady(onPermanentDisable: () {
-      setState(() {
-        micDenied = true;
+    Future<bool> ensureReadyOnce() async {
+      return await voiceController.ensureMicReady(onPermanentDisable: () {
+        if (!mounted) return;
+        setState(() {
+          micDenied = true;
+        });
       });
-    })) {
-      setState(() {
-        micDenied = true;
-        namingStatus = '';
-        micPrimed = false;
-        micGateGranted = false;
-        namingBlockRemaining = 20;
-      });
-      final hadActiveBlock = presentationPolicy.mode == PresentationMode.naming;
-      if (hadActiveBlock) {
-        _cancelActiveNamingBlock();
-      } else {
-        _gotoNextTrial();
+    }
+
+    var ready = await ensureReadyOnce();
+    // Windows can briefly report "not ready" right after permission was granted.
+    // Retry a couple of times after explicit gate allow before aborting naming.
+    if (!ready &&
+        skipGate &&
+        !micPermanentlyDenied &&
+        !speechPermanentlyDenied) {
+      for (final delay in const [
+        Duration(milliseconds: 220),
+        Duration(milliseconds: 520),
+      ]) {
+        await Future<void>.delayed(delay);
+        if (!mounted || token != currentTrialToken) return;
+        ready = await ensureReadyOnce();
+        if (ready || micPermanentlyDenied || speechPermanentlyDenied) {
+          break;
+        }
       }
+    }
+    protocolLog.addNote(
+        'Naming mic prime readiness: token=$token ready=$ready skipGate=$skipGate micPermanentDenied=$micPermanentlyDenied speechPermanentDenied=$speechPermanentlyDenied');
+
+    if (!ready) {
+      final bool transientAfterGateAllow = skipGate &&
+          !micPermanentlyDenied &&
+          !speechPermanentlyDenied &&
+          currentSlot.mode == PresentationMode.naming;
+      final bool permanentDeny =
+          micPermanentlyDenied || speechPermanentlyDenied;
+      if (transientAfterGateAllow) {
+        protocolLog.addNote(
+            'Naming mic prime transient-not-ready after gate allow: token=$token action=hold_for_retry');
+      } else if (permanentDeny) {
+        protocolLog.addNote(
+            'Naming mic prime blocked-permanent: token=$token action=hold_with_recovery_options');
+      } else {
+        protocolLog.addNote(
+            'Naming mic prime not-ready: token=$token action=hold_with_recovery_options');
+      }
+      setState(() {
+        micDenied = true;
+        namingStatus = permanentDeny
+            ? 'Microphone permission is blocked by system settings.'
+            : '';
+        micPrimed = false;
+        micPromptActive = true;
+        namingHold = true;
+        micGateGranted = false;
+      });
       return;
     }
+    if (namingNoMicMode) {
+      protocolLog.addNote(
+          'Naming no-mic mode disabled: token=$token reason=mic_prime_ready');
+    }
+    protocolLog.addNote(
+        'Naming mic prime succeeded: token=$token skipGate=$skipGate action=start_naming_flow');
     setState(() {
       micPrimed = true;
       micPromptActive = false;
+      namingHold = false;
+      namingNoMicMode = false;
       namingStatus = '';
     });
     await _startNamingFlow(token, skipGate: skipGate, userInitiated: true);
+  }
+
+  Future<NamingFlowOutcome?> _runNoMicNamingFlow(
+    int token, {
+    required Trial trial,
+  }) async {
+    if (!mounted || token != currentTrialToken) return null;
+    protocolLog.addNote(
+        'Naming no-mic run: token=$token uuid=${trial.target.uuid} action=simulate_without_asr');
+    setState(() {
+      namingInProgress = true;
+      micPromptActive = false;
+      namingHold = false;
+      namingOutcome = null;
+      namingStatus = _noMicNamingText('continue_without_recording');
+      _liveTranscript = '';
+      micStage = 0;
+      micOn = true;
+    });
+
+    await Future<void>.delayed(const Duration(seconds: namingFirstWindowSec));
+    if (!mounted || token != currentTrialToken) return null;
+
+    setState(() {
+      micStage = 1;
+      micOn = false;
+    });
+    await _playHintAudioForItem(trial.target);
+    if (!mounted || token != currentTrialToken) return null;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted || token != currentTrialToken) return null;
+    await _playHintAudioForItem(trial.target);
+    if (!mounted || token != currentTrialToken) return null;
+
+    setState(() {
+      micStage = 2;
+      micOn = true;
+    });
+    await Future<void>.delayed(const Duration(seconds: namingRepeatWindowSec));
+    if (!mounted || token != currentTrialToken) return null;
+
+    return NamingFlowOutcome(
+      correct: false,
+      moves: 0,
+      transcript: '',
+      attempts: 1,
+      correctCount: 0,
+      usedHint: true,
+    );
   }
 
   void _completeNamingSession(
@@ -2394,12 +2574,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
   }
 
-  void _cancelActiveNamingBlock() {
-    final slot = presentationPolicy.cancelActiveNamingBlock();
-    if (slot.targetUuid.isEmpty) return;
-    unawaited(_applySlot(slot));
-  }
-
   void _advanceAfterNamingAttempt() {
     final currentUuid = currentTrial?.target.uuid ?? currentSlot.targetUuid;
     if (currentUuid.isEmpty) {
@@ -2433,10 +2607,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       {bool skipGate = false, bool userInitiated = false}) async {
     if (namingInProgress || !_isNamingTrial()) return;
     if (token != currentTrialToken) return;
-    if (!skipGate && _showMicGateIfNeeded(token)) return;
+    if (!skipGate && !namingNoMicMode && _showMicGateIfNeeded(token)) return;
     debugPrint(
-        '[naming][flow-start] token=$token gateGranted=$micGateGranted primed=$micPrimed');
-    if (!micPrimed) {
+        '[naming][flow-start] token=$token gateGranted=$micGateGranted primed=$micPrimed noMicMode=$namingNoMicMode');
+    if (!namingNoMicMode && !micPrimed) {
       setState(() {
         micPromptActive = true;
         namingStatus = '';
@@ -2449,33 +2623,35 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     bool isCurrent() => mounted && token == currentTrialToken;
     final trial = currentTrial;
     if (trial == null) return;
-    final result = await runNamingFlow(
-      voiceController: voiceController,
-      namingLocaleHelper: namingLocaleHelper,
-      protocolLog: protocolLog,
-      speechLocaleOverrides: speechLocaleOverrides,
-      lang: lang,
-      token: token,
-      trial: trial,
-      isCurrent: isCurrent,
-      scorer: (transcript, targetText) => _isTranscriptCorrect(
-        transcript,
-        targetText,
-        uuid: trial.target.uuid,
-      ),
-      playHintAudioForItem: _playHintAudioForItem,
-      onTranscript: (text) {
-        if (!isCurrent()) return;
-        debugPrint(
-            '[naming][asr] uuid=${trial.target.uuid} heard="$text" target="${trial.target.text}"');
-        setState(() {
-          _liveTranscript = text;
-        });
-      },
-      userInitiated: userInitiated,
-      firstWindow: const Duration(seconds: namingFirstWindowSec),
-      repeatWindow: const Duration(seconds: namingRepeatWindowSec),
-    );
+    final result = namingNoMicMode
+        ? await _runNoMicNamingFlow(token, trial: trial)
+        : await runNamingFlow(
+            voiceController: voiceController,
+            namingLocaleHelper: namingLocaleHelper,
+            protocolLog: protocolLog,
+            speechLocaleOverrides: speechLocaleOverrides,
+            lang: lang,
+            token: token,
+            trial: trial,
+            isCurrent: isCurrent,
+            scorer: (transcript, targetText) => _isTranscriptCorrect(
+              transcript,
+              targetText,
+              uuid: trial.target.uuid,
+            ),
+            playHintAudioForItem: _playHintAudioForItem,
+            onTranscript: (text) {
+              if (!isCurrent()) return;
+              debugPrint(
+                  '[naming][asr] uuid=${trial.target.uuid} heard="$text" target="${trial.target.text}"');
+              setState(() {
+                _liveTranscript = text;
+              });
+            },
+            userInitiated: userInitiated,
+            firstWindow: const Duration(seconds: namingFirstWindowSec),
+            repeatWindow: const Duration(seconds: namingRepeatWindowSec),
+          );
 
     if (!mounted || token != currentTrialToken) return;
 
@@ -2534,26 +2710,31 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _liveTranscript = transcript;
     final noAnswer = transcript.trim().isEmpty;
     if (!wasCorrect && noAnswer) {
-      final bool gotSound = namingController.lastListenGotSoundLevel;
-      final bool gotResult = namingController.lastListenGotResultEvent;
-      final double maxLevel = namingController.lastListenMaxSoundLevel;
-      final String localeUsed = namingController.lastListenLocale;
-      final String localeInfo =
-          localeUsed.trim().isNotEmpty && localeUsed != '-'
-              ? ' (ASR locale: $localeUsed)'
-              : '';
-      if (!gotSound) {
-        namingStatus =
-            'No microphone signal detected. Please speak closer$localeInfo.';
-      } else if (!gotResult) {
-        namingStatus =
-            'Microphone hears sound, but speech was not recognized$localeInfo.';
+      if (namingNoMicMode) {
+        namingStatus = _noMicNamingText('scored_false');
+        ladderController.tryRivalStep(probability: 0.5);
       } else {
-        namingStatus = 'No transcript captured. Please try again$localeInfo.';
+        final bool gotSound = namingController.lastListenGotSoundLevel;
+        final bool gotResult = namingController.lastListenGotResultEvent;
+        final double maxLevel = namingController.lastListenMaxSoundLevel;
+        final String localeUsed = namingController.lastListenLocale;
+        final String localeInfo =
+            localeUsed.trim().isNotEmpty && localeUsed != '-'
+                ? ' (ASR locale: $localeUsed)'
+                : '';
+        if (!gotSound) {
+          namingStatus =
+              'No microphone signal detected. Please speak closer$localeInfo.';
+        } else if (!gotResult) {
+          namingStatus =
+              'Microphone hears sound, but speech was not recognized$localeInfo.';
+        } else {
+          namingStatus = 'No transcript captured. Please try again$localeInfo.';
+        }
+        debugPrint(
+            '[naming][diag] noAnswer=true sound=$gotSound result=$gotResult max=$maxLevel locale=${namingController.lastListenLocale}');
+        ladderController.tryRivalStep(probability: 0.5);
       }
-      debugPrint(
-          '[naming][diag] noAnswer=true sound=$gotSound result=$gotResult max=$maxLevel locale=${namingController.lastListenLocale}');
-      ladderController.tryRivalStep(probability: 0.5);
     }
     _completeNamingSession(token: token, wasCorrect: wasCorrect, moves: moves);
   }
@@ -2567,6 +2748,25 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       namingStatus = '';
     });
     _advanceAfterNamingAttempt();
+  }
+
+  Future<void> _continueWithoutMicNaming(String reason) async {
+    if (!mounted) return;
+    final token = currentTrialToken;
+    protocolLog.addNote(
+        'Naming manual no-mic start: token=$token reason=$reason action=enable_no_mic_mode_and_start');
+    setState(() {
+      namingBlockRemaining = 0;
+      namingNoMicMode = true;
+      namingOutcome = null;
+      namingStatus = '';
+      micDenied = true;
+      micPrimed = true;
+      micPromptActive = false;
+      namingHold = false;
+      micGateGranted = false;
+    });
+    await _startNamingFlow(token, skipGate: true, userInitiated: true);
   }
 
   Future<void> _select(bool choseLeft) async {
@@ -2729,6 +2929,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   bool _showMicGateIfNeeded(int token) {
     if (!_isNamingTrial()) return false;
+    if (namingNoMicMode) return false;
     if (micGateGranted) return false;
     if (micGateToken == token) return false;
     micGateToken = token;
@@ -2738,6 +2939,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     debugPrint(
         '[naming][gate-open] token=$token trialIdx=$trialIndex block=$namingBlockRemaining');
+    protocolLog.addNote(
+        'Naming mic gate opened: token=$token trialIdx=$trialIndex namingBlockRemaining=$namingBlockRemaining');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || token != currentTrialToken) return;
       Navigator.of(context)
@@ -2761,23 +2964,26 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         if (result == 'allow') {
           micGateGranted = true;
           micPrimed = true;
+          protocolLog.addNote(
+              'Naming mic gate result: token=$token result=allow action=prime_and_start');
           _primeMicAndStart(skipGate: true);
         } else {
-          // deny oder timeout: Block setzen und weiter, Gate später erneut zeigen
-          final hadActiveBlock =
-              presentationPolicy.mode == PresentationMode.naming;
+          // deny oder timeout: weiter in No-Mic-Naming ohne ASR
           setState(() {
-            namingBlockRemaining = 20;
+            namingBlockRemaining = 0;
+            namingNoMicMode = true;
             namingOutcome = null;
             namingStatus = '';
-            micPrimed = false;
+            micDenied = true;
+            micPrimed = true;
+            micPromptActive = false;
+            namingHold = false;
             micGateGranted = false;
           });
-          if (hadActiveBlock) {
-            _cancelActiveNamingBlock();
-          } else {
-            _gotoNextTrial();
-          }
+          protocolLog.addNote(
+              'Naming mic gate result: token=$token result=${result ?? 'null'} action=enable_no_mic_mode_and_start');
+          unawaited(
+              _startNamingFlow(token, skipGate: true, userInitiated: true));
         }
         debugPrint(
             '[naming][gate-close] token=$token result=$result block=$namingBlockRemaining');
@@ -2928,9 +3134,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void dispose() {
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
-    playbackSub?.cancel();
-    player.dispose();
-    hintPlayer.dispose();
+    unawaited(playbackEngine.dispose());
     fanfarePlayer.dispose();
     moveYouPlayer.dispose();
     moveRivalPlayer.dispose();
@@ -3021,12 +3225,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           wins: ladder.winsYou,
           rivalWins: ladder.winsRival,
           viewCount: dashboardViewCount,
+          targetLanguage: lang,
+          nativeLanguage: nativeLang,
           onRestart: () => _restartOnboarding(),
           onStart: _startFromSplash,
           onSelectModule: _openModuleSelectorFromResume,
+          onOpenHistory: _openHistoryPanel,
           selectedTrainingDepth: trainingDepthMode,
           onSelectTrainingDepth: _selectTrainingDepthMode,
           moduleProgress: restartModuleProgress,
+          historyHasSupervisorInfo: _historyPanelHasSupervisorInfo,
           userId: userId,
           workerHost: workerHost,
           apiPrefix: apiPrefix,
@@ -3244,8 +3452,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           showGlobalHourglass: showGlobalHourglass,
           onPrimeMic: _primeMicAndStart,
           onOpenMicSettings: _openMicSettings,
+          onContinueWithoutMic: _continueWithoutMicNaming,
           onSkipNaming: _skipNaming,
           onSelect: _select,
+          tooltipLanguageCode:
+              HintsService.normalizeLangCode(nativeLang ?? lang),
           onOpenDashboard: () {
             unawaited(_persistUserCursor());
             if (!sessionEnded) {
@@ -3336,6 +3547,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           comprehensionAttempts: itemStats.comprehensionAttempts(),
           namingAttempts: itemStats.namingAttempts(),
           onExitToResumePanel: _exitToResumePanelIfAvailable,
+          tooltipLanguageCode:
+              HintsService.normalizeLangCode(nativeLang ?? lang),
           onExportProtocol: () => protocolLog.export(),
           onReturnToGame: () {},
         ),
@@ -3344,9 +3557,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _stopAllSessionAudioPlayers() async {
+    try {
+      await playbackEngine.stopSpeech();
+    } catch (_) {}
+    try {
+      await playbackEngine.stopHint();
+    } catch (_) {}
     final players = <AudioPlayer>[
-      player,
-      hintPlayer,
       fanfarePlayer,
       moveYouPlayer,
       moveRivalPlayer,

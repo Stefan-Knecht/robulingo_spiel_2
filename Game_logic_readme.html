@@ -96,6 +96,8 @@
  +--------------------------+
  | If slot.mode = naming    |
  | - mic gate / mic prime   |
+ | - on prime fail: hold +  |
+ |   recovery actions       |
  | - listen(+hint+repeat)   |
  | - remove->refiller if    |
  |   correct>2 or attempts>8|
@@ -133,6 +135,10 @@
     <li><b>Up/down-from-naming</b>:
       if naming correct &gt; 2 (mastery) or naming attempts &gt; 8 (down-from-naming), the item is removed from naming and enqueued into refiller
       (so it can reappear later for forgetting/re-exposure).</li>
+    <li><b>Naming mic recovery</b>:
+      after gate-allow, if mic prime is not ready, naming stays on hold (no automatic fallback for this case).
+      The UI shows explicit actions: retry mic, open settings, or continue without mic.
+      On app resume, mic readiness is re-checked and no-mic mode is cleared automatically when permissions are restored.</li>
   </ol>
 
   <h2>Cursor and persistence</h2>
@@ -201,9 +207,9 @@
         <td>Which languages show phonetics and for how long (first 4 exposures + override).</td>
       </tr>
       <tr>
-        <td>Naming mic gate cooldown</td>
+        <td>Naming mic recovery behavior</td>
         <td><code>lib/app/robulingo_app.dart</code></td>
-        <td>How long naming is suppressed after deny/timeout (currently 20 trials).</td>
+        <td>Gate allow + prime failure now keeps naming on hold with explicit user actions (retry/settings/without-mic) and an automatic re-check on app resume.</td>
       </tr>
     </tbody>
   </table>
@@ -214,4 +220,3 @@
   </p>
 </body>
 </html>
-

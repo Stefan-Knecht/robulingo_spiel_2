@@ -63,8 +63,8 @@ class HexagonController {
     Random? random,
   })  : _rand = random ?? Random(),
         _grid = buildHexGrid() {
-    _youStartOffset = _grid.nodeIndexFor(2, 0, 5) ?? 0;
-    _rivalStartOffset = _grid.nodeIndexFor(0, 0, 4) ?? 0;
+    _youStartOffset = _grid.nodeIndexFor(0, 0, 4) ?? 0;
+    _rivalStartOffset = _grid.nodeIndexFor(2, 0, 5) ?? 0;
     state
       ..youIndex = _youStartOffset
       ..rivalIndex = _rivalStartOffset
@@ -180,7 +180,8 @@ class HexagonController {
     final p = probability.clamp(0.0, 1.0);
     if (_rand.nextDouble() >= p) return false;
     final kind = _applyRivalStep();
-    onMove?.call(MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect));
+    onMove?.call(
+        MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect));
     onChanged();
     return true;
   }
@@ -279,7 +280,8 @@ class HexagonController {
     }
     if (bestRight != null) {
       final delta = _grid.nodes[bestRight] - _grid.nodes[currentIndex];
-      return _MoveChoice(index: bestRight, kind: MoveKind.forward, delta: delta);
+      return _MoveChoice(
+          index: bestRight, kind: MoveKind.forward, delta: delta);
     }
 
     bool prefersVertical(Offset candidate, Offset current) {
@@ -307,7 +309,8 @@ class HexagonController {
           bestVerticalInverse = choice;
         }
       } else {
-        if (bestVertical == null || prefersVertical(delta, bestVertical.delta)) {
+        if (bestVertical == null ||
+            prefersVertical(delta, bestVertical.delta)) {
           bestVertical = choice;
         }
       }
@@ -323,12 +326,14 @@ class HexagonController {
       return _MoveChoice(index: n, kind: kind, delta: delta);
     }
 
-    return _MoveChoice(index: currentIndex, kind: MoveKind.side, delta: Offset.zero);
+    return _MoveChoice(
+        index: currentIndex, kind: MoveKind.side, delta: Offset.zero);
   }
 
   void _recordTrail({required bool isYou, required int index}) {
     final list = isYou ? state.youTrail : state.rivalTrail;
-    final newList = List<HexTrailPoint>.from(list)..add(HexTrailPoint(index: index));
+    final newList = List<HexTrailPoint>.from(list)
+      ..add(HexTrailPoint(index: index));
     if (newList.length > _maxTrailPoints) {
       newList.removeAt(0);
     }
@@ -345,7 +350,8 @@ class HexagonController {
     for (final n in neighbors) {
       final delta = _grid.nodes[n] - _grid.nodes[currentIndex];
       if (delta.dy.abs() > 1e-6) {
-        final bool lastWasVertical = lastDelta != null && lastDelta.dy.abs() > 1e-6;
+        final bool lastWasVertical =
+            lastDelta != null && lastDelta.dy.abs() > 1e-6;
         final bool wouldReverseVertical =
             lastWasVertical && (delta.dy.sign == -lastDelta.dy.sign);
         if (wouldReverseVertical) continue;
@@ -356,7 +362,8 @@ class HexagonController {
             delta.dx.abs() < bestVertical.delta.dx.abs() ||
             (delta.dx.abs() == bestVertical.delta.dx.abs() &&
                 delta.dy.abs() > bestVertical.delta.dy.abs())) {
-          bestVertical = _MoveChoice(index: n, kind: MoveKind.side, delta: delta);
+          bestVertical =
+              _MoveChoice(index: n, kind: MoveKind.side, delta: delta);
         }
       }
     }
@@ -377,7 +384,8 @@ class HexagonController {
       return _MoveChoice(index: leftIdx, kind: MoveKind.back, delta: leftDelta);
     }
 
-    return _MoveChoice(index: currentIndex, kind: MoveKind.side, delta: Offset.zero);
+    return _MoveChoice(
+        index: currentIndex, kind: MoveKind.side, delta: Offset.zero);
   }
 
   bool _isInverse(Offset? last, Offset candidate) {
@@ -436,9 +444,8 @@ class HexagonController {
 
     double pCorrect;
     if (history.length < 10 && _lastPlayerCorrect != null) {
-      final base = _lastPlayerCorrect!
-          ? rivalCoupledProb
-          : (1 - rivalCoupledProb);
+      final base =
+          _lastPlayerCorrect! ? rivalCoupledProb : (1 - rivalCoupledProb);
       final boostedBase = (base + moodOffset + idleBoost).clamp(0.0, 1.0);
       final minProb = (boostedBase * minProbRatio).clamp(0.0, boostedBase);
       pCorrect = minProb + (boostedBase - minProb) * catchup;
@@ -477,7 +484,8 @@ class HexagonController {
       final kind = _applyRivalStep();
       if (token != _rivalMoveToken) return;
       _pendingRivalMoves = max(0, _pendingRivalMoves - 1);
-      onMove?.call(MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect));
+      onMove?.call(
+          MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect));
       onChanged();
       _scheduleNextRivalMove();
     });
