@@ -827,7 +827,7 @@ async function handlePair(request, env) {
     );
   }
   const emailRaw = String(body.supervisor_email || '').trim();
-  const codeRaw = String(body.supervisor_code_5 || body.supervisor_code || '').trim();
+  const codeRaw = normalizeSupervisorCode(body.supervisor_code_5 || body.supervisor_code);
   if (!emailRaw) {
     return jsonResponse({ ok: false, error: 'missing_supervisor_email' }, 400);
   }
@@ -844,6 +844,8 @@ async function handlePair(request, env) {
   const supervisorCodeHash = await sha256Hex(codeRaw);
   const supervisorEmailHash = await sha256Hex(emailNormalized);
   const resolvedSupervisorName =
+    cleanOptionalString(body.print_name, 128) ||
+    cleanOptionalString(body.printName, 128) ||
     cleanOptionalString(body.supervisor_display_name, 128) ||
     cleanOptionalString(body.display_name, 128) ||
     cleanOptionalString(previous?.registrationName, 128) ||
@@ -1176,10 +1178,11 @@ async function handleSupervisorUsers(request, env) {
     cleanOptionalString(request.headers.get('x-supervisor-email'), 256) ||
     cleanOptionalString(url.searchParams.get('supervisor_email'), 256) ||
     cleanOptionalString(url.searchParams.get('email'), 256);
-  const codeRaw =
+  const codeRawRaw =
     cleanOptionalString(request.headers.get('x-supervisor-code'), 64) ||
     cleanOptionalString(url.searchParams.get('supervisor_code'), 64) ||
     cleanOptionalString(url.searchParams.get('code'), 64);
+  const codeRaw = normalizeSupervisorCode(codeRawRaw);
   if (!emailRaw || !codeRaw) {
     return jsonResponse(
       { ok: false, error: 'missing_supervisor_credentials', message: 'provide supervisor_email and supervisor_code' },
@@ -1798,6 +1801,10 @@ function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
   return firstNonEmptyString(
     // DailyWords registration page field:
     // "Display name (shown to participants)" -> display_name
+    registration?.print_name,
+    registration?.printName,
+    registration?.profile?.print_name,
+    registration?.profile?.printName,
     registration?.display_name,
     registration?.displayName,
     registration?.profile?.display_name,
@@ -1810,6 +1817,8 @@ function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
     registration?.registrationName,
     registration?.name,
     pairing?.supervisor_display_name,
+    pairing?.print_name,
+    pairing?.printName,
     pairing?.supervisorDisplayName,
     pairing?.display_name,
     pairing?.displayName,
@@ -1818,6 +1827,8 @@ function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
     pairing?.supervisorName,
     pairing?.name,
     consent?.supervisor_display_name,
+    consent?.print_name,
+    consent?.printName,
     consent?.supervisorDisplayName,
     consent?.display_name,
     consent?.registration_name,
@@ -1826,6 +1837,10 @@ function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
     consent?.supervisorName,
     consent?.name
   );
+}
+
+function normalizeSupervisorCode(raw) {
+  return String(raw || '').trim().toUpperCase();
 }
 
 function firstNonEmptyString(...values) {

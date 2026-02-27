@@ -200,6 +200,7 @@ class RestartSplash extends StatefulWidget {
     required this.targetLanguage,
     required this.nativeLanguage,
     this.fallbackDatesUtc,
+    this.onResumeEmojiChanged,
   });
 
   final int wins;
@@ -219,22 +220,13 @@ class RestartSplash extends StatefulWidget {
   final String targetLanguage;
   final String? nativeLanguage;
   final List<DateTime>? fallbackDatesUtc;
+  final ValueChanged<String?>? onResumeEmojiChanged;
 
   @override
   State<RestartSplash> createState() => _RestartSplashState();
 }
 
 class _RestartSplashState extends State<RestartSplash> {
-  bool _supervisorPanelVisible = false;
-
-  void _handleSupervisorPanelVisibilityChanged(bool visible) {
-    if (!mounted) return;
-    if (_supervisorPanelVisible == visible) return;
-    setState(() {
-      _supervisorPanelVisible = visible;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final tooltipLanguage = _tooltipLanguageCode(
@@ -284,29 +276,23 @@ class _RestartSplashState extends State<RestartSplash> {
               userId: widget.userId,
               workerHost: widget.workerHost,
               apiPrefix: widget.apiPrefix,
-              onVisibilityChanged: _handleSupervisorPanelVisibilityChanged,
+              onSelectedEmojiChanged: widget.onResumeEmojiChanged,
             );
             return Stack(
               fit: StackFit.expand,
               children: [
                 calendar,
-                if (_supervisorPanelVisible)
-                  Positioned(
-                    top: panelTopOffset,
-                    left: panelLeftOffset,
-                    child: IgnorePointer(
-                      ignoring: true,
-                      child: SizedBox(
-                        width: panelWidth,
-                        child: supervisorPanel,
-                      ),
+                Positioned(
+                  top: panelTopOffset,
+                  left: panelLeftOffset,
+                  child: IgnorePointer(
+                    ignoring: true,
+                    child: SizedBox(
+                      width: panelWidth,
+                      child: supervisorPanel,
                     ),
-                  )
-                else
-                  Offstage(
-                    offstage: true,
-                    child: supervisorPanel,
                   ),
+                ),
               ],
             );
           },
@@ -630,8 +616,9 @@ class _RestartSplashState extends State<RestartSplash> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-            final compactLayout =
-                constraints.maxHeight < 760 || textScale > 1.15;
+            final compactLayout = constraints.maxHeight < 860 ||
+                constraints.maxWidth < 980 ||
+                textScale > 1.15;
             final topSpacing = compactLayout ? 16.0 : 32.0;
             final logoHeight = compactLayout ? 100.0 : 120.0;
             final victoryHeight = compactLayout ? 170.0 : 200.0;
@@ -990,11 +977,7 @@ class NamingView extends StatelessWidget {
               ),
             ),
           ),
-        if (namingOutcome == null &&
-            (namingHold ||
-                micDenied ||
-                micPermanentlyDenied ||
-                speechPermanentlyDenied))
+        if (namingOutcome == null && !namingInProgress)
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: Wrap(
@@ -1005,7 +988,7 @@ class NamingView extends StatelessWidget {
                 ElevatedButton.icon(
                   onPressed: namingInProgress ? null : onStartNaming,
                   icon: const Icon(Icons.mic, size: 16),
-                  label: const Text('Retry mic'),
+                  label: Text(!micPrimed ? 'Start naming' : 'Retry mic'),
                 ),
                 OutlinedButton.icon(
                   onPressed: namingInProgress ? null : onOpenSettings,

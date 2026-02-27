@@ -395,6 +395,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   AppUpdateInfo? _availableAppUpdate;
   String _installedVersionLabel = '';
   bool _resumeMicRecheckInFlight = false;
+  String? _resumeSelectedEmojiId;
+  bool _resumeEmojiAckInFlight = false;
+  bool _resumeEmojiAckPending = false;
 
   String _noMicNamingText(String key) {
     final values = _noMicNamingTexts[key];
@@ -1308,8 +1311,57 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(playbackEngine.primeForUserGesture(source: source));
   }
 
+  Future<void> _primeAudioForUserGestureAsync(String source) async {
+    try {
+      await playbackEngine
+          .primeForUserGesture(source: source)
+          .timeout(const Duration(milliseconds: 900));
+    } on TimeoutException {
+      debugPrint('[audio][web-prime-timeout] source=$source');
+    } catch (e) {
+      debugPrint('[audio][web-prime-error] source=$source err=$e');
+    }
+  }
+
+  void _handleResumeSelectedEmojiChanged(String? emojiId) {
+    final normalized =
+        (emojiId != null && emojiId.trim().isNotEmpty) ? emojiId.trim() : null;
+    _resumeSelectedEmojiId = normalized;
+  }
+
+  Future<void> _ackResumeEmojiAfterFirstTrial() async {
+    if (!_resumeEmojiAckPending || _resumeEmojiAckInFlight) return;
+    final uid = (userId ?? '').trim();
+    final emojiId = (_resumeSelectedEmojiId ?? '').trim();
+    if (uid.isEmpty || emojiId.isEmpty) {
+      _resumeEmojiAckPending = false;
+      return;
+    }
+    _resumeEmojiAckInFlight = true;
+    try {
+      final ok = await supervisorDashboardService.ackEmojiQueue(
+        userId: uid,
+        ids: [emojiId],
+        remove: true,
+      );
+      if (ok) {
+        _resumeSelectedEmojiId = null;
+        _resumeEmojiAckPending = false;
+      } else {
+        debugPrint(
+            '[supervisor-resume] ack-on-start failed id=$emojiId uid=$uid');
+      }
+    } catch (e) {
+      debugPrint(
+          '[supervisor-resume] ack-on-start error id=$emojiId uid=$uid: $e');
+    } finally {
+      _resumeEmojiAckInFlight = false;
+    }
+  }
+
   void _handleResumeStartGesture(String source) {
     _primeAudioForUserGesture(source);
+    _resumeEmojiAckPending = true;
     unawaited(_startFromSplash());
   }
 
@@ -2115,6 +2167,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         'is_review': trial.isReview,
       }));
     }
+    if (trial != null) {
+      unawaited(_ackResumeEmojiAfterFirstTrial());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startTrial(token);
     });
@@ -2332,18 +2387,62 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _playHintAudioForItem(ItemData item) async {
-    final base = item.audioVariants.isNotEmpty
-        ? item.audioVariants.first
-        : item.audioUri;
-    await _playHintUri(base);
+    final sequence = _audioSequenceForItem(item);
+    final primaryUri = sequence.isNotEmpty ? sequence.first : item.audioUri;
+    final primaryIndex = sequence.lastIndexOf(primaryUri);
+    final primaryOk = await _playHintUriWithRetry(primaryUri);
+    if (primaryOk) return;
+    if (primaryIndex < 0) {
+      debugPrint(
+          '[audio][hint-silent] uuid=${item.uuid} no playable primary variant');
+      return;
+    }
+
+    final candidateIndices = <int>[];
+    for (var i = _nextVariantIndex(sequence, primaryIndex);
+        i != null;
+        i = _nextVariantIndex(sequence, i)) {
+      candidateIndices.add(i);
+    }
+    for (var i = _previousVariantIndex(sequence, primaryIndex);
+        i != null;
+        i = _previousVariantIndex(sequence, i)) {
+      candidateIndices.add(i);
+    }
+
+    for (final fallbackIndex in candidateIndices) {
+      final fallbackUri = sequence[fallbackIndex];
+      debugPrint(
+          '[audio][hint-fallback] uuid=${item.uuid} from=$primaryUri to=$fallbackUri');
+      final ok = await _playHintUriWithRetry(fallbackUri);
+      if (ok) return;
+    }
+    debugPrint('[audio][hint-silent] uuid=${item.uuid} no playable fallback');
   }
 
-  Future<void> _playHintUri(Uri uri) async {
+  Future<bool> _playHintUri(Uri uri) async {
     final result = await playbackEngine.playHint(uri);
-    if (!result.ok) {
-      debugPrint(
-          '[audio][hint-error] url=$uri err=${result.error ?? "unknown"}');
+    if (result.ok) return true;
+    debugPrint('[audio][hint-error] url=$uri err=${result.error ?? "unknown"}');
+    final speechFallback = await playbackEngine.playSpeech(uri);
+    if (speechFallback.ok) {
+      debugPrint('[audio][hint-fallback-speech] url=$uri');
+      return true;
     }
+    debugPrint(
+        '[audio][hint-fallback-speech-failed] url=$uri err=${speechFallback.error ?? "unknown"}');
+    return false;
+  }
+
+  Future<bool> _playHintUriWithRetry(Uri uri, {int retries = 1}) async {
+    for (int attempt = 0; attempt <= retries; attempt++) {
+      final ok = await _playHintUri(uri);
+      if (ok) return true;
+      if (attempt < retries) {
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+    }
+    return false;
   }
 
   Future<void> _playNextTrialAudio(int token) async {
@@ -2419,6 +2518,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _primeMicAndStart({bool skipGate = false}) async {
     if (namingInProgress) return;
     final token = currentTrialToken;
+    await _primeAudioForUserGestureAsync(
+      skipGate ? 'naming-start-skip-gate' : 'naming-start',
+    );
     debugPrint(
         '[naming][prime] token=$token skipGate=$skipGate gateGranted=$micGateGranted primed=$micPrimed');
     protocolLog.addNote(
@@ -2763,6 +2865,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _continueWithoutMicNaming(String reason) async {
     if (!mounted) return;
     final token = currentTrialToken;
+    await _primeAudioForUserGestureAsync('naming-no-mic');
     protocolLog.addNote(
         'Naming manual no-mic start: token=$token reason=$reason action=enable_no_mic_mode_and_start');
     setState(() {
@@ -3097,7 +3200,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
       if (_isNamingTrial() && !namingInProgress && !micGateActive) {
-        unawaited(_startNamingFlow(currentTrialToken, userInitiated: true));
+        unawaited(_startNamingFlowFromKeyboard());
         return true;
       }
       if (showRestartSplash) {
@@ -3115,6 +3218,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       return true;
     }
     return false;
+  }
+
+  Future<void> _startNamingFlowFromKeyboard() async {
+    await _primeAudioForUserGestureAsync('naming-enter-key');
+    if (!mounted) return;
+    await _startNamingFlow(currentTrialToken, userInitiated: true);
   }
 
   Widget _wrapWithKeyboardShortcuts(Widget child) {
@@ -3249,6 +3358,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           workerHost: workerHost,
           apiPrefix: apiPrefix,
           fallbackDatesUtc: _resumeFallbackDatesUtc(),
+          onResumeEmojiChanged: _handleResumeSelectedEmojiChanged,
         ),
       );
     }
@@ -3412,8 +3522,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
         // Naming UX: don't show L2 text before the audio hint phase starts.
         // micStage: 0=first recording, 1=hint, 2=repeat, -1=idle/finished.
+        final bool forceShowNamingText = isNamingView &&
+            (namingHold ||
+                micDenied ||
+                micPermanentlyDenied ||
+                speechPermanentlyDenied);
         final bool showL2Text = (!trialIsLoading) &&
-            (!isNamingView || namingOutcome != null || micStage >= 1);
+            (!isNamingView ||
+                namingOutcome != null ||
+                micStage >= 1 ||
+                forceShowNamingText);
         body = SessionBody(
           ladder: ladder,
           isNaming: isNamingView,

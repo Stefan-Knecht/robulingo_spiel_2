@@ -506,15 +506,16 @@ class _MonthDayCell extends StatelessWidget {
               width: isToday ? 1.6 : 1.0,
             ),
           ),
-          padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
           child: Stack(
             children: [
               Align(
-                alignment: Alignment.topLeft,
+                alignment: Alignment.topCenter,
                 child: Text(
                   dayLabel,
                   maxLines: 1,
-                  overflow: TextOverflow.fade,
+                  overflow: TextOverflow.clip,
+                  textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: textColor,
@@ -527,7 +528,7 @@ class _MonthDayCell extends StatelessWidget {
                   child: Tooltip(
                     message: runsThisDayTooltip,
                     child: SizedBox(
-                      height: 16,
+                      height: 12,
                       width: double.infinity,
                       child: CustomPaint(
                         painter: _TallyMarksPainter(
