@@ -3288,9 +3288,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         }
       });
     }
-    return GestureDetector(
+    return Listener(
       behavior: HitTestBehavior.translucent,
-      onTapDown: (_) {
+      onPointerDown: (_) {
         if (!micGateActive && !_keyboardFocusNode.hasFocus) {
           _keyboardFocusNode.requestFocus();
         }

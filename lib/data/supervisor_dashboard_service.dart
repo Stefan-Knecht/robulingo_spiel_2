@@ -171,7 +171,18 @@ class SupervisorDashboardService {
             headers: withFlavorHeader({'x-user-id': uid}),
           )
           .timeout(_timeout);
-      if (res.statusCode != 200 || res.bodyBytes.isEmpty) return null;
+      if (res.statusCode != 200) {
+        debugPrint(
+          '[supervisor-dashboard][feedback-audio-http] status=${res.statusCode} uid=$uid fid=$fid',
+        );
+        return null;
+      }
+      if (res.bodyBytes.isEmpty) {
+        debugPrint(
+          '[supervisor-dashboard][feedback-audio-empty] uid=$uid fid=$fid',
+        );
+        return null;
+      }
       return res.bodyBytes;
     } catch (e) {
       debugPrint('[supervisor-dashboard][feedback-audio-error] $e');

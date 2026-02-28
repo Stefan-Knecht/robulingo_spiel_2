@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../flavor_config.dart';
 import '../data/supervisor_dashboard_service.dart';
+import 'voice_feedback_web_player_stub.dart'
+    if (dart.library.html) 'voice_feedback_web_player_web.dart' as voice_web;
 
 class SupervisorResumePanel extends StatefulWidget {
   const SupervisorResumePanel({
@@ -30,7 +34,9 @@ class SupervisorResumePanel extends StatefulWidget {
 }
 
 class _SupervisorResumePanelState extends State<SupervisorResumePanel>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
+  static const String _diagBuildTag = '2026-02-28T22:26Z-r1';
+  static const String _voicePlayAsset = 'assets/icons/Play.webp';
   static final RegExp _blockedBannerText =
       RegExp(r'(?=.*\bdownload\b)(?=.*\bandroid\b)', caseSensitive: false);
   static final RegExp _emailPattern =
@@ -42,13 +48,16 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   List<Map<String, dynamic>> _pendingItems = const [];
   String? _lastKnownSupervisorEmail;
   late final AnimationController _wiggleController;
+  late final AnimationController _voicePulseController;
   late final AudioPlayer _voicePlayer;
   bool _lastReportedVisible = false;
   String? _lastReportedEmojiId;
   bool _voiceLoading = false;
   bool _voicePlaying = false;
-  String? _voiceError;
-  String? _voiceStateFeedbackId;
+  Uri? _voiceFallbackOpenUri;
+  String? _voiceFallbackFeedbackId;
+  final Set<String> _playedVoiceFeedbackIds = <String>{};
+  final Set<String> _autoPlayAttemptedVoiceFeedbackIds = <String>{};
 
   @override
   void initState() {
@@ -57,6 +66,10 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat();
+    _voicePulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    );
     _voicePlayer = AudioPlayer();
     _voicePlayer.onPlayerComplete.listen((_) {
       if (!mounted) return;
@@ -74,6 +87,8 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   void dispose() {
     _refreshTimer?.cancel();
     _wiggleController.dispose();
+    _voicePulseController.dispose();
+    voice_web.stopVoiceFeedbackWeb();
     _voicePlayer.dispose();
     super.dispose();
   }
@@ -188,17 +203,63 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   Future<void> _playVoiceFeedback(_SelectedFeedback feedback) async {
     final uid = widget.userId?.trim() ?? '';
     final feedbackId = (feedback.id ?? '').trim();
-    if (uid.isEmpty || feedbackId.isEmpty || _voiceLoading) return;
-    final service = SupervisorDashboardService(
-      workerHost: widget.workerHost,
-      apiPrefix: widget.apiPrefix,
+    final mimeType = _normalizeAudioMimeType(
+      (feedback.item?['mimeType'] ?? '').toString(),
     );
+    final uri = _buildFeedbackAudioUri(userId: uid, feedbackId: feedbackId);
+    debugPrint(
+      '[supervisor-resume] voice-play-request uid=$uid id=$feedbackId loading=$_voiceLoading type=${feedback.type}',
+    );
+    debugPrint(
+      '[supervisor-resume] voice-build tag=$_diagBuildTag clientHost=${Uri.base.host} href=${Uri.base}',
+    );
+    if (uid.isEmpty || feedbackId.isEmpty || _voiceLoading) return;
     setState(() {
       _voiceLoading = true;
-      _voiceStateFeedbackId = feedbackId;
-      _voiceError = null;
+      _voicePlaying = false;
+      _voiceFallbackOpenUri = null;
+      _voiceFallbackFeedbackId = null;
     });
     try {
+      if (kIsWeb) {
+        debugPrint(
+          '[supervisor-resume] voice-play-url uid=$uid id=$feedbackId uri=$uri',
+        );
+        debugPrint(
+          '[supervisor-resume] voice-web-helper-enter id=$feedbackId uid=$uid',
+        );
+        final played = await voice_web.playVoiceFeedbackWeb(
+          url: uri.toString(),
+          onLog: debugPrint,
+        );
+        debugPrint(
+          '[supervisor-resume] voice-web-helper-result id=$feedbackId uid=$uid played=$played',
+        );
+        if (!mounted) return;
+        if (played) {
+          setState(() {
+            _voicePlaying = true;
+            _playedVoiceFeedbackIds.add(feedbackId);
+          });
+          _syncVoicePulse(feedbackId: feedbackId, showVoice: true);
+          return;
+        }
+        setState(() {
+          _voicePlaying = false;
+          _voiceFallbackOpenUri = uri;
+          _voiceFallbackFeedbackId = feedbackId;
+        });
+        debugPrint(
+          '[supervisor-resume] voice-open-fallback-ready id=$feedbackId uri=$uri',
+        );
+        return;
+      }
+      final service = SupervisorDashboardService(
+        workerHost: widget.workerHost,
+        apiPrefix: widget.apiPrefix,
+      );
+      await _voicePlayer.stop();
+      await _voicePlayer.setVolume(1.0);
       final bytes = await service.fetchFeedbackAudio(
         userId: uid,
         feedbackId: feedbackId,
@@ -206,17 +267,33 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       if (bytes == null || bytes.isEmpty) {
         throw Exception('empty voice payload');
       }
-      await _voicePlayer.stop();
-      await _voicePlayer.play(BytesSource(bytes));
+      await _voicePlayer.play(
+        BytesSource(
+          bytes,
+          mimeType: mimeType.isNotEmpty ? mimeType : null,
+        ),
+      );
+      final played = await _waitForVoiceStart();
+      if (!played) {
+        throw Exception('native voice playback did not start');
+      }
       if (!mounted) return;
       setState(() {
         _voicePlaying = true;
+        _playedVoiceFeedbackIds.add(feedbackId);
       });
-    } catch (_) {
+      _syncVoicePulse(feedbackId: feedbackId, showVoice: true);
+    } catch (e) {
+      debugPrint(
+        '[supervisor-resume] voice-playback-error id=$feedbackId uid=$uid: $e',
+      );
       if (!mounted) return;
       setState(() {
         _voicePlaying = false;
-        _voiceError = 'Audio unavailable. Try again.';
+        if (kIsWeb) {
+          _voiceFallbackOpenUri = uri;
+          _voiceFallbackFeedbackId = feedbackId;
+        }
       });
     } finally {
       if (mounted) {
@@ -225,6 +302,66 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         });
       }
     }
+  }
+
+  Future<bool> _waitForVoiceStart({
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final pos = await _voicePlayer.getCurrentPosition();
+      if (_voicePlayer.state == PlayerState.playing) return true;
+      if (pos != null && pos > Duration.zero) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+    final pos = await _voicePlayer.getCurrentPosition();
+    return _voicePlayer.state == PlayerState.playing ||
+        (pos != null && pos > Duration.zero);
+  }
+
+  void _syncVoicePulse({
+    required String? feedbackId,
+    required bool showVoice,
+  }) {
+    final id = (feedbackId ?? '').trim();
+    final shouldPulse =
+        showVoice && id.isNotEmpty && !_playedVoiceFeedbackIds.contains(id);
+    if (shouldPulse) {
+      if (!_voicePulseController.isAnimating) {
+        _voicePulseController.repeat(reverse: true);
+      }
+      return;
+    }
+    if (_voicePulseController.isAnimating) {
+      _voicePulseController.stop();
+      _voicePulseController.value = 0;
+    }
+  }
+
+  void _maybeAutoPlayVoiceFeedback(
+    _SelectedFeedback feedback, {
+    required bool showVoice,
+  }) {
+    if (kIsWeb) return;
+    if (!showVoice || _voiceLoading) return;
+    final feedbackId = (feedback.id ?? '').trim();
+    if (feedbackId.isEmpty) return;
+    if (_autoPlayAttemptedVoiceFeedbackIds.contains(feedbackId)) return;
+    _autoPlayAttemptedVoiceFeedbackIds.add(feedbackId);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      debugPrint('[supervisor-resume] voice-autoplay-attempt id=$feedbackId');
+      _playVoiceFeedback(feedback);
+    });
+  }
+
+  Future<void> _openVoiceFallback() async {
+    final uri = _voiceFallbackOpenUri;
+    if (uri == null) return;
+    final opened = await launchUrl(uri, webOnlyWindowName: '_blank');
+    debugPrint(
+      '[supervisor-resume] voice-open-fallback-tap uri=$uri opened=$opened',
+    );
   }
 
   @override
@@ -256,6 +393,11 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     final showEmoji = queuedEmoji.isNotEmpty;
     final selectedId = selectedFeedback.id;
     final showVoice = selectedFeedback.type == 'voice' && selectedId != null;
+    final showVoiceFallbackOpen = showVoice &&
+        _voiceFallbackOpenUri != null &&
+        _voiceFallbackFeedbackId == selectedId;
+    _syncVoicePulse(feedbackId: selectedId, showVoice: showVoice);
+    _maybeAutoPlayVoiceFeedback(selectedFeedback, showVoice: showVoice);
     final showFeedback = showEmoji || showVoice;
     _reportSelectedEmoji(showFeedback ? selectedId : null);
     final hasActiveSupervisor =
@@ -280,115 +422,164 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     }
     _reportVisible(true);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: Colors.black.withValues(alpha: 0.12),
-          width: 1,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x1A000000),
-            blurRadius: 8,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (showStatus)
-            _StatusLine(
-              loading: showStatusLoading,
-              hasError: showStatusError,
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (_) {
+        if (showVoice) {
+          debugPrint(
+            '[supervisor-resume] voice-panel-pointer-down id=${selectedFeedback.id ?? '-'}',
+          );
+        }
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: (showVoice && !_voiceLoading)
+            ? () {
+                debugPrint(
+                  '[supervisor-resume] voice-panel-tap-play id=${selectedFeedback.id ?? '-'}',
+                );
+                _playVoiceFeedback(selectedFeedback);
+              }
+            : null,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: Colors.black.withValues(alpha: 0.12),
+              width: 1,
             ),
-          if (showStatus && (showName || showFeedback))
-            const SizedBox(height: 6),
-          if (showName)
-            Text(
-              supervisorName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: Colors.black87,
-                fontWeight: FontWeight.w600,
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1A000000),
+                blurRadius: 8,
+                offset: Offset(0, 3),
               ),
-            ),
-          if (showName && showFeedback) const SizedBox(height: 6),
-          if (showEmoji)
-            Center(
-              child: AnimatedBuilder(
-                animation: _wiggleController,
-                child: Text(
-                  queuedEmoji,
-                  style: const TextStyle(
-                    fontSize: 64,
-                    height: 1,
+            ],
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (showStatus)
+                _StatusLine(
+                  loading: showStatusLoading,
+                  hasError: showStatusError,
+                ),
+              if (showStatus && (showName || showFeedback))
+                const SizedBox(height: 6),
+              if (showName)
+                Text(
+                  supervisorName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                builder: (context, child) {
-                  final t = _wiggleController.value * 2 * math.pi;
-                  final angle = math.sin(t * 1.7) * 0.13;
-                  final y = math.sin(t * 3.4) * 1.8;
-                  return Transform.translate(
-                    offset: Offset(0, y),
-                    child: Transform.rotate(angle: angle, child: child),
-                  );
-                },
-              ),
-            ),
-          if (showVoice) ...[
-            Row(
-              children: [
-                const Icon(Icons.volume_up, size: 20, color: Colors.black87),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Voice feedback message',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: Colors.black87,
-                      fontWeight: FontWeight.w600,
+              if (showName && showFeedback) const SizedBox(height: 6),
+              if (showEmoji)
+                Center(
+                  child: AnimatedBuilder(
+                    animation: _wiggleController,
+                    child: Text(
+                      queuedEmoji,
+                      style: const TextStyle(
+                        fontSize: 64,
+                        height: 1,
+                      ),
+                    ),
+                    builder: (context, child) {
+                      final t = _wiggleController.value * 2 * math.pi;
+                      final angle = math.sin(t * 1.7) * 0.13;
+                      final y = math.sin(t * 3.4) * 1.8;
+                      return Transform.translate(
+                        offset: Offset(0, y),
+                        child: Transform.rotate(angle: angle, child: child),
+                      );
+                    },
+                  ),
+                ),
+              if (showVoice) ...[
+                Center(
+                  child: AnimatedBuilder(
+                    animation: _voicePulseController,
+                    builder: (context, child) {
+                      final pulse = 1.0 +
+                          (0.07 *
+                              Curves.easeInOut
+                                  .transform(_voicePulseController.value));
+                      return Transform.scale(scale: pulse, child: child);
+                    },
+                    child: Semantics(
+                      button: true,
+                      label: _voiceLoading
+                          ? 'Loading voice feedback'
+                          : (_voicePlaying
+                              ? 'Replay voice feedback'
+                              : 'Play voice feedback'),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: _voiceLoading
+                              ? null
+                              : () {
+                                  debugPrint(
+                                    '[supervisor-resume] voice-play-tap id=${selectedFeedback.id ?? '-'} type=${selectedFeedback.type}',
+                                  );
+                                  _playVoiceFeedback(selectedFeedback);
+                                },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.black.withValues(alpha: 0.2),
+                                width: 1,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.08),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            padding: const EdgeInsets.all(8),
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: _voiceLoading
+                                  ? const CircularProgressIndicator(
+                                      strokeWidth: 2)
+                                  : Image.asset(
+                                      _voicePlayAsset,
+                                      fit: BoxFit.contain,
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
+                if (showVoiceFallbackOpen) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.center,
+                    child: TextButton(
+                      onPressed: _openVoiceFallback,
+                      child: const Text('Open audio'),
+                    ),
+                  ),
+                ],
               ],
-            ),
-            const SizedBox(height: 6),
-            SizedBox(
-              height: 34,
-              child: OutlinedButton.icon(
-                onPressed: _voiceLoading
-                    ? null
-                    : () => _playVoiceFeedback(selectedFeedback),
-                icon: Icon(
-                  _voicePlaying ? Icons.replay : Icons.play_arrow,
-                  size: 18,
-                ),
-                label: Text(_voiceLoading
-                    ? 'Loading...'
-                    : (_voicePlaying ? 'Replay voice' : 'Play voice')),
-              ),
-            ),
-            if (_voiceError != null &&
-                _voiceError!.isNotEmpty &&
-                _voiceStateFeedbackId == selectedId) ...[
-              const SizedBox(height: 6),
-              Text(
-                _voiceError!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF8B5E00),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
             ],
-          ],
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -537,6 +728,27 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         .trim();
     if (value.isEmpty || value == '-') return '';
     if (_blockedBannerText.hasMatch(value)) return '';
+    return value;
+  }
+
+  Uri _buildFeedbackAudioUri({
+    required String userId,
+    required String feedbackId,
+  }) {
+    return Uri.https(
+      widget.workerHost,
+      '${widget.apiPrefix}/feedback-audio',
+      {
+        'feedbackId': feedbackId,
+        'uid': userId,
+        'app_flavor': activeFlavor.id,
+      },
+    );
+  }
+
+  String _normalizeAudioMimeType(String raw) {
+    final value = raw.trim().toLowerCase();
+    if (value.isEmpty) return '';
     return value;
   }
 

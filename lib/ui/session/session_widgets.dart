@@ -279,21 +279,21 @@ class _RestartSplashState extends State<RestartSplash> {
               refreshInterval: const Duration(seconds: 15),
               onSelectedEmojiChanged: widget.onResumeEmojiChanged,
             );
-            return Stack(
-              fit: StackFit.expand,
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                calendar,
-                Positioned(
-                  top: panelTopOffset,
-                  left: panelLeftOffset,
-                  child: IgnorePointer(
-                    ignoring: true,
-                    child: SizedBox(
-                      width: panelWidth,
-                      child: supervisorPanel,
-                    ),
+                Padding(
+                  padding: EdgeInsets.only(
+                    left: panelLeftOffset,
+                    top: panelTopOffset,
+                  ),
+                  child: SizedBox(
+                    width: panelWidth,
+                    child: supervisorPanel,
                   ),
                 ),
+                const SizedBox(height: 6),
+                Expanded(child: calendar),
               ],
             );
           },
