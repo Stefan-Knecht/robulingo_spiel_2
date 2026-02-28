@@ -276,6 +276,7 @@ class _RestartSplashState extends State<RestartSplash> {
               userId: widget.userId,
               workerHost: widget.workerHost,
               apiPrefix: widget.apiPrefix,
+              refreshInterval: const Duration(seconds: 15),
               onSelectedEmojiChanged: widget.onResumeEmojiChanged,
             );
             return Stack(

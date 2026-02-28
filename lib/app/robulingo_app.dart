@@ -398,6 +398,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   String? _resumeSelectedEmojiId;
   bool _resumeEmojiAckInFlight = false;
   bool _resumeEmojiAckPending = false;
+  Timer? _resumeEmojiAckRetryTimer;
+  DateTime? _resumeEmojiAckRetryNotBeforeUtc;
+  int _resumeEmojiAckRetryAttempt = 0;
 
   String _noMicNamingText(String key) {
     final values = _noMicNamingTexts[key];
@@ -1326,15 +1329,62 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void _handleResumeSelectedEmojiChanged(String? emojiId) {
     final normalized =
         (emojiId != null && emojiId.trim().isNotEmpty) ? emojiId.trim() : null;
+    if (_resumeSelectedEmojiId != normalized) {
+      _resumeEmojiAckRetryAttempt = 0;
+      _resumeEmojiAckRetryNotBeforeUtc = null;
+      _resumeEmojiAckRetryTimer?.cancel();
+      _resumeEmojiAckRetryTimer = null;
+    }
     _resumeSelectedEmojiId = normalized;
   }
 
-  Future<void> _ackResumeEmojiAfterFirstTrial() async {
+  Duration _resumeEmojiAckBackoffDelay(int attempt) {
+    final capped = attempt.clamp(0, 7);
+    final seconds = 2 * (1 << capped);
+    final bounded = seconds > 120 ? 120 : seconds;
+    return Duration(seconds: bounded);
+  }
+
+  void _scheduleResumeEmojiAckRetry() {
     if (!_resumeEmojiAckPending || _resumeEmojiAckInFlight) return;
+    _resumeEmojiAckRetryTimer?.cancel();
+    final delay = _resumeEmojiAckBackoffDelay(_resumeEmojiAckRetryAttempt);
+    _resumeEmojiAckRetryNotBeforeUtc = DateTime.now().toUtc().add(delay);
+    _resumeEmojiAckRetryTimer = Timer(delay, () {
+      _resumeEmojiAckRetryTimer = null;
+      if (!mounted || !_resumeEmojiAckPending) return;
+      unawaited(_ackResumeEmojiAfterFirstTrial(fromRetryTimer: true));
+    });
+    _resumeEmojiAckRetryAttempt += 1;
+    debugPrint(
+        '[supervisor-resume] ack-on-start retry scheduled attempt=$_resumeEmojiAckRetryAttempt delay=${delay.inSeconds}s');
+  }
+
+  void _resetResumeEmojiAckRetryState() {
+    _resumeEmojiAckRetryTimer?.cancel();
+    _resumeEmojiAckRetryTimer = null;
+    _resumeEmojiAckRetryAttempt = 0;
+    _resumeEmojiAckRetryNotBeforeUtc = null;
+  }
+
+  Future<void> _ackResumeEmojiAfterFirstTrial({
+    bool fromRetryTimer = false,
+  }) async {
+    if (!_resumeEmojiAckPending || _resumeEmojiAckInFlight) return;
+    final now = DateTime.now().toUtc();
+    final notBefore = _resumeEmojiAckRetryNotBeforeUtc;
+    if (!fromRetryTimer && notBefore != null && now.isBefore(notBefore)) {
+      return;
+    }
+    if (!fromRetryTimer && _resumeEmojiAckRetryTimer != null) {
+      _resumeEmojiAckRetryTimer?.cancel();
+      _resumeEmojiAckRetryTimer = null;
+    }
     final uid = (userId ?? '').trim();
     final emojiId = (_resumeSelectedEmojiId ?? '').trim();
     if (uid.isEmpty || emojiId.isEmpty) {
       _resumeEmojiAckPending = false;
+      _resetResumeEmojiAckRetryState();
       return;
     }
     _resumeEmojiAckInFlight = true;
@@ -1347,13 +1397,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       if (ok) {
         _resumeSelectedEmojiId = null;
         _resumeEmojiAckPending = false;
+        _resetResumeEmojiAckRetryState();
       } else {
         debugPrint(
             '[supervisor-resume] ack-on-start failed id=$emojiId uid=$uid');
+        _scheduleResumeEmojiAckRetry();
       }
     } catch (e) {
       debugPrint(
           '[supervisor-resume] ack-on-start error id=$emojiId uid=$uid: $e');
+      _scheduleResumeEmojiAckRetry();
     } finally {
       _resumeEmojiAckInFlight = false;
     }
@@ -1362,6 +1415,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void _handleResumeStartGesture(String source) {
     _primeAudioForUserGesture(source);
     _resumeEmojiAckPending = true;
+    _resetResumeEmojiAckRetryState();
     unawaited(_startFromSplash());
   }
 
@@ -3264,6 +3318,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _micControllerDisposed = true;
     micController.dispose();
     nativeSelectTimer?.cancel();
+    _resumeEmojiAckRetryTimer?.cancel();
     _keyboardFocusNode.dispose();
     if (loggerReady) {
       unawaited(logger.endSession());

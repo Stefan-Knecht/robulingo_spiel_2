@@ -12,7 +12,7 @@ class SupervisorResumePanel extends StatefulWidget {
     required this.userId,
     required this.workerHost,
     required this.apiPrefix,
-    this.refreshInterval = const Duration(seconds: 20),
+    this.refreshInterval = const Duration(seconds: 15),
     this.onVisibilityChanged,
     this.onSelectedEmojiChanged,
   });
@@ -32,10 +32,14 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     with SingleTickerProviderStateMixin {
   static final RegExp _blockedBannerText =
       RegExp(r'(?=.*\bdownload\b)(?=.*\bandroid\b)', caseSensitive: false);
+  static final RegExp _emailPattern =
+      RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', caseSensitive: false);
   Timer? _refreshTimer;
   bool _loading = false;
+  bool _loadFailed = false;
   Map<String, dynamic>? _data;
   List<Map<String, dynamic>> _pendingItems = const [];
+  String? _lastKnownSupervisorEmail;
   late final AnimationController _wiggleController;
   bool _lastReportedVisible = false;
   String? _lastReportedEmojiId;
@@ -100,11 +104,20 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     if (uid.isEmpty) {
       if (!mounted) return;
       setState(() {
+        _loading = false;
+        _loadFailed = false;
         _data = null;
+        _pendingItems = const [];
       });
       return;
     }
-    _loading = true;
+    if (mounted) {
+      setState(() {
+        _loading = true;
+      });
+    } else {
+      _loading = true;
+    }
     try {
       final service = SupervisorDashboardService(
         workerHost: widget.workerHost,
@@ -115,6 +128,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         service.fetchEmojiQueue(userId: uid, status: 'pending', limit: 50),
       ]);
       final payload = results[0] as Map<String, dynamic>?;
+      final dashboardOk = payload != null;
       final pendingRaw = (results[1] as List<Map<String, dynamic>>);
       final pending = pendingRaw
           .where((item) => !_isAppGeneratedEmoji(item))
@@ -130,18 +144,29 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         '[supervisor-resume] flavor=${activeFlavor.id} uid=$uid host=${widget.workerHost} pendingRaw=${pendingRaw.length} pendingFiltered=${pending.length} sample=$sample',
       );
       if (!mounted) return;
+      final supervisor = payload?['supervisor'];
+      final supervisorMap = supervisor is Map
+          ? Map<String, dynamic>.from(supervisor)
+          : const <String, dynamic>{};
+      final email = _resolveSupervisorEmail(supervisorMap);
       setState(() {
+        _loading = false;
+        _loadFailed = !dashboardOk;
         _data = payload;
         _pendingItems = pending;
+        if (email != null && email.isNotEmpty) {
+          _lastKnownSupervisorEmail = email;
+        }
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
-        _data = null;
-        _pendingItems = const [];
+        _loading = false;
+        _loadFailed = true;
       });
-    } finally {
-      _loading = false;
+      debugPrint(
+        '[supervisor-resume] load-error uid=$uid host=${widget.workerHost}: $e',
+      );
     }
   }
 
@@ -176,13 +201,20 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     _reportSelectedEmoji(showEmoji ? selectedId : null);
     final hasActiveSupervisor =
         _isTrueish(supervisor['active']) || _isTrueish(supervisor['paired']);
+    final supervisorEmail =
+        _resolveSupervisorEmail(supervisor, queuedItem: selectedEmoji.item) ??
+            _lastKnownSupervisorEmail;
     final supervisorName = _resolveSupervisorName(
       supervisor,
       queuedItem: selectedEmoji.item,
+      fallbackEmail: supervisorEmail,
     );
-    final showName =
-        supervisorName.isNotEmpty && (hasActiveSupervisor || showEmoji);
-    if (!showName && !showEmoji) {
+    final showStatusLoading = _loading && _data == null && !_loadFailed;
+    final showStatusError = _loadFailed;
+    final showStatus = showStatusLoading || showStatusError;
+    final showName = supervisorName.isNotEmpty &&
+        (hasActiveSupervisor || showEmoji || _loadFailed);
+    if (!showName && !showEmoji && !showStatus) {
       _reportVisible(false);
       _reportSelectedEmoji(null);
       return const SizedBox.shrink();
@@ -210,6 +242,12 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (showStatus)
+            _StatusLine(
+              loading: showStatusLoading,
+              hasError: showStatusError,
+            ),
+          if (showStatus && (showName || showEmoji)) const SizedBox(height: 6),
           if (showName)
             Text(
               supervisorName,
@@ -251,14 +289,19 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   String _resolveSupervisorName(
     Map<String, dynamic> supervisor, {
     Map<String, dynamic>? queuedItem,
+    String? fallbackEmail,
   }) {
+    // Canonical contract key for display name.
+    final canonical =
+        _normalizeSupervisorName((supervisor['displayName'] ?? '').toString());
+    if (canonical.isNotEmpty) return canonical;
+    // Legacy key fallback (supports old payloads).
     for (final key in const [
-      'registrationName',
-      'registration_name',
       'display_name',
-      'displayName',
       'supervisor_display_name',
       'supervisorDisplayName',
+      'registrationName',
+      'registration_name',
       'supervisorName',
       'supervisor_name',
       'registeredName',
@@ -272,7 +315,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       final fromItem = _resolveSupervisorNameFromItem(queuedItem);
       if (fromItem.isNotEmpty) return fromItem;
     }
-    return '';
+    return _normalizeSupervisorEmail(fallbackEmail ?? '');
   }
 
   _SelectedEmoji _resolveQueuedEmoji(
@@ -309,13 +352,16 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   String _resolveSupervisorNameFromItem(Map<String, dynamic> item) {
     final meta = item['meta'];
     final metaMap = meta is Map ? Map<String, dynamic>.from(meta) : null;
+    final canonical = _normalizeSupervisorName(
+      (item['displayName'] ?? metaMap?['displayName'] ?? '').toString(),
+    );
+    if (canonical.isNotEmpty) return canonical;
     for (final key in const [
-      'registrationName',
-      'registration_name',
       'supervisor_display_name',
       'supervisorDisplayName',
       'display_name',
-      'displayName',
+      'registrationName',
+      'registration_name',
       'supervisor_name',
       'supervisorName',
       'registeredName',
@@ -331,6 +377,34 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       }
     }
     return '';
+  }
+
+  String? _resolveSupervisorEmail(
+    Map<String, dynamic> supervisor, {
+    Map<String, dynamic>? queuedItem,
+  }) {
+    for (final key in const ['supervisorEmail', 'email', 'supervisor_email']) {
+      final value =
+          _normalizeSupervisorEmail((supervisor[key] ?? '').toString());
+      if (value.isNotEmpty) return value;
+    }
+    if (queuedItem != null) {
+      final meta = queuedItem['meta'];
+      final metaMap = meta is Map ? Map<String, dynamic>.from(meta) : null;
+      for (final key in const [
+        'supervisorEmail',
+        'email',
+        'supervisor_email',
+      ]) {
+        final topLevel =
+            _normalizeSupervisorEmail((queuedItem[key] ?? '').toString());
+        if (topLevel.isNotEmpty) return topLevel;
+        final nested =
+            _normalizeSupervisorEmail((metaMap?[key] ?? '').toString());
+        if (nested.isNotEmpty) return nested;
+      }
+    }
+    return null;
   }
 
   bool _isTrueish(dynamic raw) {
@@ -350,6 +424,13 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         .trim();
     if (value.isEmpty || value == '-') return '';
     if (_blockedBannerText.hasMatch(value)) return '';
+    return value;
+  }
+
+  String _normalizeSupervisorEmail(String raw) {
+    final value = raw.trim().toLowerCase();
+    if (value.isEmpty) return '';
+    if (!_emailPattern.hasMatch(value)) return '';
     return value;
   }
 
@@ -410,4 +491,46 @@ class _SelectedEmoji {
   final String emoji;
   final String? id;
   final Map<String, dynamic>? item;
+}
+
+class _StatusLine extends StatelessWidget {
+  const _StatusLine({
+    required this.loading,
+    required this.hasError,
+  });
+
+  final bool loading;
+  final bool hasError;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = hasError ? Icons.cloud_off : Icons.sync;
+    final text = hasError ? 'Feedback unavailable' : 'Loading feedback...';
+    final color = hasError ? const Color(0xFF8B5E00) : Colors.black54;
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ),
+        if (loading && !hasError) ...[
+          const SizedBox(width: 6),
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(strokeWidth: 1.8),
+          ),
+        ],
+      ],
+    );
+  }
 }

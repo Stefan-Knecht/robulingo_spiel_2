@@ -492,7 +492,9 @@ const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
 const SUMMARY_IDLE_CAP_SECONDS = 20;
 const SUMMARY_START_BONUS_SECONDS = 5;
 const EMOJI_QUEUE_MAX_ITEMS = 500;
+const EMOJI_QUEUE_MAX_PENDING_ITEMS = 2;
 const TRAINING_PROFILE_MAX_ITEMS = 500;
+const DASHBOARD_QUEUE_POLLING_MS = 15000;
 const APP_FLAVOR_DAILYWORDS = 'dailywords';
 const APP_FLAVOR_DEFAULT = 'robulingo';
 
@@ -846,8 +848,10 @@ async function handlePair(request, env) {
   const resolvedSupervisorName =
     cleanOptionalString(body.print_name, 128) ||
     cleanOptionalString(body.printName, 128) ||
+    cleanOptionalString(body.displayName, 128) ||
     cleanOptionalString(body.supervisor_display_name, 128) ||
     cleanOptionalString(body.display_name, 128) ||
+    cleanOptionalString(previous?.displayName, 128) ||
     cleanOptionalString(previous?.registrationName, 128) ||
     cleanOptionalString(previous?.display_name, 128) ||
     (await resolveSupervisorDisplayNameByIdentity(
@@ -866,6 +870,7 @@ async function handlePair(request, env) {
     internalName,
     comment,
     uiLanguage,
+    displayName: resolvedSupervisorName || null,
     registrationName: resolvedSupervisorName || null,
     display_name: resolvedSupervisorName || null,
     linkedAt: previous?.linkedAt || now,
@@ -881,6 +886,7 @@ async function handlePair(request, env) {
       active: next.active,
       supervisorEmailMasked: next.supervisorEmailMasked,
       supervisorCodeLast2: next.supervisorCodeLast2,
+      displayName: next.displayName,
       registrationName: next.registrationName,
       display_name: next.display_name,
       linkedAt: next.linkedAt,
@@ -934,9 +940,12 @@ async function handleEmojiQueue(request, env) {
   const fallbackNote = cleanOptionalString(body.note, 512);
   const fallbackMeta = normalizeMeta(body.meta);
   const now = new Date().toISOString();
+  const queue = await loadEmojiQueue(bucket, uid);
+  const pendingNow = queue.items.filter((item) => item.status === 'pending').length;
+  const availablePendingSlots = Math.max(0, EMOJI_QUEUE_MAX_PENDING_ITEMS - pendingNow);
 
   const rawItems = Array.isArray(body.items) ? body.items : [body];
-  const accepted = [];
+  const candidates = [];
   for (const raw of rawItems) {
     const emoji = cleanOptionalString(raw?.emoji, 16);
     if (!emoji) continue;
@@ -944,7 +953,7 @@ async function handleEmojiQueue(request, env) {
     const note = cleanOptionalString(raw?.note, 512) || fallbackNote;
     const meta = normalizeMeta(raw?.meta) || fallbackMeta;
     const priority = normalizePriority(raw?.priority);
-    accepted.push({
+    candidates.push({
       id: crypto.randomUUID(),
       emoji,
       status: 'pending',
@@ -959,14 +968,28 @@ async function handleEmojiQueue(request, env) {
       consumedAt: null,
     });
   }
-  if (accepted.length === 0) {
+  if (candidates.length === 0) {
     return jsonResponse(
       { ok: false, error: 'no_valid_items', message: 'provide emoji or items[].emoji' },
       400
     );
   }
+  const accepted = candidates.slice(0, availablePendingSlots);
+  const rejectedDueToPendingLimit = Math.max(0, candidates.length - accepted.length);
+  if (accepted.length === 0) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: 'pending_queue_limit_reached',
+        message: `maximum ${EMOJI_QUEUE_MAX_PENDING_ITEMS} pending queue items per learner`,
+        maxPending: EMOJI_QUEUE_MAX_PENDING_ITEMS,
+        currentPending: pendingNow,
+        rejectedDueToPendingLimit,
+      },
+      409
+    );
+  }
 
-  const queue = await loadEmojiQueue(bucket, uid);
   queue.items.push(...accepted);
   trimEmojiQueue(queue);
   queue.updatedAt = now;
@@ -976,6 +999,9 @@ async function handleEmojiQueue(request, env) {
     ok: true,
     userId: uid,
     accepted: accepted.length,
+    rejectedDueToPendingLimit,
+    pendingLimit: EMOJI_QUEUE_MAX_PENDING_ITEMS,
+    limitReached: rejectedDueToPendingLimit > 0,
     queue: summarizeEmojiQueue(queue),
   });
 }
@@ -1004,6 +1030,8 @@ async function handleEmojiQueueAck(request, env) {
   const mode = body.mode === 'remove' ? 'remove' : 'status';
   const nextStatus = mode === 'status' ? normalizeStatus(body.status) || 'delivered' : null;
   let changed = 0;
+  let rejectedDueToPendingLimit = 0;
+  let pendingCount = queue.items.filter((item) => item.status === 'pending').length;
   if (mode === 'remove') {
     const before = queue.items.length;
     queue.items = queue.items.filter((item) => !idSet.has(item.id));
@@ -1011,20 +1039,37 @@ async function handleEmojiQueueAck(request, env) {
   } else {
     for (const item of queue.items) {
       if (!idSet.has(item.id)) continue;
+      const previousStatus = item.status;
+      if (
+        nextStatus === 'pending' &&
+        previousStatus !== 'pending' &&
+        pendingCount >= EMOJI_QUEUE_MAX_PENDING_ITEMS
+      ) {
+        rejectedDueToPendingLimit += 1;
+        continue;
+      }
       item.status = nextStatus;
       item.updatedAt = now;
       if (nextStatus !== 'pending') {
         item.consumedAt = item.consumedAt || now;
       }
+      if (previousStatus === 'pending' && nextStatus !== 'pending') {
+        pendingCount = Math.max(0, pendingCount - 1);
+      } else if (previousStatus !== 'pending' && nextStatus === 'pending') {
+        pendingCount += 1;
+      }
       changed += 1;
     }
   }
+  trimEmojiQueue(queue);
   queue.updatedAt = now;
   await saveEmojiQueue(bucket, uid, queue);
   return jsonResponse({
     ok: true,
     userId: uid,
     changed,
+    rejectedDueToPendingLimit,
+    pendingLimit: EMOJI_QUEUE_MAX_PENDING_ITEMS,
     queue: summarizeEmojiQueue(queue),
   });
 }
@@ -1050,28 +1095,29 @@ async function handleDashboardInfo(request, env) {
   const queueSummary = summarizeEmojiQueue(queue);
   const recent = recentPending(queue.items, 8);
   const resumeInfo = summarizeResumeState(resume);
-  let registrationName = resolveSupervisorRegistrationName({
+  let displayName = resolveSupervisorRegistrationName({
     pairing,
     consent,
     registration,
   });
-  if (!registrationName) {
-    registrationName = await resolveSupervisorDisplayNameFromPairingIdentity(
+  if (!displayName) {
+    displayName = await resolveSupervisorDisplayNameFromPairingIdentity(
       bucket,
       pairing
     );
   }
   if (
-    registrationName &&
+    displayName &&
     pairing &&
     !firstNonEmptyString(
+      pairing.displayName,
       pairing.registrationName,
-      pairing.display_name,
-      pairing.displayName
+      pairing.display_name
     )
   ) {
-    pairing.registrationName = registrationName;
-    pairing.display_name = registrationName;
+    pairing.displayName = displayName;
+    pairing.registrationName = displayName;
+    pairing.display_name = displayName;
     pairing.updatedAt = new Date().toISOString();
     await putJsonObject(bucket, pairingKey(uid), pairing);
   }
@@ -1083,12 +1129,14 @@ async function handleDashboardInfo(request, env) {
       paired: !!pairing?.active,
       active: !!pairing?.active,
       supervisorEmailMasked: pairing?.supervisorEmailMasked || null,
+      supervisorEmail: pairing?.supervisorEmailNormalized || null,
+      email: pairing?.supervisorEmailNormalized || null,
       supervisorCodeLast2: pairing?.supervisorCodeLast2 || null,
       linkedAt: pairing?.linkedAt || null,
       updatedAt: pairing?.updatedAt || null,
-      registrationName: registrationName || null,
-      display_name: registrationName || null,
-      displayName: registrationName || null,
+      displayName: displayName || null,
+      registrationName: displayName || null,
+      display_name: displayName || null,
       internalName: pairing?.internalName || consent?.internalName || null,
       comment: pairing?.comment || consent?.comment || null,
       uiLanguage: pairing?.uiLanguage || consent?.uiLanguage || null,
@@ -1107,7 +1155,7 @@ async function handleDashboardInfo(request, env) {
     },
     resumeState: resumeInfo,
     dashboardHints: {
-      queuePollingMs: 15000,
+      queuePollingMs: DASHBOARD_QUEUE_POLLING_MS,
       queueAckEndpoint: '/api/emoji-queue-ack',
       queueReadEndpoint: '/api/emoji-queue?status=pending&limit=50',
       apkLatestEndpoint: '/api/android-release/latest?flavor=dailywords',
@@ -1799,6 +1847,10 @@ async function loadSupervisorRegistrationByIdentity(bucket, emailHash, codeHash)
 
 function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
   return firstNonEmptyString(
+    // Canonical contract key:
+    registration?.displayName,
+    pairing?.displayName,
+    consent?.displayName,
     // DailyWords registration page field:
     // "Display name (shown to participants)" -> display_name
     registration?.print_name,
@@ -1821,7 +1873,6 @@ function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
     pairing?.printName,
     pairing?.supervisorDisplayName,
     pairing?.display_name,
-    pairing?.displayName,
     pairing?.registration_name,
     pairing?.registrationName,
     pairing?.supervisorName,
@@ -1832,7 +1883,6 @@ function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
     consent?.supervisorDisplayName,
     consent?.display_name,
     consent?.registration_name,
-    consent?.displayName,
     consent?.registrationName,
     consent?.supervisorName,
     consent?.name
@@ -1897,6 +1947,26 @@ function normalizeQueueItem(item) {
 
 function trimEmojiQueue(queue) {
   if (!Array.isArray(queue.items)) queue.items = [];
+  const pendingItems = queue.items.filter((item) => item.status === 'pending');
+  if (pendingItems.length > EMOJI_QUEUE_MAX_PENDING_ITEMS) {
+    const keepPendingIds = new Set(
+      pendingItems
+        .slice()
+        .sort((a, b) => {
+          const pa = normalizePriority(a.priority);
+          const pb = normalizePriority(b.priority);
+          if (pa !== pb) return pb - pa;
+          const at = Date.parse(a.createdAt || a.updatedAt || 0);
+          const bt = Date.parse(b.createdAt || b.updatedAt || 0);
+          return bt - at;
+        })
+        .slice(0, EMOJI_QUEUE_MAX_PENDING_ITEMS)
+        .map((item) => item.id)
+    );
+    queue.items = queue.items.filter(
+      (item) => item.status !== 'pending' || keepPendingIds.has(item.id)
+    );
+  }
   if (queue.items.length <= EMOJI_QUEUE_MAX_ITEMS) return;
   queue.items.sort((a, b) => {
     const as = a.status === 'pending' ? 0 : 1;
@@ -1920,6 +1990,10 @@ function summarizeEmojiQueue(queue) {
   const pending = queue.items.filter((item) => item.status === 'pending').length;
   const delivered = queue.items.filter((item) => item.status === 'delivered').length;
   const archived = queue.items.filter((item) => item.status === 'archived').length;
+  const pendingSlotsRemaining = Math.max(
+    0,
+    EMOJI_QUEUE_MAX_PENDING_ITEMS - pending
+  );
   const latestItem = queue.items
     .slice()
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))[0];
@@ -1930,6 +2004,10 @@ function summarizeEmojiQueue(queue) {
     pending,
     delivered,
     archived,
+    pendingLimit: EMOJI_QUEUE_MAX_PENDING_ITEMS,
+    pendingSlotsRemaining,
+    pendingLimitReached: pending >= EMOJI_QUEUE_MAX_PENDING_ITEMS,
+    canEnqueuePending: pending < EMOJI_QUEUE_MAX_PENDING_ITEMS,
     latestEmoji: latestItem?.emoji || null,
     latestEventAt: latestItem?.updatedAt || latestItem?.createdAt || null,
   };

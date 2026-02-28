@@ -96,6 +96,7 @@ Learner profile endpoint (bridge helper for dashboards):
 
 Emoji queue endpoints (for dashboard integration):
 - Bucket behavior: all queue reads/writes always use the DailyWords bucket.
+- Pending queue cap: max **2** pending emoji items per learner.
 - `POST https://<workerHost><apiPrefix>/emoji-queue`
   - header: `x-user-id`
   - body (single item):
@@ -103,14 +104,24 @@ Emoji queue endpoints (for dashboard integration):
     - `reason`, `note`, `priority`, `source`, `meta` (all optional)
   - body (batch):
     - `items: [{ emoji, reason?, note?, priority?, source?, meta? }, ...]`
+  - if pending queue is full:
+    - returns `409` with `error: pending_queue_limit_reached`
+  - if batch exceeds free slots:
+    - accepts up to available slots and returns `rejectedDueToPendingLimit`
 - `GET https://<workerHost><apiPrefix>/emoji-queue?status=pending|delivered|archived|all&limit=50&cursor=0`
   - header: `x-user-id` (or `uid` query fallback)
+  - `queue` summary includes UI guard fields:
+    - `pendingLimit` (=2)
+    - `pendingSlotsRemaining`
+    - `pendingLimitReached`
+    - `canEnqueuePending`
 - `POST https://<workerHost><apiPrefix>/emoji-queue-ack`
   - header: `x-user-id`
   - body:
     - `ids: string[]`
     - `status: delivered|archived` (optional, default `delivered`)
     - `mode: status|remove` (optional, default `status`)
+  - `mode=status` respects the same max pending cap (`2`) for transitions to `pending`
 - `DELETE https://<workerHost><apiPrefix>/emoji-queue`
   - header: `x-user-id`
   - clears queue
@@ -120,8 +131,13 @@ Dashboard build endpoint:
   - header: `x-user-id` (or `uid` query fallback)
   - flavor parameters are ignored for this endpoint (always DailyWords bucket)
   - returns:
-    - `supervisor` block (paired/active/email masked/registrationName/internal name/comment/ui language)
+    - `supervisor` block:
+      - canonical: `displayName`
+      - legacy aliases: `registrationName`, `display_name`
+      - email fields: `supervisorEmail` (full), `email` (alias), `supervisorEmailMasked`
+      - plus `paired/active/internal name/comment/ui language`
     - `consent` block
     - `emojiQueue` summary + `itemsPreview`
+      - includes `pendingLimit`, `pendingSlotsRemaining`, `pendingLimitReached`, `canEnqueuePending`
     - `resumeState` summary
-    - `dashboardHints` (poll interval + endpoint hints incl. APK update/count endpoints, `dataContractVersion: 3`)
+    - `dashboardHints` (poll interval + endpoint hints incl. APK update/count endpoints, `dataContractVersion: 3`, current `queuePollingMs=15000`)
