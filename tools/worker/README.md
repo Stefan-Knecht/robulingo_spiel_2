@@ -96,14 +96,15 @@ Learner profile endpoint (bridge helper for dashboards):
 
 Emoji queue endpoints (for dashboard integration):
 - Bucket behavior: all queue reads/writes always use the DailyWords bucket.
-- Pending queue cap: max **2** pending emoji items per learner.
+- Pending queue cap: max **2** pending feedback items per learner (`emoji` + `voice`).
 - `POST https://<workerHost><apiPrefix>/emoji-queue`
   - header: `x-user-id`
   - body (single item):
-    - `emoji: string`
+    - `type: "emoji"` + `emoji: string`, or
+    - `type: "voice"` + `audioBase64: string` (+ optional `mimeType`, `durationMs`)
     - `reason`, `note`, `priority`, `source`, `meta` (all optional)
   - body (batch):
-    - `items: [{ emoji, reason?, note?, priority?, source?, meta? }, ...]`
+    - `items: [{ type, emoji?, audioBase64?, mimeType?, durationMs?, reason?, note?, priority?, source?, meta? }, ...]`
   - if pending queue is full:
     - returns `409` with `error: pending_queue_limit_reached`
   - if batch exceeds free slots:
@@ -124,7 +125,12 @@ Emoji queue endpoints (for dashboard integration):
   - `mode=status` respects the same max pending cap (`2`) for transitions to `pending`
 - `DELETE https://<workerHost><apiPrefix>/emoji-queue`
   - header: `x-user-id`
-  - clears queue
+  - clears queue (also deletes pending voice audio blobs)
+
+- `GET https://<workerHost><apiPrefix>/feedback-audio?feedbackId=<id>`
+  - header: `x-user-id`
+  - returns voice feedback audio bytes for one queued voice item
+  - requires active pairing + active consent; otherwise returns `403`
 
 Dashboard build endpoint:
 - `GET https://<workerHost><apiPrefix>/dashboard-info`

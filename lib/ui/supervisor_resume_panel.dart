@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
 import '../flavor_config.dart';
@@ -41,8 +42,13 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   List<Map<String, dynamic>> _pendingItems = const [];
   String? _lastKnownSupervisorEmail;
   late final AnimationController _wiggleController;
+  late final AudioPlayer _voicePlayer;
   bool _lastReportedVisible = false;
   String? _lastReportedEmojiId;
+  bool _voiceLoading = false;
+  bool _voicePlaying = false;
+  String? _voiceError;
+  String? _voiceStateFeedbackId;
 
   @override
   void initState() {
@@ -51,6 +57,13 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat();
+    _voicePlayer = AudioPlayer();
+    _voicePlayer.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _voicePlaying = false;
+      });
+    });
     _load();
     if (widget.refreshInterval > Duration.zero) {
       _refreshTimer = Timer.periodic(widget.refreshInterval, (_) => _load());
@@ -61,6 +74,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   void dispose() {
     _refreshTimer?.cancel();
     _wiggleController.dispose();
+    _voicePlayer.dispose();
     super.dispose();
   }
 
@@ -134,11 +148,12 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
           .where((item) => !_isAppGeneratedEmoji(item))
           .toList(growable: false);
       final sample = pending.take(3).map((item) {
+        final type = (item['type'] ?? 'emoji').toString().trim();
         final emoji = (item['emoji'] ?? '').toString().trim();
         final source = (item['source'] ?? '').toString().trim();
         final reason = (item['reason'] ?? '').toString().trim();
         final id = (item['id'] ?? '').toString().trim();
-        return '[$emoji src=$source reason=$reason id=${id.isEmpty ? '-' : id}]';
+        return '[$type emoji=$emoji src=$source reason=$reason id=${id.isEmpty ? '-' : id}]';
       }).join(', ');
       debugPrint(
         '[supervisor-resume] flavor=${activeFlavor.id} uid=$uid host=${widget.workerHost} pendingRaw=${pendingRaw.length} pendingFiltered=${pending.length} sample=$sample',
@@ -170,6 +185,48 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     }
   }
 
+  Future<void> _playVoiceFeedback(_SelectedFeedback feedback) async {
+    final uid = widget.userId?.trim() ?? '';
+    final feedbackId = (feedback.id ?? '').trim();
+    if (uid.isEmpty || feedbackId.isEmpty || _voiceLoading) return;
+    final service = SupervisorDashboardService(
+      workerHost: widget.workerHost,
+      apiPrefix: widget.apiPrefix,
+    );
+    setState(() {
+      _voiceLoading = true;
+      _voiceStateFeedbackId = feedbackId;
+      _voiceError = null;
+    });
+    try {
+      final bytes = await service.fetchFeedbackAudio(
+        userId: uid,
+        feedbackId: feedbackId,
+      );
+      if (bytes == null || bytes.isEmpty) {
+        throw Exception('empty voice payload');
+      }
+      await _voicePlayer.stop();
+      await _voicePlayer.play(BytesSource(bytes));
+      if (!mounted) return;
+      setState(() {
+        _voicePlaying = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _voicePlaying = false;
+        _voiceError = 'Audio unavailable. Try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _voiceLoading = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final uid = widget.userId?.trim() ?? '';
@@ -191,30 +248,32 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
             (queue['itemsPreview'] as List).whereType<Map>(),
           )
         : const <Map<String, dynamic>>[];
-    final selectedEmoji = _resolveQueuedEmoji(
+    final selectedFeedback = _resolveQueuedFeedback(
       _pendingItems,
       fallbackItems: preview,
     );
-    final queuedEmoji = selectedEmoji.emoji;
+    final queuedEmoji = selectedFeedback.emoji;
     final showEmoji = queuedEmoji.isNotEmpty;
-    final selectedId = selectedEmoji.id;
-    _reportSelectedEmoji(showEmoji ? selectedId : null);
+    final selectedId = selectedFeedback.id;
+    final showVoice = selectedFeedback.type == 'voice' && selectedId != null;
+    final showFeedback = showEmoji || showVoice;
+    _reportSelectedEmoji(showFeedback ? selectedId : null);
     final hasActiveSupervisor =
         _isTrueish(supervisor['active']) || _isTrueish(supervisor['paired']);
-    final supervisorEmail =
-        _resolveSupervisorEmail(supervisor, queuedItem: selectedEmoji.item) ??
-            _lastKnownSupervisorEmail;
+    final supervisorEmail = _resolveSupervisorEmail(supervisor,
+            queuedItem: selectedFeedback.item) ??
+        _lastKnownSupervisorEmail;
     final supervisorName = _resolveSupervisorName(
       supervisor,
-      queuedItem: selectedEmoji.item,
+      queuedItem: selectedFeedback.item,
       fallbackEmail: supervisorEmail,
     );
     final showStatusLoading = _loading && _data == null && !_loadFailed;
     final showStatusError = _loadFailed;
     final showStatus = showStatusLoading || showStatusError;
     final showName = supervisorName.isNotEmpty &&
-        (hasActiveSupervisor || showEmoji || _loadFailed);
-    if (!showName && !showEmoji && !showStatus) {
+        (hasActiveSupervisor || showFeedback || _loadFailed);
+    if (!showName && !showFeedback && !showStatus) {
       _reportVisible(false);
       _reportSelectedEmoji(null);
       return const SizedBox.shrink();
@@ -247,7 +306,8 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
               loading: showStatusLoading,
               hasError: showStatusError,
             ),
-          if (showStatus && (showName || showEmoji)) const SizedBox(height: 6),
+          if (showStatus && (showName || showFeedback))
+            const SizedBox(height: 6),
           if (showName)
             Text(
               supervisorName,
@@ -258,7 +318,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
                 fontWeight: FontWeight.w600,
               ),
             ),
-          if (showName && showEmoji) const SizedBox(height: 6),
+          if (showName && showFeedback) const SizedBox(height: 6),
           if (showEmoji)
             Center(
               child: AnimatedBuilder(
@@ -281,6 +341,53 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
                 },
               ),
             ),
+          if (showVoice) ...[
+            Row(
+              children: [
+                const Icon(Icons.volume_up, size: 20, color: Colors.black87),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Voice feedback message',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 34,
+              child: OutlinedButton.icon(
+                onPressed: _voiceLoading
+                    ? null
+                    : () => _playVoiceFeedback(selectedFeedback),
+                icon: Icon(
+                  _voicePlaying ? Icons.replay : Icons.play_arrow,
+                  size: 18,
+                ),
+                label: Text(_voiceLoading
+                    ? 'Loading...'
+                    : (_voicePlaying ? 'Replay voice' : 'Play voice')),
+              ),
+            ),
+            if (_voiceError != null &&
+                _voiceError!.isNotEmpty &&
+                _voiceStateFeedbackId == selectedId) ...[
+              const SizedBox(height: 6),
+              Text(
+                _voiceError!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF8B5E00),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ],
         ],
       ),
     );
@@ -318,35 +425,41 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     return _normalizeSupervisorEmail(fallbackEmail ?? '');
   }
 
-  _SelectedEmoji _resolveQueuedEmoji(
+  _SelectedFeedback _resolveQueuedFeedback(
     List<Map<String, dynamic>> items, {
     List<Map<String, dynamic>> fallbackItems = const [],
   }) {
-    final primary = _pickBestEmojiItem(items);
+    final primary = _pickBestFeedbackItem(items);
     if (primary != null) {
+      final type = (primary['type'] ?? 'emoji').toString().trim().toLowerCase();
       final emoji = (primary['emoji'] ?? '').toString().trim();
       final id = (primary['id'] ?? '').toString().trim();
-      if (emoji.isNotEmpty) {
-        return _SelectedEmoji(
-          emoji: emoji,
+      if (type == 'voice' || emoji.isNotEmpty) {
+        return _SelectedFeedback(
+          type: type == 'voice' ? 'voice' : 'emoji',
+          emoji: type == 'voice' ? '' : emoji,
           id: id.isEmpty ? null : id,
           item: primary,
         );
       }
     }
-    final fallback = _pickBestEmojiItem(fallbackItems);
+    final fallback = _pickBestFeedbackItem(fallbackItems);
     if (fallback != null) {
+      final type =
+          (fallback['type'] ?? 'emoji').toString().trim().toLowerCase();
       final emoji = (fallback['emoji'] ?? '').toString().trim();
       final id = (fallback['id'] ?? '').toString().trim();
-      if (emoji.isNotEmpty) {
-        return _SelectedEmoji(
-          emoji: emoji,
+      if (type == 'voice' || emoji.isNotEmpty) {
+        return _SelectedFeedback(
+          type: type == 'voice' ? 'voice' : 'emoji',
+          emoji: type == 'voice' ? '' : emoji,
           id: id.isEmpty ? null : id,
           item: fallback,
         );
       }
     }
-    return const _SelectedEmoji(emoji: '', id: null, item: null);
+    return const _SelectedFeedback(
+        type: 'emoji', emoji: '', id: null, item: null);
   }
 
   String _resolveSupervisorNameFromItem(Map<String, dynamic> item) {
@@ -443,6 +556,8 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   }
 
   bool _isAppGeneratedEmoji(Map<String, dynamic> item) {
+    final type = (item['type'] ?? 'emoji').toString().trim().toLowerCase();
+    if (type == 'voice') return false;
     final source = (item['source'] ?? '').toString().trim().toLowerCase();
     if (source != 'app') return false;
     final reason = (item['reason'] ?? '').toString().trim().toLowerCase();
@@ -452,21 +567,30 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     return false;
   }
 
-  Map<String, dynamic>? _pickBestEmojiItem(List<Map<String, dynamic>> items) {
+  Map<String, dynamic>? _pickBestFeedbackItem(
+      List<Map<String, dynamic>> items) {
     if (items.isEmpty) return null;
-    final candidates = items
-        .where((item) => (item['emoji'] ?? '').toString().trim().isNotEmpty)
-        .toList(growable: false);
+    final candidates = items.where((item) {
+      final type = (item['type'] ?? 'emoji').toString().trim().toLowerCase();
+      if (type == 'voice') {
+        final id = (item['id'] ?? '').toString().trim();
+        return id.isNotEmpty;
+      }
+      return (item['emoji'] ?? '').toString().trim().isNotEmpty;
+    }).toList(growable: false);
     if (candidates.isEmpty) return null;
     final sorted = <Map<String, dynamic>>[...candidates]..sort((a, b) {
-        final rankDiff = _emojiPriorityRank(a).compareTo(_emojiPriorityRank(b));
+        final rankDiff =
+            _feedbackPriorityRank(a).compareTo(_feedbackPriorityRank(b));
         if (rankDiff != 0) return rankDiff;
         return _itemTs(b).compareTo(_itemTs(a));
       });
     return sorted.first;
   }
 
-  int _emojiPriorityRank(Map<String, dynamic> item) {
+  int _feedbackPriorityRank(Map<String, dynamic> item) {
+    final type = (item['type'] ?? 'emoji').toString().trim().toLowerCase();
+    if (type == 'voice') return 0;
     final source = (item['source'] ?? '').toString().trim().toLowerCase();
     final reason = (item['reason'] ?? '').toString().trim().toLowerCase();
     final emoji = (item['emoji'] ?? '').toString().trim();
@@ -481,13 +605,15 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   }
 }
 
-class _SelectedEmoji {
-  const _SelectedEmoji({
+class _SelectedFeedback {
+  const _SelectedFeedback({
+    required this.type,
     required this.emoji,
     required this.id,
     required this.item,
   });
 
+  final String type;
   final String emoji;
   final String? id;
   final Map<String, dynamic>? item;

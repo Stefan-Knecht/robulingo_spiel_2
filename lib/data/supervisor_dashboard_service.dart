@@ -58,6 +58,48 @@ class SupervisorDashboardService {
     }
   }
 
+  Future<bool> enqueueVoiceFeedback({
+    required String userId,
+    required Uint8List audioBytes,
+    String mimeType = 'audio/mp4',
+    int? durationMs,
+    String? reason,
+    String? note,
+    int priority = 0,
+    Map<String, dynamic>? meta,
+    String source = 'app',
+  }) async {
+    final uid = userId.trim();
+    if (uid.isEmpty || audioBytes.isEmpty) return false;
+    final body = <String, dynamic>{
+      'type': 'voice',
+      'audioBase64': base64Encode(audioBytes),
+      'mimeType': mimeType.trim().isEmpty ? 'audio/mp4' : mimeType.trim(),
+      'source': source,
+      'priority': priority,
+      if (durationMs != null && durationMs > 0) 'durationMs': durationMs,
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      if (meta != null && meta.isNotEmpty) 'meta': meta,
+    };
+    try {
+      final res = await _http
+          .post(
+            _path('/emoji-queue'),
+            headers: withFlavorHeader({
+              'content-type': 'application/json',
+              'x-user-id': uid,
+            }),
+            body: jsonEncode(body),
+          )
+          .timeout(_timeout);
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      debugPrint('[supervisor-dashboard][enqueue-voice-error] $e');
+      return false;
+    }
+  }
+
   Future<Map<String, dynamic>?> fetchDashboardInfo({
     required String userId,
   }) async {
@@ -112,6 +154,28 @@ class SupervisorDashboardService {
     } catch (e) {
       debugPrint('[supervisor-dashboard][emoji-queue-read-error] $e');
       return const [];
+    }
+  }
+
+  Future<Uint8List?> fetchFeedbackAudio({
+    required String userId,
+    required String feedbackId,
+  }) async {
+    final uid = userId.trim();
+    final fid = feedbackId.trim();
+    if (uid.isEmpty || fid.isEmpty) return null;
+    try {
+      final res = await _http
+          .get(
+            _path('/feedback-audio', {'feedbackId': fid}),
+            headers: withFlavorHeader({'x-user-id': uid}),
+          )
+          .timeout(_timeout);
+      if (res.statusCode != 200 || res.bodyBytes.isEmpty) return null;
+      return res.bodyBytes;
+    } catch (e) {
+      debugPrint('[supervisor-dashboard][feedback-audio-error] $e');
+      return null;
     }
   }
 
