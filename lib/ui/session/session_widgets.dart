@@ -201,6 +201,7 @@ class RestartSplash extends StatefulWidget {
     required this.nativeLanguage,
     this.fallbackDatesUtc,
     this.onResumeEmojiChanged,
+    this.onResumeFeedbackIdsChanged,
   });
 
   final int wins;
@@ -221,6 +222,7 @@ class RestartSplash extends StatefulWidget {
   final String? nativeLanguage;
   final List<DateTime>? fallbackDatesUtc;
   final ValueChanged<String?>? onResumeEmojiChanged;
+  final ValueChanged<List<String>>? onResumeFeedbackIdsChanged;
 
   @override
   State<RestartSplash> createState() => _RestartSplashState();
@@ -278,6 +280,7 @@ class _RestartSplashState extends State<RestartSplash> {
               apiPrefix: widget.apiPrefix,
               refreshInterval: const Duration(seconds: 15),
               onSelectedEmojiChanged: widget.onResumeEmojiChanged,
+              onSelectedFeedbackIdsChanged: widget.onResumeFeedbackIdsChanged,
             );
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,

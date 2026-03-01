@@ -395,7 +395,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   AppUpdateInfo? _availableAppUpdate;
   String _installedVersionLabel = '';
   bool _resumeMicRecheckInFlight = false;
-  String? _resumeSelectedEmojiId;
+  List<String> _resumeSelectedFeedbackIds = const [];
   bool _resumeEmojiAckInFlight = false;
   bool _resumeEmojiAckPending = false;
   Timer? _resumeEmojiAckRetryTimer;
@@ -1329,13 +1329,26 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void _handleResumeSelectedEmojiChanged(String? emojiId) {
     final normalized =
         (emojiId != null && emojiId.trim().isNotEmpty) ? emojiId.trim() : null;
-    if (_resumeSelectedEmojiId != normalized) {
+    _handleResumeSelectedFeedbackIdsChanged(
+      normalized == null ? const [] : [normalized],
+    );
+  }
+
+  void _handleResumeSelectedFeedbackIdsChanged(List<String> feedbackIds) {
+    final normalized = feedbackIds
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    final changed = normalized.length != _resumeSelectedFeedbackIds.length ||
+        !_resumeSelectedFeedbackIds.every(normalized.contains);
+    if (changed) {
       _resumeEmojiAckRetryAttempt = 0;
       _resumeEmojiAckRetryNotBeforeUtc = null;
       _resumeEmojiAckRetryTimer?.cancel();
       _resumeEmojiAckRetryTimer = null;
     }
-    _resumeSelectedEmojiId = normalized;
+    _resumeSelectedFeedbackIds = normalized;
   }
 
   Duration _resumeEmojiAckBackoffDelay(int attempt) {
@@ -1381,8 +1394,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _resumeEmojiAckRetryTimer = null;
     }
     final uid = (userId ?? '').trim();
-    final emojiId = (_resumeSelectedEmojiId ?? '').trim();
-    if (uid.isEmpty || emojiId.isEmpty) {
+    final feedbackIds = _resumeSelectedFeedbackIds
+        .where((id) => id.trim().isNotEmpty)
+        .toList(growable: false);
+    if (uid.isEmpty || feedbackIds.isEmpty) {
       _resumeEmojiAckPending = false;
       _resetResumeEmojiAckRetryState();
       return;
@@ -1391,21 +1406,21 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     try {
       final ok = await supervisorDashboardService.ackEmojiQueue(
         userId: uid,
-        ids: [emojiId],
+        ids: feedbackIds,
         remove: true,
       );
       if (ok) {
-        _resumeSelectedEmojiId = null;
+        _resumeSelectedFeedbackIds = const [];
         _resumeEmojiAckPending = false;
         _resetResumeEmojiAckRetryState();
       } else {
         debugPrint(
-            '[supervisor-resume] ack-on-start failed id=$emojiId uid=$uid');
+            '[supervisor-resume] ack-on-start failed ids=${feedbackIds.join(",")} uid=$uid');
         _scheduleResumeEmojiAckRetry();
       }
     } catch (e) {
       debugPrint(
-          '[supervisor-resume] ack-on-start error id=$emojiId uid=$uid: $e');
+          '[supervisor-resume] ack-on-start error ids=${feedbackIds.join(",")} uid=$uid: $e');
       _scheduleResumeEmojiAckRetry();
     } finally {
       _resumeEmojiAckInFlight = false;
@@ -3414,6 +3429,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           apiPrefix: apiPrefix,
           fallbackDatesUtc: _resumeFallbackDatesUtc(),
           onResumeEmojiChanged: _handleResumeSelectedEmojiChanged,
+          onResumeFeedbackIdsChanged: _handleResumeSelectedFeedbackIdsChanged,
         ),
       );
     }
