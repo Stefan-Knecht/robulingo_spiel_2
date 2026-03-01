@@ -35,13 +35,19 @@ jobs:
       - name: Set up Firebase credentials
         env:
           FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5 }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          if [ -z "$FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5" ]; then
-            echo "Missing secret: FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5"
-            exit 1
+          if [ -n "$FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5" ]; then
+            echo "$FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5" > "$RUNNER_TEMP/firebase-key.json"
+            echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-key.json" >> "$GITHUB_ENV"
+            exit 0
           fi
-          echo "$FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5" > "$RUNNER_TEMP/firebase-key.json"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-key.json" >> "$GITHUB_ENV"
+          if [ -n "$FIREBASE_TOKEN" ]; then
+            echo "FIREBASE_TOKEN=$FIREBASE_TOKEN" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "Missing secret: FIREBASE_SERVICE_ACCOUNT_ROBULINGO_635C5 or FIREBASE_TOKEN"
+          exit 1
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
