@@ -52,6 +52,9 @@ export default {
       if (path.endsWith('/emoji-queue-ack')) {
         return await handleEmojiQueueAck(request, env);
       }
+      if (path.endsWith('/feedback-audio')) {
+        return await handleFeedbackAudio(request, env);
+      }
       if (path.endsWith('/dashboard-info')) {
         return await handleDashboardInfo(request, env);
       }
@@ -492,7 +495,10 @@ const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate around 5MB (compressed)
 const SUMMARY_IDLE_CAP_SECONDS = 20;
 const SUMMARY_START_BONUS_SECONDS = 5;
 const EMOJI_QUEUE_MAX_ITEMS = 500;
+const EMOJI_QUEUE_MAX_PENDING_ITEMS = 2;
+const VOICE_FEEDBACK_MAX_BYTES = 2 * 1024 * 1024;
 const TRAINING_PROFILE_MAX_ITEMS = 500;
+const DASHBOARD_QUEUE_POLLING_MS = 15000;
 const APP_FLAVOR_DAILYWORDS = 'dailywords';
 const APP_FLAVOR_DEFAULT = 'robulingo';
 
@@ -827,7 +833,7 @@ async function handlePair(request, env) {
     );
   }
   const emailRaw = String(body.supervisor_email || '').trim();
-  const codeRaw = String(body.supervisor_code_5 || body.supervisor_code || '').trim();
+  const codeRaw = normalizeSupervisorCode(body.supervisor_code_5 || body.supervisor_code);
   if (!emailRaw) {
     return jsonResponse({ ok: false, error: 'missing_supervisor_email' }, 400);
   }
@@ -844,8 +850,12 @@ async function handlePair(request, env) {
   const supervisorCodeHash = await sha256Hex(codeRaw);
   const supervisorEmailHash = await sha256Hex(emailNormalized);
   const resolvedSupervisorName =
+    cleanOptionalString(body.print_name, 128) ||
+    cleanOptionalString(body.printName, 128) ||
+    cleanOptionalString(body.displayName, 128) ||
     cleanOptionalString(body.supervisor_display_name, 128) ||
     cleanOptionalString(body.display_name, 128) ||
+    cleanOptionalString(previous?.displayName, 128) ||
     cleanOptionalString(previous?.registrationName, 128) ||
     cleanOptionalString(previous?.display_name, 128) ||
     (await resolveSupervisorDisplayNameByIdentity(
@@ -864,6 +874,7 @@ async function handlePair(request, env) {
     internalName,
     comment,
     uiLanguage,
+    displayName: resolvedSupervisorName || null,
     registrationName: resolvedSupervisorName || null,
     display_name: resolvedSupervisorName || null,
     linkedAt: previous?.linkedAt || now,
@@ -879,6 +890,7 @@ async function handlePair(request, env) {
       active: next.active,
       supervisorEmailMasked: next.supervisorEmailMasked,
       supervisorCodeLast2: next.supervisorCodeLast2,
+      displayName: next.displayName,
       registrationName: next.registrationName,
       display_name: next.display_name,
       linkedAt: next.linkedAt,
@@ -909,6 +921,7 @@ async function handleEmojiQueue(request, env) {
     }
     const bucket = resolveSupervisorDashboardBucket(env);
     const queue = await loadEmojiQueue(bucket, uid);
+    await deleteVoiceAudioForItems(bucket, uid, queueVoiceItems(queue));
     queue.items = [];
     queue.updatedAt = new Date().toISOString();
     await saveEmojiQueue(bucket, uid, queue);
@@ -931,20 +944,64 @@ async function handleEmojiQueue(request, env) {
   const fallbackReason = cleanOptionalString(body.reason, 64);
   const fallbackNote = cleanOptionalString(body.note, 512);
   const fallbackMeta = normalizeMeta(body.meta);
+  const fallbackType = normalizeFeedbackType(body.type);
+  const fallbackDurationMs = normalizeDurationMs(body.durationMs);
+  const fallbackMimeType = normalizeAudioMimeType(body.mimeType);
   const now = new Date().toISOString();
+  const queue = await loadEmojiQueue(bucket, uid);
+  const pendingNow = queue.items.filter((item) => item.status === 'pending').length;
+  const availablePendingSlots = Math.max(0, EMOJI_QUEUE_MAX_PENDING_ITEMS - pendingNow);
 
   const rawItems = Array.isArray(body.items) ? body.items : [body];
-  const accepted = [];
+  const candidates = [];
   for (const raw of rawItems) {
+    const type = normalizeFeedbackType(raw?.type) ||
+      fallbackType ||
+      (typeof raw?.audioBase64 === 'string' || typeof body.audioBase64 === 'string' ? 'voice' : 'emoji');
+    if (type === 'voice') {
+      const parsedAudio = parseAudioBase64(
+        typeof raw?.audioBase64 === 'string'
+          ? raw.audioBase64
+          : (typeof body.audioBase64 === 'string' ? body.audioBase64 : '')
+      );
+      if (!parsedAudio) continue;
+      const id = crypto.randomUUID();
+      const explicitMime = cleanOptionalString(raw?.mimeType, 128);
+      candidates.push({
+        id,
+        type: 'voice',
+        emoji: null,
+        audioId: `voice:${id}`,
+        mimeType: explicitMime
+          ? normalizeAudioMimeType(explicitMime)
+          : (parsedAudio.mimeType || fallbackMimeType),
+        durationMs: normalizeDurationMs(raw?.durationMs) || fallbackDurationMs,
+        bytes: parsedAudio.bytes,
+        status: 'pending',
+        source: cleanOptionalString(raw?.source, 64) || source,
+        reason: cleanOptionalString(raw?.reason, 64) || fallbackReason,
+        note: cleanOptionalString(raw?.note, 512) || fallbackNote,
+        priority: normalizePriority(raw?.priority),
+        meta: normalizeMeta(raw?.meta) || fallbackMeta,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: null,
+      });
+      continue;
+    }
     const emoji = cleanOptionalString(raw?.emoji, 16);
     if (!emoji) continue;
     const reason = cleanOptionalString(raw?.reason, 64) || fallbackReason;
     const note = cleanOptionalString(raw?.note, 512) || fallbackNote;
     const meta = normalizeMeta(raw?.meta) || fallbackMeta;
     const priority = normalizePriority(raw?.priority);
-    accepted.push({
+    candidates.push({
       id: crypto.randomUUID(),
+      type: 'emoji',
       emoji,
+      audioId: null,
+      durationMs: null,
+      mimeType: null,
       status: 'pending',
       source: cleanOptionalString(raw?.source, 64) || source,
       reason,
@@ -957,15 +1014,55 @@ async function handleEmojiQueue(request, env) {
       consumedAt: null,
     });
   }
-  if (accepted.length === 0) {
+  if (candidates.length === 0) {
     return jsonResponse(
-      { ok: false, error: 'no_valid_items', message: 'provide emoji or items[].emoji' },
+      { ok: false, error: 'no_valid_items', message: 'provide emoji or voice audio payload' },
       400
     );
   }
+  const accepted = candidates.slice(0, availablePendingSlots);
+  const rejectedDueToPendingLimit = Math.max(0, candidates.length - accepted.length);
+  if (accepted.length === 0) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: 'pending_queue_limit_reached',
+        message: `maximum ${EMOJI_QUEUE_MAX_PENDING_ITEMS} pending queue items per learner`,
+        maxPending: EMOJI_QUEUE_MAX_PENDING_ITEMS,
+        currentPending: pendingNow,
+        rejectedDueToPendingLimit,
+      },
+      409
+    );
+  }
 
-  const queue = await loadEmojiQueue(bucket, uid);
-  queue.items.push(...accepted);
+  const uploadedVoiceKeys = [];
+  const acceptedWithoutBytes = [];
+  try {
+    for (const item of accepted) {
+      if (item.type === 'voice') {
+        const key = voiceFeedbackAudioKey(uid, item.id);
+        await bucket.put(key, item.bytes, {
+          httpMetadata: { contentType: item.mimeType || 'audio/mp4' },
+        });
+        uploadedVoiceKeys.push(key);
+      }
+      const { bytes, ...stored } = item;
+      acceptedWithoutBytes.push(stored);
+    }
+  } catch (_) {
+    for (const key of uploadedVoiceKeys) {
+      try {
+        await bucket.delete(key);
+      } catch (_) {}
+    }
+    return jsonResponse(
+      { ok: false, error: 'voice_upload_failed', message: 'failed to store voice feedback audio' },
+      500
+    );
+  }
+
+  queue.items.push(...acceptedWithoutBytes);
   trimEmojiQueue(queue);
   queue.updatedAt = now;
   await saveEmojiQueue(bucket, uid, queue);
@@ -974,6 +1071,9 @@ async function handleEmojiQueue(request, env) {
     ok: true,
     userId: uid,
     accepted: accepted.length,
+    rejectedDueToPendingLimit,
+    pendingLimit: EMOJI_QUEUE_MAX_PENDING_ITEMS,
+    limitReached: rejectedDueToPendingLimit > 0,
     queue: summarizeEmojiQueue(queue),
   });
 }
@@ -1002,28 +1102,99 @@ async function handleEmojiQueueAck(request, env) {
   const mode = body.mode === 'remove' ? 'remove' : 'status';
   const nextStatus = mode === 'status' ? normalizeStatus(body.status) || 'delivered' : null;
   let changed = 0;
+  let rejectedDueToPendingLimit = 0;
+  let pendingCount = queue.items.filter((item) => item.status === 'pending').length;
+  const voiceItemsToDelete = [];
   if (mode === 'remove') {
+    const removed = queue.items.filter((item) => idSet.has(item.id));
     const before = queue.items.length;
     queue.items = queue.items.filter((item) => !idSet.has(item.id));
     changed = before - queue.items.length;
+    voiceItemsToDelete.push(...removed.filter((item) => item.type === 'voice'));
   } else {
     for (const item of queue.items) {
       if (!idSet.has(item.id)) continue;
+      const previousStatus = item.status;
+      if (
+        nextStatus === 'pending' &&
+        previousStatus !== 'pending' &&
+        pendingCount >= EMOJI_QUEUE_MAX_PENDING_ITEMS
+      ) {
+        rejectedDueToPendingLimit += 1;
+        continue;
+      }
       item.status = nextStatus;
       item.updatedAt = now;
       if (nextStatus !== 'pending') {
         item.consumedAt = item.consumedAt || now;
       }
+      if (previousStatus === 'pending' && nextStatus !== 'pending') {
+        pendingCount = Math.max(0, pendingCount - 1);
+      } else if (previousStatus !== 'pending' && nextStatus === 'pending') {
+        pendingCount += 1;
+      }
+      if (item.type === 'voice' && previousStatus === 'pending' && nextStatus !== 'pending') {
+        voiceItemsToDelete.push(item);
+      }
       changed += 1;
     }
   }
+  trimEmojiQueue(queue);
   queue.updatedAt = now;
   await saveEmojiQueue(bucket, uid, queue);
+  await deleteVoiceAudioForItems(bucket, uid, voiceItemsToDelete);
   return jsonResponse({
     ok: true,
     userId: uid,
     changed,
+    rejectedDueToPendingLimit,
+    pendingLimit: EMOJI_QUEUE_MAX_PENDING_ITEMS,
     queue: summarizeEmojiQueue(queue),
+  });
+}
+
+// ---------- /feedback-audio ----------
+async function handleFeedbackAudio(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('method not allowed', { status: 405, headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  const uid = resolveUserId(request, null) || cleanOptionalString(url.searchParams.get('uid'), 128);
+  const feedbackId = cleanOptionalString(
+    url.searchParams.get('feedbackId') || url.searchParams.get('id'),
+    128
+  );
+  if (!uid) {
+    return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
+  }
+  if (!feedbackId) {
+    return new Response('missing feedbackId', { status: 400, headers: CORS_HEADERS });
+  }
+  const bucket = resolveSupervisorDashboardBucket(env);
+  const [consent, pairing] = await Promise.all([
+    getJsonObject(bucket, consentKey(uid)),
+    getJsonObject(bucket, pairingKey(uid)),
+  ]);
+  if (!(consent?.monitoringOn === true) || !(pairing?.active === true)) {
+    return new Response('forbidden', { status: 403, headers: CORS_HEADERS });
+  }
+  const queue = await loadEmojiQueue(bucket, uid);
+  const item = queue.items.find((entry) => entry.id === feedbackId);
+  if (!item || item.type !== 'voice') {
+    return new Response('not found', { status: 404, headers: CORS_HEADERS });
+  }
+  const key = voiceFeedbackAudioKey(uid, feedbackId);
+  const obj = await bucket.get(key);
+  if (!obj) {
+    return new Response('not found', { status: 404, headers: CORS_HEADERS });
+  }
+  return new Response(obj.body, {
+    status: 200,
+    headers: {
+      ...CORS_HEADERS,
+      'content-type': obj.httpMetadata?.contentType || item.mimeType || 'audio/mp4',
+      'cache-control': 'no-store',
+    },
   });
 }
 
@@ -1048,28 +1219,29 @@ async function handleDashboardInfo(request, env) {
   const queueSummary = summarizeEmojiQueue(queue);
   const recent = recentPending(queue.items, 8);
   const resumeInfo = summarizeResumeState(resume);
-  let registrationName = resolveSupervisorRegistrationName({
+  let displayName = resolveSupervisorRegistrationName({
     pairing,
     consent,
     registration,
   });
-  if (!registrationName) {
-    registrationName = await resolveSupervisorDisplayNameFromPairingIdentity(
+  if (!displayName) {
+    displayName = await resolveSupervisorDisplayNameFromPairingIdentity(
       bucket,
       pairing
     );
   }
   if (
-    registrationName &&
+    displayName &&
     pairing &&
     !firstNonEmptyString(
+      pairing.displayName,
       pairing.registrationName,
-      pairing.display_name,
-      pairing.displayName
+      pairing.display_name
     )
   ) {
-    pairing.registrationName = registrationName;
-    pairing.display_name = registrationName;
+    pairing.displayName = displayName;
+    pairing.registrationName = displayName;
+    pairing.display_name = displayName;
     pairing.updatedAt = new Date().toISOString();
     await putJsonObject(bucket, pairingKey(uid), pairing);
   }
@@ -1081,12 +1253,14 @@ async function handleDashboardInfo(request, env) {
       paired: !!pairing?.active,
       active: !!pairing?.active,
       supervisorEmailMasked: pairing?.supervisorEmailMasked || null,
+      supervisorEmail: pairing?.supervisorEmailNormalized || null,
+      email: pairing?.supervisorEmailNormalized || null,
       supervisorCodeLast2: pairing?.supervisorCodeLast2 || null,
       linkedAt: pairing?.linkedAt || null,
       updatedAt: pairing?.updatedAt || null,
-      registrationName: registrationName || null,
-      display_name: registrationName || null,
-      displayName: registrationName || null,
+      displayName: displayName || null,
+      registrationName: displayName || null,
+      display_name: displayName || null,
       internalName: pairing?.internalName || consent?.internalName || null,
       comment: pairing?.comment || consent?.comment || null,
       uiLanguage: pairing?.uiLanguage || consent?.uiLanguage || null,
@@ -1105,7 +1279,7 @@ async function handleDashboardInfo(request, env) {
     },
     resumeState: resumeInfo,
     dashboardHints: {
-      queuePollingMs: 15000,
+      queuePollingMs: DASHBOARD_QUEUE_POLLING_MS,
       queueAckEndpoint: '/api/emoji-queue-ack',
       queueReadEndpoint: '/api/emoji-queue?status=pending&limit=50',
       apkLatestEndpoint: '/api/android-release/latest?flavor=dailywords',
@@ -1176,10 +1350,11 @@ async function handleSupervisorUsers(request, env) {
     cleanOptionalString(request.headers.get('x-supervisor-email'), 256) ||
     cleanOptionalString(url.searchParams.get('supervisor_email'), 256) ||
     cleanOptionalString(url.searchParams.get('email'), 256);
-  const codeRaw =
+  const codeRawRaw =
     cleanOptionalString(request.headers.get('x-supervisor-code'), 64) ||
     cleanOptionalString(url.searchParams.get('supervisor_code'), 64) ||
     cleanOptionalString(url.searchParams.get('code'), 64);
+  const codeRaw = normalizeSupervisorCode(codeRawRaw);
   if (!emailRaw || !codeRaw) {
     return jsonResponse(
       { ok: false, error: 'missing_supervisor_credentials', message: 'provide supervisor_email and supervisor_code' },
@@ -1477,6 +1652,60 @@ function normalizeStatus(raw) {
     return lowered;
   }
   return null;
+}
+
+function normalizeFeedbackType(raw) {
+  const value = cleanOptionalString(raw, 16);
+  if (!value) return null;
+  const lowered = value.toLowerCase();
+  if (lowered === 'emoji' || lowered === 'voice') return lowered;
+  return null;
+}
+
+function normalizeDurationMs(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  const rounded = Math.max(0, Math.round(value));
+  return rounded > 0 ? rounded : null;
+}
+
+function normalizeAudioMimeType(raw) {
+  const value = cleanOptionalString(raw, 128);
+  if (!value) return 'audio/mp4';
+  const lowered = value.toLowerCase();
+  if (!lowered.startsWith('audio/')) return 'audio/mp4';
+  return lowered;
+}
+
+function parseAudioBase64(raw) {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let mimeType = null;
+  let encoded = trimmed;
+  const dataUrl = trimmed.match(/^data:([^;,]+);base64,(.+)$/i);
+  if (dataUrl) {
+    mimeType = normalizeAudioMimeType(dataUrl[1]);
+    encoded = dataUrl[2] || '';
+  }
+  if (!encoded) return null;
+  const token = encoded.replace(/\s+/g, '');
+  if (!token) return null;
+  try {
+    const binary = atob(token);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    if (bytes.length === 0 || bytes.length > VOICE_FEEDBACK_MAX_BYTES) return null;
+    return { bytes, mimeType };
+  } catch (_) {
+    return null;
+  }
+}
+
+function voiceFeedbackAudioKey(uid, feedbackId) {
+  return `${uid}/supervisor/voice_feedback/${feedbackId}.bin`;
 }
 
 function normalizeMeta(raw) {
@@ -1796,8 +2025,16 @@ async function loadSupervisorRegistrationByIdentity(bucket, emailHash, codeHash)
 
 function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
   return firstNonEmptyString(
+    // Canonical contract key:
+    registration?.displayName,
+    pairing?.displayName,
+    consent?.displayName,
     // DailyWords registration page field:
     // "Display name (shown to participants)" -> display_name
+    registration?.print_name,
+    registration?.printName,
+    registration?.profile?.print_name,
+    registration?.profile?.printName,
     registration?.display_name,
     registration?.displayName,
     registration?.profile?.display_name,
@@ -1810,22 +2047,28 @@ function resolveSupervisorRegistrationName({ pairing, consent, registration }) {
     registration?.registrationName,
     registration?.name,
     pairing?.supervisor_display_name,
+    pairing?.print_name,
+    pairing?.printName,
     pairing?.supervisorDisplayName,
     pairing?.display_name,
-    pairing?.displayName,
     pairing?.registration_name,
     pairing?.registrationName,
     pairing?.supervisorName,
     pairing?.name,
     consent?.supervisor_display_name,
+    consent?.print_name,
+    consent?.printName,
     consent?.supervisorDisplayName,
     consent?.display_name,
     consent?.registration_name,
-    consent?.displayName,
     consent?.registrationName,
     consent?.supervisorName,
     consent?.name
   );
+}
+
+function normalizeSupervisorCode(raw) {
+  return String(raw || '').trim().toUpperCase();
 }
 
 function firstNonEmptyString(...values) {
@@ -1862,12 +2105,21 @@ async function loadEmojiQueue(bucket, uid) {
 function normalizeQueueItem(item) {
   if (!item || typeof item !== 'object') return null;
   const id = cleanOptionalString(item.id, 128);
-  const emoji = cleanOptionalString(item.emoji, 16);
-  if (!id || !emoji) return null;
+  if (!id) return null;
+  const type = normalizeFeedbackType(item.type) ||
+    (cleanOptionalString(item.audioId, 256) ? 'voice' : 'emoji');
   const status = normalizeStatus(item.status) || 'pending';
+  const emoji = cleanOptionalString(item.emoji, 16);
+  const audioId = cleanOptionalString(item.audioId, 256);
+  if (type === 'emoji' && !emoji) return null;
+  if (type === 'voice' && !audioId) return null;
   return {
     id,
-    emoji,
+    type,
+    emoji: type === 'emoji' ? emoji : null,
+    audioId: type === 'voice' ? audioId : null,
+    durationMs: type === 'voice' ? normalizeDurationMs(item.durationMs) : null,
+    mimeType: type === 'voice' ? normalizeAudioMimeType(item.mimeType) : null,
     status,
     source: cleanOptionalString(item.source, 64),
     reason: cleanOptionalString(item.reason, 64),
@@ -1880,8 +2132,52 @@ function normalizeQueueItem(item) {
   };
 }
 
+function queueVoiceItems(queue) {
+  if (!queue || !Array.isArray(queue.items)) return [];
+  return queue.items.filter((item) => item && item.type === 'voice' && item.audioId);
+}
+
+async function deleteVoiceAudioForItem(bucket, uid, item) {
+  if (!item || item.type !== 'voice') return;
+  const feedbackId = cleanOptionalString(item.id, 128);
+  if (!feedbackId) return;
+  const key = voiceFeedbackAudioKey(uid, feedbackId);
+  try {
+    await bucket.delete(key);
+  } catch (_) {
+    // best effort cleanup
+  }
+}
+
+async function deleteVoiceAudioForItems(bucket, uid, items) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  for (const item of items) {
+    await deleteVoiceAudioForItem(bucket, uid, item);
+  }
+}
+
 function trimEmojiQueue(queue) {
   if (!Array.isArray(queue.items)) queue.items = [];
+  const pendingItems = queue.items.filter((item) => item.status === 'pending');
+  if (pendingItems.length > EMOJI_QUEUE_MAX_PENDING_ITEMS) {
+    const keepPendingIds = new Set(
+      pendingItems
+        .slice()
+        .sort((a, b) => {
+          const pa = normalizePriority(a.priority);
+          const pb = normalizePriority(b.priority);
+          if (pa !== pb) return pb - pa;
+          const at = Date.parse(a.createdAt || a.updatedAt || 0);
+          const bt = Date.parse(b.createdAt || b.updatedAt || 0);
+          return bt - at;
+        })
+        .slice(0, EMOJI_QUEUE_MAX_PENDING_ITEMS)
+        .map((item) => item.id)
+    );
+    queue.items = queue.items.filter(
+      (item) => item.status !== 'pending' || keepPendingIds.has(item.id)
+    );
+  }
   if (queue.items.length <= EMOJI_QUEUE_MAX_ITEMS) return;
   queue.items.sort((a, b) => {
     const as = a.status === 'pending' ? 0 : 1;
@@ -1905,6 +2201,11 @@ function summarizeEmojiQueue(queue) {
   const pending = queue.items.filter((item) => item.status === 'pending').length;
   const delivered = queue.items.filter((item) => item.status === 'delivered').length;
   const archived = queue.items.filter((item) => item.status === 'archived').length;
+  const pendingVoice = queue.items.filter((item) => item.status === 'pending' && item.type === 'voice').length;
+  const pendingSlotsRemaining = Math.max(
+    0,
+    EMOJI_QUEUE_MAX_PENDING_ITEMS - pending
+  );
   const latestItem = queue.items
     .slice()
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))[0];
@@ -1915,6 +2216,11 @@ function summarizeEmojiQueue(queue) {
     pending,
     delivered,
     archived,
+    pendingVoice,
+    pendingLimit: EMOJI_QUEUE_MAX_PENDING_ITEMS,
+    pendingSlotsRemaining,
+    pendingLimitReached: pending >= EMOJI_QUEUE_MAX_PENDING_ITEMS,
+    canEnqueuePending: pending < EMOJI_QUEUE_MAX_PENDING_ITEMS,
     latestEmoji: latestItem?.emoji || null,
     latestEventAt: latestItem?.updatedAt || latestItem?.createdAt || null,
   };
@@ -1962,7 +2268,11 @@ function recentPending(items, count) {
     .slice(0, count)
     .map((item) => ({
       id: item.id,
+      type: item.type || 'emoji',
       emoji: item.emoji,
+      audioId: item.audioId || null,
+      durationMs: item.durationMs || null,
+      mimeType: item.mimeType || null,
       reason: item.reason,
       note: item.note,
       priority: item.priority,

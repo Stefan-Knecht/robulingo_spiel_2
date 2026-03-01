@@ -18,6 +18,10 @@ class _WebPlaybackEngine implements PlaybackEngine {
 
   final PlaybackLogFn? onLog;
   bool _initialized = false;
+  bool _primedForUserGesture = false;
+
+  static const String _silentWavDataUri =
+      'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
 
   late final html.AudioElement _speech = _newAudioElement();
   late final html.AudioElement _hint = _newAudioElement();
@@ -26,6 +30,7 @@ class _WebPlaybackEngine implements PlaybackEngine {
     final el = html.AudioElement();
     el.preload = 'auto';
     el.crossOrigin = 'anonymous';
+    el.setAttribute('playsinline', 'true');
     return el;
   }
 
@@ -38,6 +43,26 @@ class _WebPlaybackEngine implements PlaybackEngine {
   Future<void> _ensureInit() async {
     if (_initialized) return;
     await init();
+  }
+
+  @override
+  Future<void> primeForUserGesture({String source = ''}) async {
+    if (!_initialized) {
+      _initialized = true;
+    }
+    if (_primedForUserGesture) return;
+    try {
+      await _primeElement(_speech);
+      await _primeElement(_hint);
+      _primedForUserGesture = true;
+      if (source.isNotEmpty) {
+        onLog?.call('[audio][web-primed] source=$source');
+      } else {
+        onLog?.call('[audio][web-primed]');
+      }
+    } catch (e) {
+      onLog?.call('[audio][web-prime-failed] source=$source error=$e');
+    }
   }
 
   @override
@@ -157,6 +182,37 @@ class _WebPlaybackEngine implements PlaybackEngine {
       element.currentTime = 0;
     } catch (_) {
       // Ignore stop issues for robustness on mobile web.
+    }
+  }
+
+  Future<void> _primeElement(html.AudioElement element) async {
+    final previousSrc = element.src;
+    final previousCurrentTime = element.currentTime;
+    void restore() {
+      try {
+        element.pause();
+      } catch (_) {}
+      try {
+        element.currentTime = 0;
+      } catch (_) {}
+      element.src = previousSrc;
+      try {
+        if (previousCurrentTime > 0) {
+          element.currentTime = previousCurrentTime;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      try {
+        element.pause();
+        element.currentTime = 0;
+      } catch (_) {}
+      element.src = _silentWavDataUri;
+      element.load();
+      await element.play();
+    } finally {
+      restore();
     }
   }
 
