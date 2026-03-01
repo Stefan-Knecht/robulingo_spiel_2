@@ -20,6 +20,7 @@ class SupervisorResumePanel extends StatefulWidget {
     this.refreshInterval = const Duration(seconds: 15),
     this.onVisibilityChanged,
     this.onSelectedEmojiChanged,
+    this.onSelectedFeedbackIdsChanged,
   });
 
   final String? userId;
@@ -28,6 +29,7 @@ class SupervisorResumePanel extends StatefulWidget {
   final Duration refreshInterval;
   final ValueChanged<bool>? onVisibilityChanged;
   final ValueChanged<String?>? onSelectedEmojiChanged;
+  final ValueChanged<List<String>>? onSelectedFeedbackIdsChanged;
 
   @override
   State<SupervisorResumePanel> createState() => _SupervisorResumePanelState();
@@ -35,7 +37,7 @@ class SupervisorResumePanel extends StatefulWidget {
 
 class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     with TickerProviderStateMixin {
-  static const String _diagBuildTag = '2026-02-28T22:26Z-r1';
+  static const String _diagBuildTag = '2026-03-01T01:05Z-r3';
   static const String _voicePlayAsset = 'assets/icons/Play.webp';
   static final RegExp _blockedBannerText =
       RegExp(r'(?=.*\bdownload\b)(?=.*\bandroid\b)', caseSensitive: false);
@@ -52,6 +54,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   late final AudioPlayer _voicePlayer;
   bool _lastReportedVisible = false;
   String? _lastReportedEmojiId;
+  String _lastReportedFeedbackIdsKey = '';
   bool _voiceLoading = false;
   bool _voicePlaying = false;
   Uri? _voiceFallbackOpenUri;
@@ -120,6 +123,23 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     if (_lastReportedEmojiId == normalized) return;
     _lastReportedEmojiId = normalized;
     final callback = widget.onSelectedEmojiChanged;
+    if (callback == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      callback(normalized);
+    });
+  }
+
+  void _reportSelectedFeedbackIds(List<String> ids) {
+    final normalized = ids
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    final key = normalized.join('|');
+    if (_lastReportedFeedbackIdsKey == key) return;
+    _lastReportedFeedbackIdsKey = key;
+    final callback = widget.onSelectedFeedbackIdsChanged;
     if (callback == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -371,6 +391,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     if (uid.isEmpty) {
       _reportVisible(false);
       _reportSelectedEmoji(null);
+      _reportSelectedFeedbackIds(const []);
       return const SizedBox.shrink();
     }
 
@@ -385,30 +406,52 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
             (queue['itemsPreview'] as List).whereType<Map>(),
           )
         : const <Map<String, dynamic>>[];
-    final selectedFeedback = _resolveQueuedFeedback(
+    final selectedVoice = _resolveQueuedFeedbackByType(
       _pendingItems,
       fallbackItems: preview,
+      type: 'voice',
     );
-    final queuedEmoji = selectedFeedback.emoji;
+    final selectedEmoji = _resolveQueuedFeedbackByType(
+      _pendingItems,
+      fallbackItems: preview,
+      type: 'emoji',
+    );
+    final queuedEmoji = selectedEmoji.emoji;
     final showEmoji = queuedEmoji.isNotEmpty;
-    final selectedId = selectedFeedback.id;
-    final showVoice = selectedFeedback.type == 'voice' && selectedId != null;
+    final selectedVoiceId = selectedVoice.id;
+    final showVoice = selectedVoiceId != null;
+    final selectedItemsForAck = <Map<String, dynamic>>[
+      if (selectedVoice.item != null) selectedVoice.item!,
+      if (selectedEmoji.item != null) selectedEmoji.item!,
+    ];
+    final selectedFeedbackIds =
+        _collectSelectedFeedbackIds(selectedItemsForAck);
+    final legacySelectedId =
+        selectedFeedbackIds.isNotEmpty ? selectedFeedbackIds.first : null;
+    debugPrint(
+      '[supervisor-resume] selected voice=${selectedVoice.id ?? '-'} emoji=${selectedEmoji.id ?? '-'} ids=${selectedFeedbackIds.join(",")}',
+    );
     final showVoiceFallbackOpen = showVoice &&
         _voiceFallbackOpenUri != null &&
-        _voiceFallbackFeedbackId == selectedId;
-    _syncVoicePulse(feedbackId: selectedId, showVoice: showVoice);
-    _maybeAutoPlayVoiceFeedback(selectedFeedback, showVoice: showVoice);
+        _voiceFallbackFeedbackId == selectedVoiceId;
+    _syncVoicePulse(feedbackId: selectedVoiceId, showVoice: showVoice);
+    _maybeAutoPlayVoiceFeedback(selectedVoice, showVoice: showVoice);
     final showFeedback = showEmoji || showVoice;
-    _reportSelectedEmoji(showFeedback ? selectedId : null);
+    _reportSelectedEmoji(showFeedback ? legacySelectedId : null);
+    _reportSelectedFeedbackIds(showFeedback ? selectedFeedbackIds : const []);
     final hasActiveSupervisor =
         _isTrueish(supervisor['active']) || _isTrueish(supervisor['paired']);
-    final supervisorEmail = _resolveSupervisorEmail(supervisor,
-            queuedItem: selectedFeedback.item) ??
-        _lastKnownSupervisorEmail;
+    final selectedMetadataItem = selectedVoice.item ?? selectedEmoji.item;
+    final supervisorEmail =
+        _resolveSupervisorEmail(supervisor, queuedItem: selectedMetadataItem) ??
+            _lastKnownSupervisorEmail;
     final supervisorName = _resolveSupervisorName(
       supervisor,
-      queuedItem: selectedFeedback.item,
+      queuedItem: selectedMetadataItem,
       fallbackEmail: supervisorEmail,
+    );
+    debugPrint(
+      '[supervisor-resume] name-resolve result="$supervisorName" email="${supervisorEmail ?? '-'}" itemSource="${(selectedMetadataItem?['source'] ?? '').toString()}" supervisorSource="${(supervisor['source'] ?? '').toString()}" displayName="${(supervisor['displayName'] ?? '').toString()}"',
     );
     final showStatusLoading = _loading && _data == null && !_loadFailed;
     final showStatusError = _loadFailed;
@@ -418,6 +461,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     if (!showName && !showFeedback && !showStatus) {
       _reportVisible(false);
       _reportSelectedEmoji(null);
+      _reportSelectedFeedbackIds(const []);
       return const SizedBox.shrink();
     }
     _reportVisible(true);
@@ -427,7 +471,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       onPointerDown: (_) {
         if (showVoice) {
           debugPrint(
-            '[supervisor-resume] voice-panel-pointer-down id=${selectedFeedback.id ?? '-'}',
+            '[supervisor-resume] voice-panel-pointer-down id=${selectedVoice.id ?? '-'}',
           );
         }
       },
@@ -436,9 +480,9 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         onTap: (showVoice && !_voiceLoading)
             ? () {
                 debugPrint(
-                  '[supervisor-resume] voice-panel-tap-play id=${selectedFeedback.id ?? '-'}',
+                  '[supervisor-resume] voice-panel-tap-play id=${selectedVoice.id ?? '-'}',
                 );
-                _playVoiceFeedback(selectedFeedback);
+                _playVoiceFeedback(selectedVoice);
               }
             : null,
         child: Container(
@@ -480,92 +524,101 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
                   ),
                 ),
               if (showName && showFeedback) const SizedBox(height: 6),
-              if (showEmoji)
+              if (showEmoji || showVoice)
                 Center(
-                  child: AnimatedBuilder(
-                    animation: _wiggleController,
-                    child: Text(
-                      queuedEmoji,
-                      style: const TextStyle(
-                        fontSize: 64,
-                        height: 1,
-                      ),
-                    ),
-                    builder: (context, child) {
-                      final t = _wiggleController.value * 2 * math.pi;
-                      final angle = math.sin(t * 1.7) * 0.13;
-                      final y = math.sin(t * 3.4) * 1.8;
-                      return Transform.translate(
-                        offset: Offset(0, y),
-                        child: Transform.rotate(angle: angle, child: child),
-                      );
-                    },
-                  ),
-                ),
-              if (showVoice) ...[
-                Center(
-                  child: AnimatedBuilder(
-                    animation: _voicePulseController,
-                    builder: (context, child) {
-                      final pulse = 1.0 +
-                          (0.07 *
-                              Curves.easeInOut
-                                  .transform(_voicePulseController.value));
-                      return Transform.scale(scale: pulse, child: child);
-                    },
-                    child: Semantics(
-                      button: true,
-                      label: _voiceLoading
-                          ? 'Loading voice feedback'
-                          : (_voicePlaying
-                              ? 'Replay voice feedback'
-                              : 'Play voice feedback'),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: _voiceLoading
-                              ? null
-                              : () {
-                                  debugPrint(
-                                    '[supervisor-resume] voice-play-tap id=${selectedFeedback.id ?? '-'} type=${selectedFeedback.type}',
-                                  );
-                                  _playVoiceFeedback(selectedFeedback);
-                                },
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.black.withValues(alpha: 0.2),
-                                width: 1,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.08),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (showEmoji)
+                        AnimatedBuilder(
+                          animation: _wiggleController,
+                          child: Text(
+                            queuedEmoji,
+                            style: const TextStyle(
+                              fontSize: 56,
+                              height: 1,
                             ),
-                            padding: const EdgeInsets.all(8),
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: _voiceLoading
-                                  ? const CircularProgressIndicator(
-                                      strokeWidth: 2)
-                                  : Image.asset(
-                                      _voicePlayAsset,
-                                      fit: BoxFit.contain,
+                          ),
+                          builder: (context, child) {
+                            final t = _wiggleController.value * 2 * math.pi;
+                            final angle = math.sin(t * 1.7) * 0.13;
+                            final y = math.sin(t * 3.4) * 1.8;
+                            return Transform.translate(
+                              offset: Offset(0, y),
+                              child:
+                                  Transform.rotate(angle: angle, child: child),
+                            );
+                          },
+                        ),
+                      if (showEmoji && showVoice) const SizedBox(width: 10),
+                      if (showVoice)
+                        AnimatedBuilder(
+                          animation: _voicePulseController,
+                          builder: (context, child) {
+                            final pulse = 1.0 +
+                                (0.07 *
+                                    Curves.easeInOut.transform(
+                                        _voicePulseController.value));
+                            return Transform.scale(scale: pulse, child: child);
+                          },
+                          child: Semantics(
+                            button: true,
+                            label: _voiceLoading
+                                ? 'Loading voice feedback'
+                                : (_voicePlaying
+                                    ? 'Replay voice feedback'
+                                    : 'Play voice feedback'),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: _voiceLoading
+                                    ? null
+                                    : () {
+                                        debugPrint(
+                                          '[supervisor-resume] voice-play-tap id=${selectedVoice.id ?? '-'} type=${selectedVoice.type}',
+                                        );
+                                        _playVoiceFeedback(selectedVoice);
+                                      },
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.2),
+                                      width: 1,
                                     ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black
+                                            .withValues(alpha: 0.08),
+                                        blurRadius: 6,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  padding: const EdgeInsets.all(8),
+                                  child: SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: _voiceLoading
+                                        ? const CircularProgressIndicator(
+                                            strokeWidth: 2)
+                                        : Image.asset(
+                                            _voicePlayAsset,
+                                            fit: BoxFit.contain,
+                                          ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
+                    ],
                   ),
                 ),
+              if (showVoice) ...[
                 if (showVoiceFallbackOpen) ...[
                   const SizedBox(height: 6),
                   Align(
@@ -593,6 +646,13 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     final canonical =
         _normalizeSupervisorName((supervisor['displayName'] ?? '').toString());
     if (canonical.isNotEmpty) return canonical;
+    if (queuedItem != null) {
+      final fromItem = _resolveSupervisorNameFromItem(queuedItem);
+      if (fromItem.isNotEmpty) return fromItem;
+    }
+    final sourceName =
+        _normalizeSupervisorSourceName((supervisor['source'] ?? '').toString());
+    if (sourceName.isNotEmpty) return sourceName;
     // Legacy key fallback (supports old payloads).
     for (final key in const [
       'display_name',
@@ -609,41 +669,46 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
           _normalizeSupervisorName((supervisor[key] ?? '').toString());
       if (value.isNotEmpty) return value;
     }
-    if (queuedItem != null) {
-      final fromItem = _resolveSupervisorNameFromItem(queuedItem);
-      if (fromItem.isNotEmpty) return fromItem;
-    }
     return _normalizeSupervisorEmail(fallbackEmail ?? '');
   }
 
-  _SelectedFeedback _resolveQueuedFeedback(
+  _SelectedFeedback _resolveQueuedFeedbackByType(
     List<Map<String, dynamic>> items, {
     List<Map<String, dynamic>> fallbackItems = const [],
+    required String type,
   }) {
-    final primary = _pickBestFeedbackItem(items);
+    final normalizedType = type.trim().toLowerCase();
+    final primary = _pickBestFeedbackItem(
+      items,
+      type: normalizedType,
+    );
     if (primary != null) {
-      final type = (primary['type'] ?? 'emoji').toString().trim().toLowerCase();
+      final itemType =
+          (primary['type'] ?? 'emoji').toString().trim().toLowerCase();
       final emoji = (primary['emoji'] ?? '').toString().trim();
       final id = (primary['id'] ?? '').toString().trim();
-      if (type == 'voice' || emoji.isNotEmpty) {
+      if (itemType == 'voice' || emoji.isNotEmpty) {
         return _SelectedFeedback(
-          type: type == 'voice' ? 'voice' : 'emoji',
-          emoji: type == 'voice' ? '' : emoji,
+          type: itemType == 'voice' ? 'voice' : 'emoji',
+          emoji: itemType == 'voice' ? '' : emoji,
           id: id.isEmpty ? null : id,
           item: primary,
         );
       }
     }
-    final fallback = _pickBestFeedbackItem(fallbackItems);
+    final fallback = _pickBestFeedbackItem(
+      fallbackItems,
+      type: normalizedType,
+    );
     if (fallback != null) {
-      final type =
+      final itemType =
           (fallback['type'] ?? 'emoji').toString().trim().toLowerCase();
       final emoji = (fallback['emoji'] ?? '').toString().trim();
       final id = (fallback['id'] ?? '').toString().trim();
-      if (type == 'voice' || emoji.isNotEmpty) {
+      if (itemType == 'voice' || emoji.isNotEmpty) {
         return _SelectedFeedback(
-          type: type == 'voice' ? 'voice' : 'emoji',
-          emoji: type == 'voice' ? '' : emoji,
+          type: itemType == 'voice' ? 'voice' : 'emoji',
+          emoji: itemType == 'voice' ? '' : emoji,
           id: id.isEmpty ? null : id,
           item: fallback,
         );
@@ -680,6 +745,10 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         return nested;
       }
     }
+    final sourceName = _normalizeSupervisorSourceName(
+      (item['source'] ?? metaMap?['source'] ?? '').toString(),
+    );
+    if (sourceName.isNotEmpty) return sourceName;
     return '';
   }
 
@@ -721,6 +790,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     var value = raw.trim();
     if (value.isEmpty || value == '-') return '';
     if (_blockedBannerText.hasMatch(value)) return '';
+    if (_emailPattern.hasMatch(value)) return '';
     value = value.replaceAll(RegExp(r'<[^>]*>'), ' ').trim();
     value = value
         .replaceFirst(
@@ -728,6 +798,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         .trim();
     if (value.isEmpty || value == '-') return '';
     if (_blockedBannerText.hasMatch(value)) return '';
+    if (_emailPattern.hasMatch(value)) return '';
     return value;
   }
 
@@ -759,6 +830,24 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     return value;
   }
 
+  String _normalizeSupervisorSourceName(String raw) {
+    var value = raw.trim();
+    if (value.isEmpty) return '';
+    final lower = value.toLowerCase();
+    if (lower == 'app' || lower == 'system') return '';
+    value = value.replaceAll(RegExp(r'[_\-\.]+'), ' ').trim();
+    value = value.replaceFirst(
+      RegExp(r'\s+(ipad|iphone|android|phone|tablet)\s*$',
+          caseSensitive: false),
+      '',
+    );
+    value = value.replaceFirst(RegExp(r'\s+\d+$'), '').trim();
+    value = value.replaceAll(RegExp(r'\s+'), ' ');
+    if (value.isEmpty || value == '-') return '';
+    if (_blockedBannerText.hasMatch(value)) return '';
+    return value;
+  }
+
   DateTime _itemTs(Map<String, dynamic> item) {
     final updated = DateTime.tryParse((item['updatedAt'] ?? '').toString());
     if (updated != null) return updated;
@@ -780,11 +869,17 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   }
 
   Map<String, dynamic>? _pickBestFeedbackItem(
-      List<Map<String, dynamic>> items) {
+    List<Map<String, dynamic>> items, {
+    required String type,
+  }) {
     if (items.isEmpty) return null;
+    final normalizedType = type.trim().toLowerCase();
     final candidates = items.where((item) {
-      final type = (item['type'] ?? 'emoji').toString().trim().toLowerCase();
-      if (type == 'voice') {
+      final itemType =
+          (item['type'] ?? 'emoji').toString().trim().toLowerCase();
+      if (normalizedType == 'voice' && itemType != 'voice') return false;
+      if (normalizedType == 'emoji' && itemType == 'voice') return false;
+      if (itemType == 'voice') {
         final id = (item['id'] ?? '').toString().trim();
         return id.isNotEmpty;
       }
@@ -798,6 +893,23 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         return _itemTs(b).compareTo(_itemTs(a));
       });
     return sorted.first;
+  }
+
+  List<String> _collectSelectedFeedbackIds(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return const <String>[];
+    final sorted = <Map<String, dynamic>>[...items]..sort((a, b) {
+        final rankDiff =
+            _feedbackPriorityRank(a).compareTo(_feedbackPriorityRank(b));
+        if (rankDiff != 0) return rankDiff;
+        return _itemTs(b).compareTo(_itemTs(a));
+      });
+    final ids = <String>[];
+    for (final item in sorted) {
+      final id = (item['id'] ?? '').toString().trim();
+      if (id.isEmpty || ids.contains(id)) continue;
+      ids.add(id);
+    }
+    return ids;
   }
 
   int _feedbackPriorityRank(Map<String, dynamic> item) {
