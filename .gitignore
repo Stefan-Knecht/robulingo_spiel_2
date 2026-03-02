@@ -49,3 +49,9 @@ app.*.map.json
 /android/key.properties
 /android/*.jks
 /android/*.keystore
+# Android build artifacts / release binaries
+*.apk
+*.aab
+**/build/app/outputs/flutter-apk/
+supervisor-latest.apk
+dailywords-latest.apk

@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:robulingo_flutter/app/robulingo_app.dart';
+import 'package:robulingo_flutter/logic/inactivity_badge.dart';
 
 final ValueNotifier<String?> _lastError = ValueNotifier<String?>(null);
 const List<Locale> _supportedLocales = <Locale>[
@@ -29,7 +30,9 @@ const List<Locale> _supportedLocales = <Locale>[
   Locale('ja'),
 ];
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeInactivityBadgeFeature();
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
     _lastError.value = details.exceptionAsString();

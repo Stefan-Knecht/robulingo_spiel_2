@@ -129,9 +129,13 @@ async function handleHints(request, env) {
 // ---------- /android-release/* ----------
 const APK_RELEASE_PREFIX_DAILYWORDS = 'releases/android/dailywords';
 const APK_RELEASE_LATEST_KEY_DAILYWORDS = `${APK_RELEASE_PREFIX_DAILYWORDS}/latest.json`;
+const APK_RELEASE_PREFIX_SUPERVISOR = 'releases/android/supervisor';
+const APK_RELEASE_LATEST_KEY_SUPERVISOR = `${APK_RELEASE_PREFIX_SUPERVISOR}/latest.json`;
 const APK_DOWNLOAD_EVENTS_PREFIX = 'system/apk_downloads';
 const DEFAULT_DAILYWORDS_APK_MANIFEST_URL =
   'https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/dailywords/latest.json';
+const DEFAULT_SUPERVISOR_APK_MANIFEST_URL =
+  'https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/supervisor/latest.json';
 
 async function handleAndroidReleaseLatest(request, env) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -266,13 +270,16 @@ function resolveAndroidReleaseFlavor(request) {
     cleanOptionalString(request.headers.get('x-app-flavor'), 32) ||
     APP_FLAVOR_DAILYWORDS;
   const normalized = requested.toLowerCase();
-  if (normalized !== APP_FLAVOR_DAILYWORDS) return null;
+  if (normalized !== APP_FLAVOR_DAILYWORDS && normalized !== APP_FLAVOR_SUPERVISOR) return null;
   return normalized;
 }
 
 function resolveAndroidReleaseLatestKey(flavor) {
   if (flavor === APP_FLAVOR_DAILYWORDS) {
     return APK_RELEASE_LATEST_KEY_DAILYWORDS;
+  }
+  if (flavor === APP_FLAVOR_SUPERVISOR) {
+    return APK_RELEASE_LATEST_KEY_SUPERVISOR;
   }
   return null;
 }
@@ -293,7 +300,10 @@ async function loadAndroidReleaseManifest(request, env, flavor) {
     }
   }
   if (!raw) {
-    const manifestUrl = cleanOptionalString(env.DAILYWORDS_APK_MANIFEST_URL, 2048) || DEFAULT_DAILYWORDS_APK_MANIFEST_URL;
+    const manifestUrl =
+      flavor === APP_FLAVOR_SUPERVISOR
+        ? cleanOptionalString(env.SUPERVISOR_APK_MANIFEST_URL, 2048) || DEFAULT_SUPERVISOR_APK_MANIFEST_URL
+        : cleanOptionalString(env.DAILYWORDS_APK_MANIFEST_URL, 2048) || DEFAULT_DAILYWORDS_APK_MANIFEST_URL;
     try {
       const res = await fetch(manifestUrl, {
         method: 'GET',
@@ -309,7 +319,10 @@ async function loadAndroidReleaseManifest(request, env, flavor) {
   if (!raw) {
     return null;
   }
-  const baseUrl = cleanOptionalString(env.DAILYWORDS_APK_PUBLIC_BASE_URL, 1024) || null;
+  const baseUrl =
+    flavor === APP_FLAVOR_SUPERVISOR
+      ? cleanOptionalString(env.SUPERVISOR_APK_PUBLIC_BASE_URL, 1024) || null
+      : cleanOptionalString(env.DAILYWORDS_APK_PUBLIC_BASE_URL, 1024) || null;
   return normalizeAndroidReleaseManifest(raw, baseUrl);
 }
 
@@ -500,6 +513,7 @@ const VOICE_FEEDBACK_MAX_BYTES = 2 * 1024 * 1024;
 const TRAINING_PROFILE_MAX_ITEMS = 500;
 const DASHBOARD_QUEUE_POLLING_MS = 15000;
 const APP_FLAVOR_DAILYWORDS = 'dailywords';
+const APP_FLAVOR_SUPERVISOR = 'supervisor';
 const APP_FLAVOR_DEFAULT = 'robulingo';
 
 function resolveAppFlavor(request) {

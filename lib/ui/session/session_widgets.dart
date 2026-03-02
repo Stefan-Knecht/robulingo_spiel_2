@@ -201,6 +201,7 @@ class RestartSplash extends StatefulWidget {
     required this.nativeLanguage,
     this.fallbackDatesUtc,
     this.onResumeEmojiChanged,
+    this.onResumeFeedbackIdsChanged,
   });
 
   final int wins;
@@ -221,12 +222,22 @@ class RestartSplash extends StatefulWidget {
   final String? nativeLanguage;
   final List<DateTime>? fallbackDatesUtc;
   final ValueChanged<String?>? onResumeEmojiChanged;
+  final ValueChanged<List<String>>? onResumeFeedbackIdsChanged;
 
   @override
   State<RestartSplash> createState() => _RestartSplashState();
 }
 
 class _RestartSplashState extends State<RestartSplash> {
+  bool _resumeFeedbackVisible = false;
+
+  void _handleResumeFeedbackVisibilityChanged(bool visible) {
+    if (_resumeFeedbackVisible == visible) return;
+    setState(() {
+      _resumeFeedbackVisible = visible;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final tooltipLanguage = _tooltipLanguageCode(
@@ -258,10 +269,8 @@ class _RestartSplashState extends State<RestartSplash> {
           builder: (context, constraints) {
             final wideLayout = constraints.maxWidth >= 780;
             final panelWidth = wideLayout
-                ? (constraints.maxWidth * 0.22).clamp(140.0, 220.0).toDouble()
-                : (constraints.maxWidth * 0.5).clamp(140.0, 220.0).toDouble();
-            final panelTopOffset = wideLayout ? 12.0 : 8.0;
-            final panelLeftOffset = wideLayout ? 12.0 : 8.0;
+                ? (constraints.maxWidth * 0.24).clamp(160.0, 260.0).toDouble()
+                : (constraints.maxWidth * 0.9).clamp(180.0, 320.0).toDouble();
             final calendar = TrainingCalendarPanel(
               userId: widget.userId,
               workerHost: widget.workerHost,
@@ -277,23 +286,40 @@ class _RestartSplashState extends State<RestartSplash> {
               workerHost: widget.workerHost,
               apiPrefix: widget.apiPrefix,
               refreshInterval: const Duration(seconds: 15),
+              onVisibilityChanged: _handleResumeFeedbackVisibilityChanged,
               onSelectedEmojiChanged: widget.onResumeEmojiChanged,
+              onSelectedFeedbackIdsChanged: widget.onResumeFeedbackIdsChanged,
             );
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: EdgeInsets.only(
-                    left: panelLeftOffset,
-                    top: panelTopOffset,
-                  ),
-                  child: SizedBox(
+            if (wideLayout) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: calendar),
+                  const SizedBox(width: 12),
+                  SizedBox(
                     width: panelWidth,
-                    child: supervisorPanel,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: supervisorPanel,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 6),
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 Expanded(child: calendar),
+                if (_resumeFeedbackVisible) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.center,
+                    child: SizedBox(
+                      width: panelWidth,
+                      child: supervisorPanel,
+                    ),
+                  ),
+                ],
               ],
             );
           },
@@ -625,6 +651,8 @@ class _RestartSplashState extends State<RestartSplash> {
             final victoryHeight = compactLayout ? 170.0 : 200.0;
             final compactCalendarHeight =
                 (constraints.maxHeight * 0.4).clamp(180.0, 280.0).toDouble();
+            final compactCalendarSectionHeight =
+                compactCalendarHeight + (_resumeFeedbackVisible ? 100.0 : 0.0);
 
             final headSection = Column(
               children: [
@@ -678,7 +706,7 @@ class _RestartSplashState extends State<RestartSplash> {
                     headSection,
                     const SizedBox(height: 10),
                     SizedBox(
-                      height: compactCalendarHeight,
+                      height: compactCalendarSectionHeight,
                       child: buildCalendarSection(),
                     ),
                     buildFooter(),

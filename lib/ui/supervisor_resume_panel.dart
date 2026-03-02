@@ -439,8 +439,6 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     final showFeedback = showEmoji || showVoice;
     _reportSelectedEmoji(showFeedback ? legacySelectedId : null);
     _reportSelectedFeedbackIds(showFeedback ? selectedFeedbackIds : const []);
-    final hasActiveSupervisor =
-        _isTrueish(supervisor['active']) || _isTrueish(supervisor['paired']);
     final selectedMetadataItem = selectedVoice.item ?? selectedEmoji.item;
     final supervisorEmail =
         _resolveSupervisorEmail(supervisor, queuedItem: selectedMetadataItem) ??
@@ -456,8 +454,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
     final showStatusLoading = _loading && _data == null && !_loadFailed;
     final showStatusError = _loadFailed;
     final showStatus = showStatusLoading || showStatusError;
-    final showName = supervisorName.isNotEmpty &&
-        (hasActiveSupervisor || showFeedback || _loadFailed);
+    final showName = supervisorName.isNotEmpty && (showFeedback || showStatus);
     if (!showName && !showFeedback && !showStatus) {
       _reportVisible(false);
       _reportSelectedEmoji(null);
@@ -778,12 +775,6 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       }
     }
     return null;
-  }
-
-  bool _isTrueish(dynamic raw) {
-    if (raw is bool) return raw;
-    final value = (raw ?? '').toString().trim().toLowerCase();
-    return value == 'true' || value == '1' || value == 'yes';
   }
 
   String _normalizeSupervisorName(String raw) {
