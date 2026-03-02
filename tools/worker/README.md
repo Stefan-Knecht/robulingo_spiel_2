@@ -47,6 +47,14 @@ Android release endpoints (DailyWords):
 - `GET https://<workerHost><apiPrefix>/android-release/download-stats?flavor=dailywords&from=YYYY-MM-DD&to=YYYY-MM-DD`
   - returns counted download events per day + total for the date range
 
+Android release endpoints (Supervisor app):
+- `GET https://<workerHost><apiPrefix>/android-release/latest?flavor=supervisor`
+  - returns latest supervisor release metadata (`version_name`, `version_code`, `download_url`, ...)
+- `GET https://<workerHost><apiPrefix>/android-release/download?flavor=supervisor&source=landing`
+  - logs one download event in R2 and redirects (`302`) to the current supervisor APK URL
+- `GET https://<workerHost><apiPrefix>/android-release/download-stats?flavor=supervisor&from=YYYY-MM-DD&to=YYYY-MM-DD`
+  - returns counted supervisor download events per day + total for the date range
+
 Supervisor/Consent endpoints (R2-backed MVP):
 - Bucket behavior: these endpoints always use `DAILYWORDSUSERDATA` (fallback `USERDATA` only if the DailyWords binding is missing), independent of `x-app-flavor`.
 - `POST https://<workerHost><apiPrefix>/consent`

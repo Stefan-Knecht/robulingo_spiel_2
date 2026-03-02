@@ -1,0 +1,14 @@
+{
+  "flavor": "supervisor",
+  "uploaded_at_utc": "2026-03-01T21:46:34Z",
+  "version": "1.0.0+1",
+  "version_name": "1.0.0",
+  "version_code": 1,
+  "apk_file": "supervisor-latest.apk",
+  "r2_key": "releases/android/supervisor/supervisor-latest.apk",
+  "sha256": "508faba647d3fe82e722988517e204910863c3bb46059bafbd26ee247c6f71f9",
+  "size_bytes": 47809620,
+  "apk_url": "https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/supervisor/supervisor-latest.apk",
+  "sha256_url": "https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/supervisor/supervisor-latest.apk.sha256",
+  "metadata_url": "https://pub-64932e0bdd094618872a67d7b1ff3c50.r2.dev/releases/android/supervisor/latest.json"
+}

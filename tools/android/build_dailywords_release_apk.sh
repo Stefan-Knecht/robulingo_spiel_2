@@ -103,7 +103,7 @@ if [[ "$SKIP_PUB_GET" -eq 0 ]]; then
   flutter pub get
 fi
 
-BUILD_CMD=(flutter build apk --release --dart-define=APP_FLAVOR=dailywords)
+BUILD_CMD=(flutter build apk --release --flavor dailywords --dart-define=APP_FLAVOR=dailywords)
 if [[ -n "${MEDIA_MANIFEST_VERSION:-}" ]]; then
   BUILD_CMD+=(--dart-define="MEDIA_MANIFEST_VERSION=$MEDIA_MANIFEST_VERSION")
 fi
@@ -117,7 +117,11 @@ fi
 echo "Building release APK for dailywords..."
 "${BUILD_CMD[@]}"
 
-APK_SOURCE="$ROOT_DIR/build/app/outputs/flutter-apk/app-release.apk"
+APK_SOURCE="$ROOT_DIR/build/app/outputs/flutter-apk/app-dailywords-release.apk"
+if [[ ! -f "$APK_SOURCE" ]]; then
+  # Backward-compatible fallback for older non-flavor builds.
+  APK_SOURCE="$ROOT_DIR/build/app/outputs/flutter-apk/app-release.apk"
+fi
 if [[ ! -f "$APK_SOURCE" ]]; then
   echo "Expected APK not found: $APK_SOURCE" >&2
   exit 6
