@@ -45,6 +45,7 @@ import 'package:robulingo_flutter/logic/session_cache_restorer.dart';
 import 'package:robulingo_flutter/logic/session_reset.dart';
 import 'package:robulingo_flutter/logic/session_init_data.dart';
 import 'package:robulingo_flutter/logic/initial_item_loader.dart';
+import 'package:robulingo_flutter/logic/inactivity_badge.dart';
 import 'package:robulingo_flutter/logic/session_initializer.dart';
 import 'package:robulingo_flutter/logic/session_preparer.dart';
 import 'package:robulingo_flutter/logic/session_cache.dart';
@@ -395,7 +396,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   AppUpdateInfo? _availableAppUpdate;
   String _installedVersionLabel = '';
   bool _resumeMicRecheckInFlight = false;
-  String? _resumeSelectedEmojiId;
+  List<String> _resumeSelectedFeedbackIds = const [];
   bool _resumeEmojiAckInFlight = false;
   bool _resumeEmojiAckPending = false;
   Timer? _resumeEmojiAckRetryTimer;
@@ -416,6 +417,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(handleInactivityBadgeOnAppResumed());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _keyboardFocusNode.requestFocus();
@@ -507,6 +509,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         state == AppLifecycleState.detached) {
       unawaited(_persistProgressSnapshot());
     } else if (state == AppLifecycleState.resumed) {
+      unawaited(handleInactivityBadgeOnAppResumed());
       unawaited(_recheckMicPermissionAfterResume());
     }
   }
@@ -1329,13 +1332,26 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   void _handleResumeSelectedEmojiChanged(String? emojiId) {
     final normalized =
         (emojiId != null && emojiId.trim().isNotEmpty) ? emojiId.trim() : null;
-    if (_resumeSelectedEmojiId != normalized) {
+    _handleResumeSelectedFeedbackIdsChanged(
+      normalized == null ? const [] : [normalized],
+    );
+  }
+
+  void _handleResumeSelectedFeedbackIdsChanged(List<String> feedbackIds) {
+    final normalized = feedbackIds
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    final changed = normalized.length != _resumeSelectedFeedbackIds.length ||
+        !_resumeSelectedFeedbackIds.every(normalized.contains);
+    if (changed) {
       _resumeEmojiAckRetryAttempt = 0;
       _resumeEmojiAckRetryNotBeforeUtc = null;
       _resumeEmojiAckRetryTimer?.cancel();
       _resumeEmojiAckRetryTimer = null;
     }
-    _resumeSelectedEmojiId = normalized;
+    _resumeSelectedFeedbackIds = normalized;
   }
 
   Duration _resumeEmojiAckBackoffDelay(int attempt) {
@@ -1381,8 +1397,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _resumeEmojiAckRetryTimer = null;
     }
     final uid = (userId ?? '').trim();
-    final emojiId = (_resumeSelectedEmojiId ?? '').trim();
-    if (uid.isEmpty || emojiId.isEmpty) {
+    final feedbackIds = _resumeSelectedFeedbackIds
+        .where((id) => id.trim().isNotEmpty)
+        .toList(growable: false);
+    if (uid.isEmpty || feedbackIds.isEmpty) {
       _resumeEmojiAckPending = false;
       _resetResumeEmojiAckRetryState();
       return;
@@ -1391,21 +1409,21 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     try {
       final ok = await supervisorDashboardService.ackEmojiQueue(
         userId: uid,
-        ids: [emojiId],
+        ids: feedbackIds,
         remove: true,
       );
       if (ok) {
-        _resumeSelectedEmojiId = null;
+        _resumeSelectedFeedbackIds = const [];
         _resumeEmojiAckPending = false;
         _resetResumeEmojiAckRetryState();
       } else {
         debugPrint(
-            '[supervisor-resume] ack-on-start failed id=$emojiId uid=$uid');
+            '[supervisor-resume] ack-on-start failed ids=${feedbackIds.join(",")} uid=$uid');
         _scheduleResumeEmojiAckRetry();
       }
     } catch (e) {
       debugPrint(
-          '[supervisor-resume] ack-on-start error id=$emojiId uid=$uid: $e');
+          '[supervisor-resume] ack-on-start error ids=${feedbackIds.join(",")} uid=$uid: $e');
       _scheduleResumeEmojiAckRetry();
     } finally {
       _resumeEmojiAckInFlight = false;
@@ -3280,10 +3298,21 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await _startNamingFlow(currentTrialToken, userInitiated: true);
   }
 
+  bool _canAutofocusKeyboardShortcuts() {
+    if (micGateActive) return false;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    final focusedWidget = FocusManager.instance.primaryFocus?.context?.widget;
+    if (focusedWidget is EditableText) return false;
+    return true;
+  }
+
   Widget _wrapWithKeyboardShortcuts(Widget child) {
-    if (!micGateActive && !_keyboardFocusNode.hasFocus) {
+    if (_canAutofocusKeyboardShortcuts() && !_keyboardFocusNode.hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !micGateActive && !_keyboardFocusNode.hasFocus) {
+        if (mounted &&
+            _canAutofocusKeyboardShortcuts() &&
+            !_keyboardFocusNode.hasFocus) {
           _keyboardFocusNode.requestFocus();
         }
       });
@@ -3291,7 +3320,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) {
-        if (!micGateActive && !_keyboardFocusNode.hasFocus) {
+        if (_canAutofocusKeyboardShortcuts() && !_keyboardFocusNode.hasFocus) {
           _keyboardFocusNode.requestFocus();
         }
       },
@@ -3414,6 +3443,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           apiPrefix: apiPrefix,
           fallbackDatesUtc: _resumeFallbackDatesUtc(),
           onResumeEmojiChanged: _handleResumeSelectedEmojiChanged,
+          onResumeFeedbackIdsChanged: _handleResumeSelectedFeedbackIdsChanged,
         ),
       );
     }

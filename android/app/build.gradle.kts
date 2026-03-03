@@ -39,6 +39,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -46,7 +47,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // Flavor-specific application ids are set below to allow parallel installs.
         applicationId = "com.example.robulingo_flutter"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -54,6 +55,20 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    flavorDimensions += "app"
+    productFlavors {
+        create("dailywords") {
+            dimension = "app"
+            applicationId = "org.dailywords.learner"
+            manifestPlaceholders["appLabel"] = "DailyWords"
+        }
+        create("supervisor") {
+            dimension = "app"
+            applicationId = "org.dailywords.supervisor"
+            manifestPlaceholders["appLabel"] = "DailyWords Supervisor"
+        }
     }
 
     signingConfigs {
@@ -82,4 +97,8 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
