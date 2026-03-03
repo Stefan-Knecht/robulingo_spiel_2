@@ -156,6 +156,33 @@ String _resumeTooltipText(String key, String langCode) {
   return values[langCode] ?? values['en'] ?? key;
 }
 
+const String _startArrowDefaultAsset = 'assets/icons/start_arrow.webp';
+const String _startArrowGreenAsset = 'assets/icons/start_arrow_green.webp';
+const String _startArrowBlueAsset = 'assets/icons/start_arrow_blue.webp';
+const String _startArrowYellowAsset = 'assets/icons/start_arrow_yellow.webp';
+const String _startArrowRedAsset = 'assets/icons/start_arrow_red.webp';
+
+String _startArrowAssetForLastTraining(List<DateTime>? datesUtc) {
+  if (datesUtc == null || datesUtc.isEmpty) return _startArrowDefaultAsset;
+  DateTime? lastTrainingUtc;
+  for (final date in datesUtc) {
+    final utc = date.toUtc();
+    if (lastTrainingUtc == null || utc.isAfter(lastTrainingUtc)) {
+      lastTrainingUtc = utc;
+    }
+  }
+  if (lastTrainingUtc == null) return _startArrowDefaultAsset;
+  var elapsed = DateTime.now().toUtc().difference(lastTrainingUtc);
+  if (elapsed.isNegative) {
+    elapsed = Duration.zero;
+  }
+  if (elapsed < const Duration(hours: 36)) return _startArrowGreenAsset;
+  if (elapsed < const Duration(hours: 72)) return _startArrowBlueAsset;
+  if (elapsed < const Duration(hours: 96)) return _startArrowDefaultAsset;
+  if (elapsed < const Duration(hours: 120)) return _startArrowYellowAsset;
+  return _startArrowRedAsset;
+}
+
 class RestartModuleProgress {
   const RestartModuleProgress({
     required this.iconAsset,
@@ -250,6 +277,8 @@ class _RestartSplashState extends State<RestartSplash> {
     final historyIconAsset = widget.historyHasSupervisorInfo
         ? 'assets/icons/eye_red.webp'
         : 'assets/icons/eye.webp';
+    final startArrowAsset =
+        _startArrowAssetForLastTraining(widget.fallbackDatesUtc);
 
     Widget buildCalendarSection() {
       return Padding(
@@ -497,7 +526,7 @@ class _RestartSplashState extends State<RestartSplash> {
                           message: tooltipStartLearning,
                           child: GestureDetector(
                             onTap: widget.onStart,
-                            child: Image.asset('assets/icons/start_arrow.webp',
+                            child: Image.asset(startArrowAsset,
                                 width: 88, height: 88),
                           ),
                         ),
@@ -560,7 +589,7 @@ class _RestartSplashState extends State<RestartSplash> {
                         message: tooltipStartLearning,
                         child: GestureDetector(
                           onTap: widget.onStart,
-                          child: Image.asset('assets/icons/start_arrow.webp',
+                          child: Image.asset(startArrowAsset,
                               width: 78, height: 78),
                         ),
                       ),
