@@ -11,3 +11,6 @@ r2_buckets = [
   { binding = "HINTS", bucket_name = "hints", jurisdiction = "eu" },
   { binding = "CURRICULUM", bucket_name = "curriculum", jurisdiction = "eu" },
 ]
+
+[vars]
+DAILYWORDS_ACTIVITY_SYNC_URL = "https://www.dailywords-project.org/api/internal/participant-activity"

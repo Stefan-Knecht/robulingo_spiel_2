@@ -512,6 +512,8 @@ const EMOJI_QUEUE_MAX_PENDING_ITEMS = 2;
 const VOICE_FEEDBACK_MAX_BYTES = 2 * 1024 * 1024;
 const TRAINING_PROFILE_MAX_ITEMS = 500;
 const DASHBOARD_QUEUE_POLLING_MS = 15000;
+const DEFAULT_DAILYWORDS_ACTIVITY_SYNC_URL = 'https://www.dailywords-project.org/api/internal/participant-activity';
+const DAILYWORDS_ACTIVITY_SYNC_TIMEOUT_MS = 2500;
 const APP_FLAVOR_DAILYWORDS = 'dailywords';
 const APP_FLAVOR_SUPERVISOR = 'supervisor';
 const APP_FLAVOR_DEFAULT = 'robulingo';
@@ -550,6 +552,7 @@ async function handleLog(request, env) {
   }
   const uid = request.headers.get('x-user-id');
   const sessionId = request.headers.get('x-session-id');
+  const appFlavor = resolveAppFlavor(request);
   if (!uid) {
     return new Response('missing x-user-id', { status: 400, headers: CORS_HEADERS });
   }
@@ -592,6 +595,7 @@ async function handleLog(request, env) {
     entry.rawLines.push(normalizedLine);
   }
 
+  let maxSessionEventTsMs = 0;
   for (const [sid, entry] of sessions.entries()) {
     const state = await loadSessionState(bucket, uid, sid);
     const sorted = entry.events.sort((a, b) => a.tsMs - b.tsMs);
@@ -617,15 +621,67 @@ async function handleLog(request, env) {
       bonusApplied: state.bonusApplied || addBonus,
       countedSession: state.countedSession || shouldCountSession,
     });
+    maxSessionEventTsMs = Math.max(maxSessionEventTsMs, sorted[sorted.length - 1].tsMs);
   }
 
   await updateUserGeoProfile(bucket, uid, geo, sessionId);
   await updateUserTrainingProfile(bucket, uid, trainingProfileDelta, sessionId);
+  const profileLastEventTsMs = Number(trainingProfileDelta.lastEventTsMs);
+  const inferredLastEventTsMs = Math.max(
+    maxSessionEventTsMs,
+    Number.isFinite(profileLastEventTsMs) ? Math.floor(profileLastEventTsMs) : 0
+  );
+  if (appFlavor === APP_FLAVOR_DAILYWORDS && inferredLastEventTsMs > 0) {
+    await syncDailywordsParticipantActivity(env, uid, Math.floor(inferredLastEventTsMs / 1000));
+  }
 
   // Keep legacy gzip log for audit/debug (optional).
   await appendLegacyRun(bucket, uid, sessionId, legacyLines, chunk);
 
   return new Response('ok', { status: 200, headers: CORS_HEADERS });
+}
+
+async function syncDailywordsParticipantActivity(env, participantId, eventAtEpochSeconds) {
+  const token = cleanOptionalString(env.DAILYWORDS_ACTIVITY_SYNC_TOKEN, 512);
+  if (!token) return;
+  const endpoint =
+    cleanOptionalString(env.DAILYWORDS_ACTIVITY_SYNC_URL, 2048) || DEFAULT_DAILYWORDS_ACTIVITY_SYNC_URL;
+  const eventAt = Number(eventAtEpochSeconds);
+  if (!Number.isFinite(eventAt) || eventAt <= 0) return;
+
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => {
+        controller.abort();
+      }, DAILYWORDS_ACTIVITY_SYNC_TIMEOUT_MS)
+    : null;
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-activity-token': token,
+      },
+      body: JSON.stringify({
+        participant_id: participantId,
+        event_at: Math.floor(eventAt),
+        source: 'robulingo_log_worker',
+      }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      console.error('[dailywords-activity-sync] failed', {
+        participantId,
+        status: response.status,
+        body: body.slice(0, 200),
+      });
+    }
+  } catch (error) {
+    console.error('[dailywords-activity-sync] error', { participantId, error: String(error) });
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 // ---------- /audio-target-matches ----------
