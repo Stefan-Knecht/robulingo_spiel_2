@@ -213,7 +213,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingProgressFirstRatio = 3;
   static const int namingProgressHintRatio = 2;
   static const int namingProgressRepeatRatio = 2;
-  static const double moveSoundVolume = 0.75;
+  static const double moveSoundVolume = 0.5;
+  static const double namingBeepVolume = 0.5;
   static final AudioContext speechAudioContext = AudioContextConfig(
     focus: AudioContextConfigFocus.gain,
   ).build();
@@ -378,6 +379,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   final Map<String, int> phoneticSeenCounts =
       {}; // wie oft Items mit Lautschrift gezeigt wurden
   int phoneticGlobalOverrideRemaining = 0; // aktive Phonetik-Zeichen global
+  bool phoneticForceHiddenByToggle = false;
   int lastCloudLoadToken = 0;
   final NamingLocaleHelper namingLocaleHelper = NamingLocaleHelper();
   RestartModuleProgress restartModuleProgress = RestartModuleProgress(
@@ -451,6 +453,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(namingBeepPlayer2.setAudioContext(sfxAudioContext));
     unawaited(namingBeepPlayer.setPlayerMode(PlayerMode.lowLatency));
     unawaited(namingBeepPlayer2.setPlayerMode(PlayerMode.lowLatency));
+    unawaited(namingBeepPlayer.setVolume(namingBeepVolume));
+    unawaited(namingBeepPlayer2.setVolume(namingBeepVolume));
     micController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
@@ -3107,8 +3111,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         '[trial][next] idx=$trialIndex token=$currentTrialToken block=$namingBlockRemaining gateGranted=$micGateGranted');
   }
 
-  void _reinstatePhoneticsForAllItems() {
+  void _togglePhoneticsForAllItems({
+    required bool currentlyVisible,
+  }) {
     setState(() {
+      if (currentlyVisible) {
+        phoneticForceHiddenByToggle = true;
+        phoneticGlobalOverrideRemaining = 0;
+        return;
+      }
+      phoneticForceHiddenByToggle = false;
       phoneticGlobalOverrideRemaining = _phoneticGlobalOverrideRuns;
     });
   }
@@ -3212,6 +3224,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final playerToUse = isYou ? moveYouPlayer : moveRivalPlayer;
     try {
       await playerToUse.stop();
+      await playerToUse.setVolume(moveSoundVolume);
       await playerToUse.play(AssetSource(asset));
     } catch (_) {
       // leise scheitern, falls Asset fehlt
@@ -3237,6 +3250,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final playerToUse = (i % 2 == 0) ? namingBeepPlayer : namingBeepPlayer2;
       try {
         await playerToUse.stop();
+        await playerToUse.setVolume(namingBeepVolume);
         await playerToUse.play(AssetSource(asset));
       } catch (_) {
         // ignore missing asset / platform limitations
@@ -3574,8 +3588,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         final int phoneticSeen = phoneticSeenCounts[trial.target.uuid] ?? 0;
         final int phoneticOverrideCount = phoneticGlobalOverrideRemaining;
         final bool phoneticOverrideActive = phoneticOverrideCount > 0;
-        final bool showPhonetic =
-            hasPhoneticData && (phoneticSeen < 3 || phoneticOverrideActive);
+        final bool showPhonetic = hasPhoneticData &&
+            !phoneticForceHiddenByToggle &&
+            (phoneticSeen < 3 || phoneticOverrideActive);
         final bool showNative =
             !trialIsLoading && _shouldShowNative(trial.target);
         final bool hintsEnabled =
@@ -3645,9 +3660,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           targetPhonetic:
               showL2Text && showPhonetic ? trial.target.phonetic : null,
           phoneticButtonVisible: showL2Text && hasPhoneticData,
-          phoneticOverrideActive: phoneticOverrideActive,
-          onTogglePhonetic:
-              hasPhoneticData ? _reinstatePhoneticsForAllItems : null,
+          phoneticOverrideActive: showPhonetic,
+          onTogglePhonetic: hasPhoneticData
+              ? () => _togglePhoneticsForAllItems(
+                    currentlyVisible: showPhonetic,
+                  )
+              : null,
           spokenCueText:
               !isNamingView && !trialIsLoading ? trial.target.text : null,
           nativeText: trial.target.nativeText,

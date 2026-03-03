@@ -339,16 +339,18 @@ class _RestartSplashState extends State<RestartSplash> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(child: calendar),
-                if (_resumeFeedbackVisible) ...[
-                  const SizedBox(height: 8),
-                  Align(
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  padding: EdgeInsets.only(top: _resumeFeedbackVisible ? 8 : 0),
+                  child: Align(
                     alignment: Alignment.center,
                     child: SizedBox(
                       width: panelWidth,
                       child: supervisorPanel,
                     ),
                   ),
-                ],
+                ),
               ],
             );
           },
@@ -1454,53 +1456,6 @@ class SessionBody extends StatelessWidget {
                         spacing: 6,
                         runSpacing: 2,
                         children: [
-                          if (isWeb && phoneticButtonVisible)
-                            Tooltip(
-                              message: 'Phonetic',
-                              child: IconButton(
-                                onPressed: onTogglePhonetic,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 26, minHeight: 26),
-                                icon: ImageIcon(
-                                  const AssetImage(
-                                      'assets/icons/phonetic.webp'),
-                                  size: 18,
-                                  color: phoneticOverrideActive
-                                      ? Colors.blue
-                                      : Colors.grey[700],
-                                ),
-                              ),
-                            ),
-                          if (isWeb && audioHintEnabled)
-                            Tooltip(
-                              message: 'Audio hint',
-                              child: IconButton(
-                                onPressed: onPlayAudioHint,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 26, minHeight: 26),
-                                icon: const Icon(Icons.volume_up, size: 18),
-                              ),
-                            ),
-                          if (isWeb && hintButtonVisible)
-                            Tooltip(
-                              message: hintLabel,
-                              child: IconButton(
-                                onPressed: onToggleHints,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 26, minHeight: 26),
-                                icon: ImageIcon(
-                                  const AssetImage(
-                                      'assets/icons/Magnifying_glass.webp'),
-                                  size: 18,
-                                  color: hintButtonActive
-                                      ? const Color(0xFF8A6B12)
-                                      : Colors.grey[800],
-                                ),
-                              ),
-                            ),
                           Text.rich(
                             TextSpan(
                               text: targetText,
@@ -1537,10 +1492,9 @@ class SessionBody extends StatelessWidget {
                             color: Colors.green),
                       ),
                     ],
-                    if (!isWeb &&
-                        (phoneticButtonVisible ||
-                            audioHintEnabled ||
-                            hintButtonVisible)) ...[
+                    if (phoneticButtonVisible ||
+                        audioHintEnabled ||
+                        hintButtonVisible) ...[
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 10,
