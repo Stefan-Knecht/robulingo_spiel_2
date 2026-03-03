@@ -1147,9 +1147,6 @@ async function handleEmojiQueueAck(request, env) {
       } else if (previousStatus !== 'pending' && nextStatus === 'pending') {
         pendingCount += 1;
       }
-      if (item.type === 'voice' && previousStatus === 'pending' && nextStatus !== 'pending') {
-        voiceItemsToDelete.push(item);
-      }
       changed += 1;
     }
   }

@@ -1410,7 +1410,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       final ok = await supervisorDashboardService.ackEmojiQueue(
         userId: uid,
         ids: feedbackIds,
-        remove: true,
+        status: 'delivered',
+        remove: false,
       );
       if (ok) {
         _resumeSelectedFeedbackIds = const [];
