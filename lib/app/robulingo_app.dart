@@ -3619,6 +3619,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                 forceShowNamingText);
         body = SessionBody(
           ladder: ladder,
+          runsDone: comprehensionHistory.length + namingHistory.length,
           isNaming: isNamingView,
           imageHeight: imageHeight,
           leftImageBytes: leftImg,

@@ -1229,6 +1229,7 @@ class SessionBody extends StatelessWidget {
   const SessionBody({
     super.key,
     required this.ladder,
+    required this.runsDone,
     required this.isNaming,
     required this.imageHeight,
     required this.leftImageBytes,
@@ -1278,6 +1279,7 @@ class SessionBody extends StatelessWidget {
   });
 
   final HexagonState ladder;
+  final int runsDone;
   final bool isNaming;
   final double imageHeight;
   final Uint8List leftImageBytes;
@@ -1353,6 +1355,7 @@ class SessionBody extends StatelessWidget {
         rivalFlagShowIndex: ladder.rivalFlagShowIndex,
         youTrail: ladder.youTrail,
         rivalTrail: ladder.rivalTrail,
+        runsDone: runsDone,
         tooltipLanguageCode: tooltipLanguageCode,
         uiScale: namingHexaScale,
         centerGrid: shrinkHexaWeb,
