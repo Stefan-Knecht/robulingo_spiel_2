@@ -104,6 +104,14 @@ const Map<String, Map<String, String>> _resumeTooltipTexts = {
     'tr': 'Kapsanan müfredat',
     'ja': 'カリキュラムの進捗',
   },
+  'supervisor_info': {
+    'en': 'Supervisor & progress info',
+    'de': 'Supervisor- und Fortschrittsinfos',
+  },
+  'dailywords_home': {
+    'en': 'DailyWords project',
+    'de': 'DailyWords-Projekt',
+  },
   'you': {
     'en': 'You',
     'de': 'Du',
@@ -134,6 +142,17 @@ const Map<String, Map<String, String>> _resumeTooltipTexts = {
   },
 };
 
+const Map<String, Map<String, String>> _sessionMenuTooltipTexts = {
+  'session_menu': {
+    'en': 'Session menu',
+    'de': 'Sitzungsmenü',
+  },
+  'exit_to_resume_panel': {
+    'en': 'Exit to resume panel',
+    'de': 'Zum Resume-Panel',
+  },
+};
+
 String _normalizedLangCode(String? raw) {
   if (raw == null) return '';
   final trimmed = raw.trim().toLowerCase();
@@ -154,6 +173,39 @@ String _resumeTooltipText(String key, String langCode) {
   final values = _resumeTooltipTexts[key];
   if (values == null) return key;
   return values[langCode] ?? values['en'] ?? key;
+}
+
+String _sessionMenuTooltipText(String key, String langCode) {
+  final values = _sessionMenuTooltipTexts[key];
+  if (values == null) return key;
+  return values[langCode] ?? values['en'] ?? key;
+}
+
+const String _startArrowDefaultAsset = 'assets/icons/start_arrow.webp';
+const String _startArrowGreenAsset = 'assets/icons/start_arrow_green.webp';
+const String _startArrowBlueAsset = 'assets/icons/start_arrow_blue.webp';
+const String _startArrowYellowAsset = 'assets/icons/start_arrow_yellow.webp';
+const String _startArrowRedAsset = 'assets/icons/start_arrow_red.webp';
+
+String _startArrowAssetForLastTraining(List<DateTime>? datesUtc) {
+  if (datesUtc == null || datesUtc.isEmpty) return _startArrowDefaultAsset;
+  DateTime? lastTrainingUtc;
+  for (final date in datesUtc) {
+    final utc = date.toUtc();
+    if (lastTrainingUtc == null || utc.isAfter(lastTrainingUtc)) {
+      lastTrainingUtc = utc;
+    }
+  }
+  if (lastTrainingUtc == null) return _startArrowDefaultAsset;
+  var elapsed = DateTime.now().toUtc().difference(lastTrainingUtc);
+  if (elapsed.isNegative) {
+    elapsed = Duration.zero;
+  }
+  if (elapsed < const Duration(hours: 36)) return _startArrowGreenAsset;
+  if (elapsed < const Duration(hours: 72)) return _startArrowBlueAsset;
+  if (elapsed < const Duration(hours: 96)) return _startArrowDefaultAsset;
+  if (elapsed < const Duration(hours: 120)) return _startArrowYellowAsset;
+  return _startArrowRedAsset;
 }
 
 class RestartModuleProgress {
@@ -256,11 +308,17 @@ class _RestartSplashState extends State<RestartSplash> {
         _resumeTooltipText('start_learning', tooltipLanguage);
     final tooltipCurriculumCovered =
         _resumeTooltipText('curriculum_covered', tooltipLanguage);
+    final tooltipSupervisorInfo =
+        _resumeTooltipText('supervisor_info', tooltipLanguage);
+    final tooltipDailyWordsHome =
+        _resumeTooltipText('dailywords_home', tooltipLanguage);
     final tooltipYou = _resumeTooltipText('you', tooltipLanguage);
     final tooltipYourRival = _resumeTooltipText('your_rival', tooltipLanguage);
     final historyIconAsset = widget.historyHasSupervisorInfo
         ? 'assets/icons/eye_red.webp'
         : 'assets/icons/eye.webp';
+    final startArrowAsset =
+        _startArrowAssetForLastTraining(widget.fallbackDatesUtc);
 
     Widget buildCalendarSection() {
       return Padding(
@@ -310,16 +368,18 @@ class _RestartSplashState extends State<RestartSplash> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(child: calendar),
-                if (_resumeFeedbackVisible) ...[
-                  const SizedBox(height: 8),
-                  Align(
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  padding: EdgeInsets.only(top: _resumeFeedbackVisible ? 8 : 0),
+                  child: Align(
                     alignment: Alignment.center,
                     child: SizedBox(
                       width: panelWidth,
                       child: supervisorPanel,
                     ),
                   ),
-                ],
+                ),
               ],
             );
           },
@@ -373,10 +433,37 @@ class _RestartSplashState extends State<RestartSplash> {
               );
             }
 
+            Future<void> openDailyWordsProject() async {
+              final normalized = _normalizedLangCode(tooltipLanguage);
+              final supported = <String>{
+                'en',
+                'de',
+                'fr',
+                'es',
+                'it',
+                'ru',
+                'ar',
+                'tr',
+                'el',
+                'hi',
+                'ja',
+                'zh',
+              };
+              final uri = (normalized.isNotEmpty &&
+                      normalized != 'en' &&
+                      supported.contains(normalized))
+                  ? Uri.https('www.dailywords-project.org', '/', {
+                      'lang': normalized,
+                    })
+                  : Uri.parse('https://www.dailywords-project.org/');
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+
             Future<void> openResumeMenu({required bool compact}) async {
               final double iconSize = compact ? 52 : 56;
-              final double moduleWidth = compact ? 120 : 136;
               final double moduleIconSize = compact ? 48 : 54;
+              final double menuIconSize = compact ? 34 : 38;
+              final double depthSize = compact ? 44 : 48;
               await showModalBottomSheet<void>(
                 context: context,
                 backgroundColor: Colors.white,
@@ -392,87 +479,139 @@ class _RestartSplashState extends State<RestartSplash> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              Tooltip(
-                                message: tooltipChooseTargetLanguage,
-                                child: GestureDetector(
-                                  onTap: () {
-                                    Navigator.of(sheetContext).pop();
-                                    widget.onRestart();
-                                  },
-                                  child: Image.asset(
-                                    'assets/icons/toolbox.webp',
-                                    width: iconSize,
-                                    height: iconSize,
-                                    fit: BoxFit.contain,
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Tooltip(
+                                    message: tooltipChooseTargetLanguage,
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        Navigator.of(sheetContext).pop();
+                                        widget.onRestart();
+                                      },
+                                      child: Image.asset(
+                                        'assets/icons/toolbox.webp',
+                                        width: iconSize,
+                                        height: iconSize,
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 14),
-                              trainingDepthButton(
-                                asset: 'assets/icons/deep.webp',
-                                mode: TrainingDepthMode.deep,
-                                size: compact ? 44 : 48,
-                                tooltipMessage: tooltipDeeperLearning,
-                                onTap: () {
-                                  Navigator.of(sheetContext).pop();
-                                  widget.onSelectTrainingDepth(
-                                      TrainingDepthMode.deep);
-                                },
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.center,
+                                  child: trainingDepthButton(
+                                    asset: 'assets/icons/default.webp',
+                                    mode: TrainingDepthMode.defaultMode,
+                                    size: depthSize,
+                                    tooltipMessage: tooltipDefaultLearning,
+                                    onTap: () {
+                                      Navigator.of(sheetContext).pop();
+                                      widget.onSelectTrainingDepth(
+                                          TrainingDepthMode.defaultMode);
+                                    },
+                                  ),
+                                ),
                               ),
-                              const SizedBox(width: 10),
-                              trainingDepthButton(
-                                asset: 'assets/icons/default.webp',
-                                mode: TrainingDepthMode.defaultMode,
-                                size: compact ? 44 : 48,
-                                tooltipMessage: tooltipDefaultLearning,
-                                onTap: () {
-                                  Navigator.of(sheetContext).pop();
-                                  widget.onSelectTrainingDepth(
-                                      TrainingDepthMode.defaultMode);
-                                },
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Tooltip(
+                                    message: tooltipChangeModule,
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        Navigator.of(sheetContext).pop();
+                                        widget.onSelectModule();
+                                      },
+                                      behavior: HitTestBehavior.opaque,
+                                      child: SizedBox(
+                                        width: moduleIconSize + 6,
+                                        height: moduleIconSize + 6,
+                                        child: Image.asset(
+                                          widget.moduleProgress.iconAsset,
+                                          width: moduleIconSize,
+                                          height: moduleIconSize,
+                                          fit: BoxFit.contain,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 12),
-                          Tooltip(
-                            message: tooltipChangeModule,
-                            child: GestureDetector(
-                              onTap: () {
-                                Navigator.of(sheetContext).pop();
-                                widget.onSelectModule();
-                              },
-                              behavior: HitTestBehavior.opaque,
-                              child: SizedBox(
-                                width: moduleWidth,
-                                child: Image.asset(
-                                  widget.moduleProgress.iconAsset,
-                                  width: moduleIconSize,
-                                  height: moduleIconSize,
-                                  fit: BoxFit.contain,
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Tooltip(
+                                    message: tooltipSupervisorInfo,
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        Navigator.of(sheetContext).pop();
+                                        widget.onOpenHistory();
+                                      },
+                                      behavior: HitTestBehavior.opaque,
+                                      child: SizedBox(
+                                        width: menuIconSize,
+                                        height: menuIconSize,
+                                        child: Image.asset(
+                                          historyIconAsset,
+                                          fit: BoxFit.contain,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Tooltip(
-                            message: 'Supervisor & progress info',
-                            child: GestureDetector(
-                              onTap: () {
-                                Navigator.of(sheetContext).pop();
-                                widget.onOpenHistory();
-                              },
-                              behavior: HitTestBehavior.opaque,
-                              child: SizedBox(
-                                width: 34,
-                                height: 34,
-                                child: Image.asset(
-                                  historyIconAsset,
-                                  fit: BoxFit.contain,
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.center,
+                                  child: trainingDepthButton(
+                                    asset: 'assets/icons/deep.webp',
+                                    mode: TrainingDepthMode.deep,
+                                    size: depthSize,
+                                    tooltipMessage: tooltipDeeperLearning,
+                                    onTap: () {
+                                      Navigator.of(sheetContext).pop();
+                                      widget.onSelectTrainingDepth(
+                                          TrainingDepthMode.deep);
+                                    },
+                                  ),
                                 ),
                               ),
-                            ),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Tooltip(
+                                    message: tooltipDailyWordsHome,
+                                    child: GestureDetector(
+                                      onTap: () async {
+                                        Navigator.of(sheetContext).pop();
+                                        await openDailyWordsProject();
+                                      },
+                                      behavior: HitTestBehavior.opaque,
+                                      child: SizedBox(
+                                        width: menuIconSize,
+                                        height: menuIconSize,
+                                        child: Image.asset(
+                                          'assets/icons/home.webp',
+                                          fit: BoxFit.contain,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -480,11 +619,6 @@ class _RestartSplashState extends State<RestartSplash> {
                   );
                 },
               );
-            }
-
-            Future<void> openDailyWordsProject() async {
-              final uri = Uri.parse('https://www.dailywords-project.org/');
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
             }
 
             Widget burgerButton({required double size}) {
@@ -523,7 +657,7 @@ class _RestartSplashState extends State<RestartSplash> {
                           message: tooltipStartLearning,
                           child: GestureDetector(
                             onTap: widget.onStart,
-                            child: Image.asset('assets/icons/start_arrow.webp',
+                            child: Image.asset(startArrowAsset,
                                 width: 88, height: 88),
                           ),
                         ),
@@ -586,7 +720,7 @@ class _RestartSplashState extends State<RestartSplash> {
                         message: tooltipStartLearning,
                         child: GestureDetector(
                           onTap: widget.onStart,
-                          child: Image.asset('assets/icons/start_arrow.webp',
+                          child: Image.asset(startArrowAsset,
                               width: 78, height: 78),
                         ),
                       ),
@@ -1200,6 +1334,7 @@ class SessionBody extends StatelessWidget {
   const SessionBody({
     super.key,
     required this.ladder,
+    required this.runsDone,
     required this.isNaming,
     required this.imageHeight,
     required this.leftImageBytes,
@@ -1246,9 +1381,11 @@ class SessionBody extends StatelessWidget {
     required this.onOpenDashboard,
     required this.tooltipLanguageCode,
     this.onEscapeToOpeningPanel,
+    this.onExitToResumePanel,
   });
 
   final HexagonState ladder;
+  final int runsDone;
   final bool isNaming;
   final double imageHeight;
   final Uint8List leftImageBytes;
@@ -1295,6 +1432,7 @@ class SessionBody extends StatelessWidget {
   final VoidCallback onOpenDashboard;
   final String tooltipLanguageCode;
   final VoidCallback? onEscapeToOpeningPanel;
+  final Future<void> Function()? onExitToResumePanel;
 
   @override
   Widget build(BuildContext context) {
@@ -1324,6 +1462,7 @@ class SessionBody extends StatelessWidget {
         rivalFlagShowIndex: ladder.rivalFlagShowIndex,
         youTrail: ladder.youTrail,
         rivalTrail: ladder.rivalTrail,
+        runsDone: runsDone,
         tooltipLanguageCode: tooltipLanguageCode,
         uiScale: namingHexaScale,
         centerGrid: shrinkHexaWeb,
@@ -1422,53 +1561,6 @@ class SessionBody extends StatelessWidget {
                         spacing: 6,
                         runSpacing: 2,
                         children: [
-                          if (isWeb && phoneticButtonVisible)
-                            Tooltip(
-                              message: 'Phonetic',
-                              child: IconButton(
-                                onPressed: onTogglePhonetic,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 26, minHeight: 26),
-                                icon: ImageIcon(
-                                  const AssetImage(
-                                      'assets/icons/phonetic.webp'),
-                                  size: 18,
-                                  color: phoneticOverrideActive
-                                      ? Colors.blue
-                                      : Colors.grey[700],
-                                ),
-                              ),
-                            ),
-                          if (isWeb && audioHintEnabled)
-                            Tooltip(
-                              message: 'Audio hint',
-                              child: IconButton(
-                                onPressed: onPlayAudioHint,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 26, minHeight: 26),
-                                icon: const Icon(Icons.volume_up, size: 18),
-                              ),
-                            ),
-                          if (isWeb && hintButtonVisible)
-                            Tooltip(
-                              message: hintLabel,
-                              child: IconButton(
-                                onPressed: onToggleHints,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 26, minHeight: 26),
-                                icon: ImageIcon(
-                                  const AssetImage(
-                                      'assets/icons/Magnifying_glass.webp'),
-                                  size: 18,
-                                  color: hintButtonActive
-                                      ? const Color(0xFF8A6B12)
-                                      : Colors.grey[800],
-                                ),
-                              ),
-                            ),
                           Text.rich(
                             TextSpan(
                               text: targetText,
@@ -1505,10 +1597,9 @@ class SessionBody extends StatelessWidget {
                             color: Colors.green),
                       ),
                     ],
-                    if (!isWeb &&
-                        (phoneticButtonVisible ||
-                            audioHintEnabled ||
-                            hintButtonVisible)) ...[
+                    if (phoneticButtonVisible ||
+                        audioHintEnabled ||
+                        hintButtonVisible) ...[
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 10,
@@ -1684,9 +1775,14 @@ class SessionBody extends StatelessWidget {
       }
     }
 
-    if (onEscapeToOpeningPanel == null) {
+    if (onExitToResumePanel == null) {
       return layout;
     }
+
+    final menuTooltip =
+        _sessionMenuTooltipText('session_menu', tooltipLanguageCode);
+    final exitTooltip =
+        _sessionMenuTooltipText('exit_to_resume_panel', tooltipLanguageCode);
 
     return Stack(
       children: [
@@ -1694,7 +1790,11 @@ class SessionBody extends StatelessWidget {
         Positioned(
           left: 8,
           bottom: 8,
-          child: _EscapeButton(onTap: onEscapeToOpeningPanel!),
+          child: _SessionMenuButton(
+            menuTooltip: menuTooltip,
+            exitToResumeTooltip: exitTooltip,
+            onExitToResumePanel: onExitToResumePanel,
+          ),
         ),
       ],
     );
@@ -1772,37 +1872,164 @@ class _HintPanel extends StatelessWidget {
   }
 }
 
-class _EscapeButton extends StatelessWidget {
-  const _EscapeButton({required this.onTap, this.size = 20});
+class _SessionMenuButton extends StatefulWidget {
+  const _SessionMenuButton({
+    required this.menuTooltip,
+    required this.exitToResumeTooltip,
+    this.onExitToResumePanel,
+  });
 
-  final VoidCallback onTap;
-  final double size;
+  final String menuTooltip;
+  final String exitToResumeTooltip;
+  final Future<void> Function()? onExitToResumePanel;
+
+  @override
+  State<_SessionMenuButton> createState() => _SessionMenuButtonState();
+}
+
+class _SessionMenuButtonState extends State<_SessionMenuButton> {
+  bool _busy = false;
+
+  bool get _hasActions => widget.onExitToResumePanel != null;
+
+  void _showSnack(String message) {
+    if (!mounted || message.trim().isEmpty) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _runAction(Future<void> Function() action,
+      {required String label}) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+    });
+    try {
+      await action();
+    } catch (e) {
+      debugPrint('[session-menu][$label][error] $e');
+      _showSnack('$label failed: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openMenu() async {
+    if (!_hasActions || _busy) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        final List<Widget> entries = [];
+
+        if (widget.onExitToResumePanel != null) {
+          entries.add(
+            _SessionMenuEntry(
+              tooltip: widget.exitToResumeTooltip,
+              leading: Image.asset(
+                'assets/icons/exit.webp',
+                width: 26,
+                height: 26,
+                fit: BoxFit.contain,
+              ),
+              onTap: () async {
+                Navigator.of(sheetContext).pop();
+                await _runAction(
+                  () => widget.onExitToResumePanel!.call(),
+                  label: 'Exit to resume panel',
+                );
+              },
+            ),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: entries,
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: 'Zum Start',
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.85),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.black12),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x1A000000),
-                blurRadius: 6,
-                offset: Offset(0, 2),
-              ),
-            ],
+      message: widget.menuTooltip,
+      child: Semantics(
+        button: true,
+        label: widget.menuTooltip,
+        child: GestureDetector(
+          onTap: _hasActions && !_busy ? _openMenu : null,
+          child: Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.black12),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x1A000000),
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: _busy
+                ? const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(
+                    Icons.menu,
+                    size: 18,
+                    color: Colors.black87,
+                  ),
           ),
-          child: Image.asset(
-            'assets/icons/escape.webp',
-            width: size,
-            height: size,
-            fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionMenuEntry extends StatelessWidget {
+  const _SessionMenuEntry({
+    required this.tooltip,
+    required this.leading,
+    required this.onTap,
+  });
+
+  final String tooltip;
+  final Widget leading;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: Center(child: leading),
           ),
         ),
       ),

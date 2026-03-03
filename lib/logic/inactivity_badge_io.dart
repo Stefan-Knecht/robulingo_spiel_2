@@ -17,9 +17,9 @@ const String _workTaskName = 'dailywords_inactivity_badge_task';
 const String _notificationChannelId = 'dailywords_inactivity_badge';
 const String _notificationChannelName = 'DailyWords Inactivity Reminder';
 const String _notificationChannelDescription =
-    'Shows a badge reminder after 48 hours without opening the app.';
+    'Shows a badge reminder after 1 hour without opening the app.';
 const int _badgeNotificationId = 48048;
-const Duration _inactivityThreshold = Duration(hours: 48);
+const Duration _inactivityThreshold = Duration(hours: 1);
 
 @pragma('vm:entry-point')
 void _inactivityBadgeCallbackDispatcher() {
@@ -141,7 +141,7 @@ Future<void> _showBadgeReminder() async {
   await plugin.show(
     _badgeNotificationId,
     'DailyWords',
-    'Open app to continue your language training.',
+    '',
     details,
   );
 }

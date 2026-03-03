@@ -2,6 +2,7 @@ typedef VoiceLogFn = void Function(String message);
 
 Future<bool> playVoiceFeedbackWeb({
   required String url,
+  String? mimeType,
   VoiceLogFn? onLog,
 }) async {
   onLog?.call(

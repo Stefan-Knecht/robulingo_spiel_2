@@ -2,11 +2,14 @@
 // Ziel (Laien): Hexagon-Gitter als gemeinsames Rennfeld rendern (Spieler & Rival).
 // Strategie: Gleiche Maße wie Ladder nutzen: Track-Breite in 20 Teilstücke, Hex-Form via vorgegebene Punkte, 10x3 Grid.
 // ------------------------------------------------------------
+import 'dart:math';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../logic/hexagon_controller.dart';
 import '../logic/hexagon_grid.dart';
+import 'run_progress_ring.dart';
 
 const Map<String, Map<String, String>> _hexTrackTooltipTexts = {
   'virtual_rival': {
@@ -61,6 +64,7 @@ class HexagonTrack extends StatelessWidget {
     required this.tooltipLanguageCode,
     this.uiScale = 1.0,
     this.centerGrid = false,
+    this.runsDone = 0,
   });
 
   final int youIndex;
@@ -76,6 +80,7 @@ class HexagonTrack extends StatelessWidget {
   final String tooltipLanguageCode;
   final double uiScale;
   final bool centerGrid;
+  final int runsDone;
 
   @override
   Widget build(BuildContext context) {
@@ -184,6 +189,10 @@ class HexagonTrack extends StatelessWidget {
           final double lowerFlagCenter = lowerFlagTop + flagSize / 2;
           final double goalFlagsTop =
               ((upperFlagCenter + lowerFlagCenter) / 2) - goalFlagsSize / 2;
+          final double runRingSize = flagSize * 0.75;
+          final double runRingTop = ((lowerFlagTop + flagSize + 4 * scale)
+                  .clamp(0.0, max(0.0, trackHeight - runRingSize)))
+              .toDouble();
 
           if (centerGrid) {
             final double totalHeight = baseHeight + 24 * scale;
@@ -304,6 +313,15 @@ class HexagonTrack extends StatelessWidget {
                                     ),
                                   ),
                                 ),
+                              Positioned(
+                                left: (flagColumnWidth - runRingSize) / 2,
+                                top: runRingTop,
+                                child: RunProgressRing(
+                                  runsDone,
+                                  size: runRingSize,
+                                  strokeWidth: runRingSize * 0.14,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -423,6 +441,15 @@ class HexagonTrack extends StatelessWidget {
                                 ),
                               ),
                             ),
+                          Positioned(
+                            left: (flagColumnWidth - runRingSize) / 2,
+                            top: runRingTop,
+                            child: RunProgressRing(
+                              runsDone,
+                              size: runRingSize,
+                              strokeWidth: runRingSize * 0.14,
+                            ),
+                          ),
                         ],
                       ),
                     ),

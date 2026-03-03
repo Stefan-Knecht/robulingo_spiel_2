@@ -250,6 +250,7 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
         );
         final played = await voice_web.playVoiceFeedbackWeb(
           url: uri.toString(),
+          mimeType: mimeType.isNotEmpty ? mimeType : null,
           onLog: debugPrint,
         );
         debugPrint(
@@ -287,13 +288,38 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       if (bytes == null || bytes.isEmpty) {
         throw Exception('empty voice payload');
       }
-      await _voicePlayer.play(
-        BytesSource(
-          bytes,
-          mimeType: mimeType.isNotEmpty ? mimeType : null,
-        ),
-      );
-      final played = await _waitForVoiceStart();
+      // Native path: avoid forcing MIME from queue metadata. Let the platform
+      // decoder inspect bytes directly (safer across Android codec variants).
+      bool played = false;
+      Object? bytesErrorWithMime;
+      Object? bytesErrorWithoutMime;
+      try {
+        if (mimeType.isNotEmpty) {
+          await _voicePlayer.play(BytesSource(bytes, mimeType: mimeType));
+        } else {
+          await _voicePlayer.play(BytesSource(bytes));
+        }
+        played = await _waitForVoiceStart();
+      } catch (e) {
+        bytesErrorWithMime = e;
+      }
+      if (!played) {
+        try {
+          await _voicePlayer.stop();
+          await _voicePlayer.play(BytesSource(bytes));
+          played = await _waitForVoiceStart();
+        } catch (e) {
+          bytesErrorWithoutMime = e;
+        }
+      }
+      if (!played) {
+        debugPrint(
+          '[supervisor-resume] voice-native-bytes-fallback-url id=$feedbackId uid=$uid errMime=${bytesErrorWithMime ?? '-'} errRaw=${bytesErrorWithoutMime ?? '-'}',
+        );
+        await _voicePlayer.stop();
+        await _voicePlayer.play(UrlSource(uri.toString()));
+        played = await _waitForVoiceStart(timeout: const Duration(seconds: 6));
+      }
       if (!played) {
         throw Exception('native voice playback did not start');
       }
@@ -310,10 +336,8 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
       if (!mounted) return;
       setState(() {
         _voicePlaying = false;
-        if (kIsWeb) {
-          _voiceFallbackOpenUri = uri;
-          _voiceFallbackFeedbackId = feedbackId;
-        }
+        _voiceFallbackOpenUri = uri;
+        _voiceFallbackFeedbackId = feedbackId;
       });
     } finally {
       if (mounted) {
@@ -811,7 +835,19 @@ class _SupervisorResumePanelState extends State<SupervisorResumePanel>
   String _normalizeAudioMimeType(String raw) {
     final value = raw.trim().toLowerCase();
     if (value.isEmpty) return '';
-    return value;
+    switch (value) {
+      case 'audio/m4a':
+      case 'audio/x-m4a':
+      case 'audio/x-mp4':
+        return 'audio/mp4';
+      case 'audio/mp3':
+      case 'audio/x-mp3':
+        return 'audio/mpeg';
+      case 'audio/x-wav':
+        return 'audio/wav';
+      default:
+        return value.startsWith('audio/') ? value : '';
+    }
   }
 
   String _normalizeSupervisorEmail(String raw) {
