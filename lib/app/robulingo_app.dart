@@ -3698,6 +3698,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             unawaited(_openDashboardPreview(context, focus: 'wins'));
           },
           onEscapeToOpeningPanel: _exitToOpeningPanel,
+          onExitToResumePanel: _exitToResumePanelIfAvailable,
         );
       }
     }
