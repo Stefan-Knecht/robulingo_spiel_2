@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 const String _lastOpenedAtEpochMsKey = 'lastOpenedAtEpochMs';
-const String _badgeArmedKey = 'badgeArmed';
+const String _lastBadgeReminderAtEpochMsKey = 'lastBadgeReminderAtEpochMs';
 const String _notificationPermissionAskedKey =
     'badgeNotificationPermissionAsked';
 
@@ -17,9 +17,9 @@ const String _workTaskName = 'dailywords_inactivity_badge_task';
 const String _notificationChannelId = 'dailywords_inactivity_badge';
 const String _notificationChannelName = 'DailyWords Inactivity Reminder';
 const String _notificationChannelDescription =
-    'Shows a badge reminder after 1 hour without opening the app.';
+    'Shows recurring badge reminders after inactivity.';
 const int _badgeNotificationId = 48048;
-const Duration _inactivityThreshold = Duration(hours: 1);
+const Duration _inactivityThreshold = Duration(hours: 24);
 
 @pragma('vm:entry-point')
 void _inactivityBadgeCallbackDispatcher() {
@@ -31,6 +31,8 @@ void _inactivityBadgeCallbackDispatcher() {
     } catch (error, stackTrace) {
       debugPrint('[badge][worker][error] $error');
       debugPrint('[badge][worker][stack] $stackTrace');
+    } finally {
+      await _scheduleInactivityCheck();
     }
     return true;
   });
@@ -57,8 +59,8 @@ Future<void> handleInactivityBadgeOnAppResumed() async {
     await _ensureNotificationPermissionRequestedOnce();
     await _clearBadgeReminder();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_badgeArmedKey, false);
     await prefs.setInt(_lastOpenedAtEpochMsKey, nowMs);
+    await prefs.setInt(_lastBadgeReminderAtEpochMsKey, 0);
     await _scheduleInactivityCheck();
   } catch (error, stackTrace) {
     debugPrint('[badge][resume][error] $error');
@@ -70,11 +72,11 @@ Future<void> _runInactivityBadgeCheck() async {
   final prefs = await SharedPreferences.getInstance();
   final nowMs = DateTime.now().millisecondsSinceEpoch;
   final lastOpenedMs = prefs.getInt(_lastOpenedAtEpochMsKey) ?? nowMs;
-  final badgeArmed = prefs.getBool(_badgeArmedKey) ?? false;
-  if (badgeArmed) return;
+  final lastReminderMs = prefs.getInt(_lastBadgeReminderAtEpochMsKey) ?? 0;
   if ((nowMs - lastOpenedMs) < _inactivityThreshold.inMilliseconds) return;
+  if ((nowMs - lastReminderMs) < _inactivityThreshold.inMilliseconds) return;
   await _showBadgeReminder();
-  await prefs.setBool(_badgeArmedKey, true);
+  await prefs.setInt(_lastBadgeReminderAtEpochMsKey, nowMs);
 }
 
 Future<void> _scheduleInactivityCheck() async {
