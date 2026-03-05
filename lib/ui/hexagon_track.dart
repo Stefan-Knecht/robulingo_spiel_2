@@ -46,16 +46,18 @@ class HexagonTrack extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tracks = buildDefaultMountainTracks();
+    final double scale = uiScale.clamp(0.4, 2.0);
 
     final board = LayoutBuilder(
       builder: (context, constraints) {
         const double aspectRatio = 3 / 2;
         const double fallbackWidth = 900;
-        final double width = constraints.maxWidth.isFinite
+        final double baseWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : (constraints.maxHeight.isFinite
                 ? constraints.maxHeight * aspectRatio
                 : fallbackWidth);
+        final double width = baseWidth * scale;
         final double height = width / aspectRatio;
 
         return SizedBox(
@@ -86,16 +88,10 @@ class HexagonTrack extends StatelessWidget {
       },
     );
 
-    final scaled = Transform.scale(
-      scale: uiScale.clamp(0.4, 2.0),
-      alignment: Alignment.topCenter,
-      child: board,
-    );
-
-    if (!centerGrid) return scaled;
+    if (!centerGrid) return board;
     return Align(
       alignment: Alignment.topCenter,
-      child: FractionallySizedBox(widthFactor: 0.9, child: scaled),
+      child: FractionallySizedBox(widthFactor: 0.9, child: board),
     );
   }
 }
