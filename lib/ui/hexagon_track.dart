@@ -3,6 +3,43 @@ import 'package:flutter/material.dart';
 import '../logic/hexagon_controller.dart';
 import '../logic/mountain_tracks.dart';
 
+const Map<String, Map<String, String>> _trackTooltipTexts = {
+  'you': {
+    'en': 'You',
+    'de': 'Du',
+    'ar': 'أنت',
+    'fr': 'Vous',
+    'es': 'Tú',
+    'it': 'Tu',
+    'ru': 'Вы',
+    'hi': 'आप',
+    'el': 'Εσύ',
+    'zh': '你',
+    'tr': 'Sen',
+    'ja': 'あなた',
+  },
+  'rival': {
+    'en': 'Rival',
+    'de': 'Rivale',
+    'ar': 'منافس',
+    'fr': 'Rival',
+    'es': 'Rival',
+    'it': 'Rivale',
+    'ru': 'Соперник',
+    'hi': 'प्रतिद्वंद्वी',
+    'el': 'Αντίπαλος',
+    'zh': '对手',
+    'tr': 'Rakip',
+    'ja': 'ライバル',
+  },
+};
+
+String _trackTooltipText(String key, String langCode) {
+  final values = _trackTooltipTexts[key];
+  if (values == null) return key;
+  return values[langCode] ?? values['en'] ?? key;
+}
+
 class HexagonTrack extends StatelessWidget {
   const HexagonTrack({
     super.key,
@@ -54,6 +91,8 @@ class HexagonTrack extends StatelessWidget {
   Widget build(BuildContext context) {
     final tracks = buildDefaultMountainTracks();
     final double scale = uiScale.clamp(0.4, 2.0);
+    final youTooltip = _trackTooltipText('you', tooltipLanguageCode);
+    final rivalTooltip = _trackTooltipText('rival', tooltipLanguageCode);
 
     final board = LayoutBuilder(
       builder: (context, constraints) {
@@ -86,11 +125,14 @@ class HexagonTrack extends StatelessWidget {
               SizedBox(
                 width: sideWidth,
                 child: Center(
-                  child: Image.asset(
-                    'assets/icons/you.webp',
-                    width: iconSize,
-                    height: iconSize,
-                    fit: BoxFit.contain,
+                  child: Tooltip(
+                    message: youTooltip,
+                    child: Image.asset(
+                      'assets/icons/you.webp',
+                      width: iconSize,
+                      height: iconSize,
+                      fit: BoxFit.contain,
+                    ),
                   ),
                 ),
               ),
@@ -122,11 +164,14 @@ class HexagonTrack extends StatelessWidget {
               SizedBox(
                 width: sideWidth,
                 child: Center(
-                  child: Image.asset(
-                    'assets/icons/rival.webp',
-                    width: iconSize,
-                    height: iconSize,
-                    fit: BoxFit.contain,
+                  child: Tooltip(
+                    message: rivalTooltip,
+                    child: Image.asset(
+                      'assets/icons/rival.webp',
+                      width: iconSize,
+                      height: iconSize,
+                      fit: BoxFit.contain,
+                    ),
                   ),
                 ),
               ),
