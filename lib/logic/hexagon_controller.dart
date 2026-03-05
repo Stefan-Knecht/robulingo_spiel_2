@@ -1,15 +1,15 @@
 // ------------------------------------------------------------
-// Ziel (Laien): Hexagon-Rennen steuern – analog zu LadderController, aber auf einem 10x3 Hex-Gitter.
-// Strategie: Gleiche API (applyPlayerStep, Wins, Flags, Trails) nutzen, aber Positionen als Hex-Pfad-Indizes verwalten.
-// Tücken: Backsteps werden wie beim Ladder seitlich neutralisiert (kein Doppel-Back), Rival-Pacing kopiert das Ladder-Modell.
-// Nutzung: Statt LadderController mit gleichen Callbacks instanziieren und den State an HexagonTrack (ui/hexagon_track.dart) binden.
+// Mountain duel controller used by the HexaMatch slot in RoboLingo.
+// Keeps the existing public API and rival pacing model from HexagonController,
+// but movement now follows two winding mountain tracks (index-based steps).
 // ------------------------------------------------------------
 import 'dart:async';
 import 'dart:math';
-import 'dart:ui';
 
-import 'hexagon_grid.dart';
+import 'package:flutter/foundation.dart';
+
 import 'ladder_controller.dart' show MoveEvent, MoveKind;
+import 'mountain_tracks.dart';
 
 class HexTrailPoint {
   const HexTrailPoint({required this.index});
@@ -18,7 +18,6 @@ class HexTrailPoint {
 
 enum RivalMood { slacking, steady, hot }
 
-/// Tracks hex positions, flags, and win counters for the hex-grid race.
 class HexagonState {
   int youIndex = 0;
   int rivalIndex = 0;
@@ -41,7 +40,7 @@ class HexagonState {
   List<HexTrailPoint> rivalTrail = const [HexTrailPoint(index: 0)];
 }
 
-/// Encapsulates hex-grid movement, rival pacing, and win animations.
+/// Encapsulates mountain-track movement, rival pacing, and win animations.
 class HexagonController {
   HexagonController({
     required this.onChanged,
@@ -62,15 +61,13 @@ class HexagonController {
     this.rivalMinProbRatio = 0.8,
     Random? random,
   })  : _rand = random ?? Random(),
-        _grid = buildHexGrid() {
-    _youStartOffset = _grid.nodeIndexFor(0, 0, 4) ?? 0;
-    _rivalStartOffset = _grid.nodeIndexFor(2, 0, 5) ?? 0;
+        _tracks = buildDefaultMountainTracks() {
+    assert(rivalMoodOffsets.length == 3);
     state
       ..youIndex = _youStartOffset
       ..rivalIndex = _rivalStartOffset
-      ..youTrail = [HexTrailPoint(index: _youStartOffset)]
-      ..rivalTrail = [HexTrailPoint(index: _rivalStartOffset)];
-    assert(rivalMoodOffsets.length == 3);
+      ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
+      ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)];
   }
 
   final VoidCallback onChanged;
@@ -90,17 +87,19 @@ class HexagonController {
   final double rivalIdleBoostMax;
   final double rivalMinProbRatio;
   final Random _rand;
-  final HexGridData _grid;
+  final MountainTracks _tracks;
   final HexagonState state = HexagonState();
-  late final int _youStartOffset;
-  late final int _rivalStartOffset;
-  Offset? _youLastDelta;
-  Offset? _rivalLastDelta;
+
+  static const int _youStartOffset = 0;
+  static const int _rivalStartOffset = 0;
+  static const int _maxTrailPoints = 300;
+
+  int get _finishIndex => _tracks.left.length - 1;
+
   bool? _lastRivalCorrect;
   RivalMood _rivalMood = RivalMood.steady;
   int _rivalMoodMoves = 0;
   int _rivalIdleDays = 0;
-  static const int _maxTrailPoints = 200;
 
   Timer? _youFlagTimer;
   Timer? _rivalFlagTimer;
@@ -132,18 +131,18 @@ class HexagonController {
       ..rivalFlagAngle = 0.0
       ..youFlagShowIndex = 0
       ..rivalFlagShowIndex = 0
-      ..youTrail = [HexTrailPoint(index: _youStartOffset)]
-      ..rivalTrail = [HexTrailPoint(index: _rivalStartOffset)]
+      ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
+      ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)]
       ..hasFlagAppeared = false;
     _rivalMood = RivalMood.steady;
     _rivalMoodMoves = 0;
+    _lastPlayerCorrect = null;
+    _lastRivalCorrect = null;
     if (clearWins) {
       state
         ..winsYou = 0
         ..winsRival = 0;
     }
-    _youLastDelta = null;
-    _rivalLastDelta = null;
     onChanged();
   }
 
@@ -181,7 +180,8 @@ class HexagonController {
     if (_rand.nextDouble() >= p) return false;
     final kind = _applyRivalStep();
     onMove?.call(
-        MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect));
+      MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect),
+    );
     onChanged();
     return true;
   }
@@ -194,7 +194,6 @@ class HexagonController {
     bool emitRivalMoveEvents = false,
   }) {
     if (steps <= 0) return;
-    // Cancel any pending scheduled rival moves so we don't get extra drift.
     _rivalMoveToken++;
     _pendingRivalMoves = 0;
     _rivalMoveScheduled = false;
@@ -213,121 +212,49 @@ class HexagonController {
   }
 
   MoveKind _applyMove(bool isCorrect, {required bool isYou}) {
-    final int currentIndex = isYou ? state.youIndex : state.rivalIndex;
-    final Offset currentPos = _grid.nodes[currentIndex];
-    final Offset? lastDelta = isYou ? _youLastDelta : _rivalLastDelta;
-
-    int progress = isYou ? state.youProgress : state.rivalProgress;
-    int nextIndex = currentIndex;
+    final current = isYou ? state.youIndex : state.rivalIndex;
+    int next = current;
     MoveKind kind = MoveKind.side;
-    Offset delta = Offset.zero;
 
     if (isCorrect) {
-      progress = _incrementProgress(progress);
-      final _MoveChoice choice =
-          _chooseForwardWithFallback(currentIndex, lastDelta);
-      nextIndex = choice.index;
-      delta = choice.delta;
-      kind = choice.kind;
+      if (current < _finishIndex) {
+        next = current + 1;
+        kind = MoveKind.forward;
+      }
     } else {
-      progress = _decrementProgress(progress);
-      final _MoveChoice choice = _chooseVerticalOrLeft(currentIndex, lastDelta);
-      nextIndex = choice.index;
-      delta = choice.delta;
-      kind = choice.kind;
+      if (current > 0) {
+        next = current - 1;
+        kind = MoveKind.back;
+      }
     }
 
-    if (nextIndex < 0 || nextIndex >= _grid.nodes.length) {
-      nextIndex = currentIndex;
-      kind = MoveKind.side;
-    }
-
-    delta = _grid.nodes[nextIndex] - currentPos;
+    final dir = next > current
+        ? 1
+        : next < current
+            ? -1
+            : 0;
 
     if (isYou) {
-      state.youProgress = progress;
-      state.youIndex = nextIndex;
-      state.youLastDir = _dirFromDelta(delta);
-      _youLastDelta = delta;
-      _recordTrail(isYou: true, index: nextIndex);
-      if (_grid.finishNodes.contains(nextIndex)) {
+      state
+        ..youProgress = next
+        ..youIndex = next
+        ..youLastDir = dir;
+      _recordTrail(isYou: true, index: next);
+      if (next >= _finishIndex) {
         _handleWinYou();
       }
     } else {
-      state.rivalProgress = progress;
-      state.rivalIndex = nextIndex;
-      state.rivalLastDir = _dirFromDelta(delta);
-      _rivalLastDelta = delta;
-      _recordTrail(isYou: false, index: nextIndex);
-      if (_grid.finishNodes.contains(nextIndex)) {
+      state
+        ..rivalProgress = next
+        ..rivalIndex = next
+        ..rivalLastDir = dir;
+      _recordTrail(isYou: false, index: next);
+      if (next >= _finishIndex) {
         _handleWinRival();
       }
     }
+
     return kind;
-  }
-
-  _MoveChoice _chooseForwardWithFallback(int currentIndex, Offset? lastDelta) {
-    final neighbors = _grid.adjacency[currentIndex] ?? const <int>{};
-    int? bestRight;
-    double bestDx = double.negativeInfinity;
-    for (final n in neighbors) {
-      final delta = _grid.nodes[n] - _grid.nodes[currentIndex];
-      if (_isInverse(lastDelta, delta)) continue;
-      if (delta.dx > 1e-6 && delta.dx > bestDx) {
-        bestDx = delta.dx;
-        bestRight = n;
-      }
-    }
-    if (bestRight != null) {
-      final delta = _grid.nodes[bestRight] - _grid.nodes[currentIndex];
-      return _MoveChoice(
-          index: bestRight, kind: MoveKind.forward, delta: delta);
-    }
-
-    bool prefersVertical(Offset candidate, Offset current) {
-      final candidateBack = candidate.dx < -1e-6;
-      final currentBack = current.dx < -1e-6;
-      if (candidateBack != currentBack) return !candidateBack;
-      final candAbsDx = candidate.dx.abs();
-      final currAbsDx = current.dx.abs();
-      if ((candAbsDx - currAbsDx).abs() > 1e-6) {
-        return candAbsDx < currAbsDx;
-      }
-      return candidate.dx > current.dx;
-    }
-
-    // Fallback: vertical, mit bevorzugter "gerader" Richtung.
-    _MoveChoice? bestVertical;
-    _MoveChoice? bestVerticalInverse;
-    for (final n in neighbors) {
-      final delta = _grid.nodes[n] - _grid.nodes[currentIndex];
-      if (delta.dy.abs() <= 1e-6) continue;
-      final choice = _MoveChoice(index: n, kind: MoveKind.side, delta: delta);
-      if (_isInverse(lastDelta, delta)) {
-        if (bestVerticalInverse == null ||
-            prefersVertical(delta, bestVerticalInverse.delta)) {
-          bestVerticalInverse = choice;
-        }
-      } else {
-        if (bestVertical == null ||
-            prefersVertical(delta, bestVertical.delta)) {
-          bestVertical = choice;
-        }
-      }
-    }
-    if (bestVertical != null) return bestVertical;
-    if (bestVerticalInverse != null) return bestVerticalInverse;
-
-    // Fallback: beliebiger Nachbar (z.B. rückwärts), solange nicht inverse.
-    for (final n in neighbors) {
-      final delta = _grid.nodes[n] - _grid.nodes[currentIndex];
-      if (_isInverse(lastDelta, delta)) continue;
-      final kind = delta.dx < -1e-6 ? MoveKind.back : MoveKind.side;
-      return _MoveChoice(index: n, kind: kind, delta: delta);
-    }
-
-    return _MoveChoice(
-        index: currentIndex, kind: MoveKind.side, delta: Offset.zero);
   }
 
   void _recordTrail({required bool isYou, required int index}) {
@@ -343,68 +270,6 @@ class HexagonController {
       state.rivalTrail = newList;
     }
   }
-
-  _MoveChoice _chooseVerticalOrLeft(int currentIndex, Offset? lastDelta) {
-    final neighbors = _grid.adjacency[currentIndex] ?? const <int>{};
-    _MoveChoice? bestVertical;
-    for (final n in neighbors) {
-      final delta = _grid.nodes[n] - _grid.nodes[currentIndex];
-      if (delta.dy.abs() > 1e-6) {
-        final bool lastWasVertical =
-            lastDelta != null && lastDelta.dy.abs() > 1e-6;
-        final bool wouldReverseVertical =
-            lastWasVertical && (delta.dy.sign == -lastDelta.dy.sign);
-        if (wouldReverseVertical) continue;
-        // Nur "nahezu vertikale" Nachbarn zulassen (seitliche Abweichung klein).
-        if (delta.dx.abs() > delta.dy.abs() * 0.3) continue;
-        // prefer smallest |dx|, then larger |dy|
-        if (bestVertical == null ||
-            delta.dx.abs() < bestVertical.delta.dx.abs() ||
-            (delta.dx.abs() == bestVertical.delta.dx.abs() &&
-                delta.dy.abs() > bestVertical.delta.dy.abs())) {
-          bestVertical =
-              _MoveChoice(index: n, kind: MoveKind.side, delta: delta);
-        }
-      }
-    }
-    if (bestVertical != null) return bestVertical;
-
-    int? leftIdx;
-    Offset? leftDelta;
-    double bestDx = 0.0;
-    for (final n in neighbors) {
-      final delta = _grid.nodes[n] - _grid.nodes[currentIndex];
-      if (delta.dx < -1e-6 && delta.dx < bestDx) {
-        bestDx = delta.dx;
-        leftIdx = n;
-        leftDelta = delta;
-      }
-    }
-    if (leftIdx != null && leftDelta != null) {
-      return _MoveChoice(index: leftIdx, kind: MoveKind.back, delta: leftDelta);
-    }
-
-    return _MoveChoice(
-        index: currentIndex, kind: MoveKind.side, delta: Offset.zero);
-  }
-
-  bool _isInverse(Offset? last, Offset candidate) {
-    if (last == null) return false;
-    if (last.distance < 1e-9 || candidate.distance < 1e-9) return false;
-    final dot = last.dx * candidate.dx + last.dy * candidate.dy;
-    final cos = dot / (last.distance * candidate.distance);
-    return cos < -0.8;
-  }
-
-  int _dirFromDelta(Offset delta) {
-    if (delta.dx > 1e-6) return 1;
-    if (delta.dx < -1e-6) return -1;
-    return 0;
-  }
-
-  int _incrementProgress(int progress) => progress + 1;
-
-  int _decrementProgress(int progress) => max(0, progress - 1);
 
   double _idleBoost() {
     final extraDays = max(0, _rivalIdleDays - rivalIdleGraceDays);
@@ -461,8 +326,7 @@ class HexagonController {
 
     final rivalCorrect = _rand.nextDouble() < pCorrect;
     _lastRivalCorrect = rivalCorrect;
-    final kind = _applyMove(rivalCorrect, isYou: false);
-    return kind;
+    return _applyMove(rivalCorrect, isYou: false);
   }
 
   void _scheduleRivalMove() {
@@ -485,7 +349,8 @@ class HexagonController {
       if (token != _rivalMoveToken) return;
       _pendingRivalMoves = max(0, _pendingRivalMoves - 1);
       onMove?.call(
-          MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect));
+        MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect),
+      );
       onChanged();
       _scheduleNextRivalMove();
     });
@@ -496,7 +361,13 @@ class HexagonController {
     state.hasFlagAppeared = true;
     state.youFlagShowIndex = state.youFlagIndex;
     state.youFlagIndex = (state.youFlagIndex + 1) % 7;
-    state.youFlagVisible = true;
+    state
+      ..youFlagVisible = true
+      ..rivalFlagVisible = false;
+
+    _rivalMoveToken++;
+    _pendingRivalMoves = 0;
+    _rivalMoveScheduled = false;
 
     _youFlagTimer?.cancel();
     _youFlagTimer = Timer.periodic(const Duration(milliseconds: 180), (_) {
@@ -504,13 +375,21 @@ class HexagonController {
       onChanged();
     });
     onYouWin();
+
     Future.delayed(const Duration(milliseconds: 1200), () {
       _youFlagTimer?.cancel();
-      state.youFlagAngle = 0.0;
       state
+        ..youFlagAngle = 0.0
+        ..youFlagVisible = false
+        ..rivalFlagVisible = false
         ..youIndex = _youStartOffset
+        ..rivalIndex = _rivalStartOffset
+        ..youProgress = _youStartOffset
+        ..rivalProgress = _rivalStartOffset
         ..youLastDir = 0
-        ..youTrail = [HexTrailPoint(index: _youStartOffset)];
+        ..rivalLastDir = 0
+        ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
+        ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)];
       onChanged();
     });
   }
@@ -520,7 +399,10 @@ class HexagonController {
     state.hasFlagAppeared = true;
     state.rivalFlagShowIndex = state.rivalFlagIndex;
     state.rivalFlagIndex = (state.rivalFlagIndex + 1) % 7;
-    state.rivalFlagVisible = true;
+    state
+      ..rivalFlagVisible = true
+      ..youFlagVisible = false;
+
     _rivalMoveToken++;
     _pendingRivalMoves = 0;
     _rivalMoveScheduled = false;
@@ -531,25 +413,22 @@ class HexagonController {
       onChanged();
     });
     onRivalWin();
+
     Future.delayed(const Duration(milliseconds: 1200), () {
       _rivalFlagTimer?.cancel();
-      state.rivalFlagAngle = 0.0;
       state
+        ..rivalFlagAngle = 0.0
+        ..youFlagVisible = false
+        ..rivalFlagVisible = false
+        ..youIndex = _youStartOffset
         ..rivalIndex = _rivalStartOffset
+        ..youProgress = _youStartOffset
+        ..rivalProgress = _rivalStartOffset
+        ..youLastDir = 0
         ..rivalLastDir = 0
-        ..rivalTrail = [HexTrailPoint(index: _rivalStartOffset)];
+        ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
+        ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)];
       onChanged();
     });
   }
-}
-
-class _MoveChoice {
-  _MoveChoice({
-    required this.index,
-    required this.kind,
-    required this.delta,
-  });
-  final int index;
-  final MoveKind kind;
-  final Offset delta;
 }
