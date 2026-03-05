@@ -48,42 +48,56 @@ class HexagonTrack extends StatelessWidget {
   Widget build(BuildContext context) {
     final tracks = buildDefaultMountainTracks();
 
-    final board = AspectRatio(
-      aspectRatio: 3 / 2,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            _backgroundAsset(),
-            fit: BoxFit.fill,
-            filterQuality: FilterQuality.high,
-          ),
-          ColoredBox(color: Colors.white.withValues(alpha: 0.32)),
-          CustomPaint(
-            painter: _MountainTrackPainter(
-              leftSteps: tracks.left,
-              rightSteps: tracks.right,
-              youIndex: youIndex,
-              rivalIndex: rivalIndex,
-              youTrail: youTrail,
-              rivalTrail: rivalTrail,
-            ),
-          ),
-          Positioned(
-            right: 8,
-            top: 8,
-            child: SizedBox(
-              width: 44,
-              height: 44,
-              child: RunProgressRing(
-                runsDone,
-                size: 44,
-                strokeWidth: 6,
+    final board = LayoutBuilder(
+      builder: (context, constraints) {
+        const double aspectRatio = 3 / 2;
+        const double fallbackWidth = 900;
+        final double width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : (constraints.maxHeight.isFinite
+                ? constraints.maxHeight * aspectRatio
+                : fallbackWidth);
+        final double height = width / aspectRatio;
+
+        return SizedBox(
+          width: width,
+          height: height,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                _backgroundAsset(),
+                fit: BoxFit.fill,
+                filterQuality: FilterQuality.high,
               ),
-            ),
+              ColoredBox(color: Colors.white.withValues(alpha: 0.32)),
+              CustomPaint(
+                painter: _MountainTrackPainter(
+                  leftSteps: tracks.left,
+                  rightSteps: tracks.right,
+                  youIndex: youIndex,
+                  rivalIndex: rivalIndex,
+                  youTrail: youTrail,
+                  rivalTrail: rivalTrail,
+                ),
+              ),
+              Positioned(
+                right: 8,
+                top: 8,
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: RunProgressRing(
+                    runsDone,
+                    size: 44,
+                    strokeWidth: 6,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
 
     final scaled = Transform.scale(
