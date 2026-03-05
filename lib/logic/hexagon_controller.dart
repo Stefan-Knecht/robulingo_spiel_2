@@ -47,6 +47,7 @@ class HexagonController {
     required this.onYouWin,
     required this.onRivalWin,
     required this.accuracyProvider,
+    this.startIndex = 0,
     this.onMove,
     this.rivalSigma = 7.2,
     this.rivalCoupledProb = 0.9,
@@ -62,12 +63,15 @@ class HexagonController {
     Random? random,
   })  : _rand = random ?? Random(),
         _tracks = buildDefaultMountainTracks() {
+    final int clampedStart =
+        startIndex.clamp(0, _finishIndex > 0 ? _finishIndex - 1 : 0);
+    _startOffset = clampedStart;
     assert(rivalMoodOffsets.length == 3);
     state
-      ..youIndex = _youStartOffset
-      ..rivalIndex = _rivalStartOffset
-      ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
-      ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)];
+      ..youIndex = _startOffset
+      ..rivalIndex = _startOffset
+      ..youTrail = [HexTrailPoint(index: _startOffset)]
+      ..rivalTrail = [HexTrailPoint(index: _startOffset)];
   }
 
   final VoidCallback onChanged;
@@ -75,6 +79,7 @@ class HexagonController {
   final VoidCallback onRivalWin;
   final void Function(MoveEvent event)? onMove;
   final List<bool> Function() accuracyProvider;
+  final int startIndex;
   final double rivalSigma;
   final double rivalCoupledProb;
   final double rivalMaxProbBase;
@@ -90,9 +95,8 @@ class HexagonController {
   final MountainTracks _tracks;
   final HexagonState state = HexagonState();
 
-  static const int _youStartOffset = 0;
-  static const int _rivalStartOffset = 0;
   static const int _maxTrailPoints = 300;
+  late final int _startOffset;
 
   int get _finishIndex => _tracks.left.length - 1;
 
@@ -119,8 +123,8 @@ class HexagonController {
     _pendingRivalMoves = 0;
     _rivalMoveScheduled = false;
     state
-      ..youIndex = _youStartOffset
-      ..rivalIndex = _rivalStartOffset
+      ..youIndex = _startOffset
+      ..rivalIndex = _startOffset
       ..youProgress = 0
       ..rivalProgress = 0
       ..youLastDir = 0
@@ -131,8 +135,8 @@ class HexagonController {
       ..rivalFlagAngle = 0.0
       ..youFlagShowIndex = 0
       ..rivalFlagShowIndex = 0
-      ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
-      ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)]
+      ..youTrail = [HexTrailPoint(index: _startOffset)]
+      ..rivalTrail = [HexTrailPoint(index: _startOffset)]
       ..hasFlagAppeared = false;
     _rivalMood = RivalMood.steady;
     _rivalMoodMoves = 0;
@@ -382,14 +386,14 @@ class HexagonController {
         ..youFlagAngle = 0.0
         ..youFlagVisible = false
         ..rivalFlagVisible = false
-        ..youIndex = _youStartOffset
-        ..rivalIndex = _rivalStartOffset
-        ..youProgress = _youStartOffset
-        ..rivalProgress = _rivalStartOffset
+        ..youIndex = _startOffset
+        ..rivalIndex = _startOffset
+        ..youProgress = _startOffset
+        ..rivalProgress = _startOffset
         ..youLastDir = 0
         ..rivalLastDir = 0
-        ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
-        ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)];
+        ..youTrail = [HexTrailPoint(index: _startOffset)]
+        ..rivalTrail = [HexTrailPoint(index: _startOffset)];
       onChanged();
     });
   }
@@ -420,14 +424,14 @@ class HexagonController {
         ..rivalFlagAngle = 0.0
         ..youFlagVisible = false
         ..rivalFlagVisible = false
-        ..youIndex = _youStartOffset
-        ..rivalIndex = _rivalStartOffset
-        ..youProgress = _youStartOffset
-        ..rivalProgress = _rivalStartOffset
+        ..youIndex = _startOffset
+        ..rivalIndex = _startOffset
+        ..youProgress = _startOffset
+        ..rivalProgress = _startOffset
         ..youLastDir = 0
         ..rivalLastDir = 0
-        ..youTrail = [const HexTrailPoint(index: _youStartOffset)]
-        ..rivalTrail = [const HexTrailPoint(index: _rivalStartOffset)];
+        ..youTrail = [HexTrailPoint(index: _startOffset)]
+        ..rivalTrail = [HexTrailPoint(index: _startOffset)];
       onChanged();
     });
   }

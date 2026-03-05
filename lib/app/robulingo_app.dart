@@ -214,6 +214,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingProgressFirstRatio = 3;
   static const int namingProgressHintRatio = 2;
   static const int namingProgressRepeatRatio = 2;
+  static const int debugMountainStartRun = 190;
   static const double moveSoundVolume = 0.5;
   static const double namingBeepVolume = 0.5;
   static final AudioContext speechAudioContext = AudioContextConfig(
@@ -485,6 +486,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       onRivalWin: _handleWinRival,
       onMove: _handleLadderMove,
       accuracyProvider: () => lastTenResults,
+      startIndex: debugMountainStartRun,
     );
     api = ApiClient(
       workerHost: workerHost,
