@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../logic/hexagon_controller.dart';
 import '../logic/mountain_tracks.dart';
-import 'run_progress_ring.dart';
 
 class HexagonTrack extends StatelessWidget {
   const HexagonTrack({
@@ -79,19 +78,6 @@ class HexagonTrack extends StatelessWidget {
                   rivalIndex: rivalIndex,
                   youTrail: youTrail,
                   rivalTrail: rivalTrail,
-                ),
-              ),
-              Positioned(
-                right: 8,
-                top: 8,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: RunProgressRing(
-                    runsDone,
-                    size: 44,
-                    strokeWidth: 6,
-                  ),
                 ),
               ),
             ],

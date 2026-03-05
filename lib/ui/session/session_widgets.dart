@@ -954,9 +954,9 @@ class NamingView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const bool isWeb = kIsWeb;
-    final double gapHourglass = isWeb ? 2 : 6;
-    final double cardMargin = isWeb ? 4 : 8;
-    final double cardPadding = isWeb ? 8 : 12;
+    final double gapHourglass = isWeb ? 1 : 4;
+    final double cardMargin = isWeb ? 2 : 6;
+    final double cardPadding = isWeb ? 6 : 10;
     final bool isCorrect = namingOutcome == true;
     final Color borderColor = namingOutcome == null
         ? Colors.grey.shade400
@@ -992,7 +992,7 @@ class NamingView extends StatelessWidget {
           : image;
 
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 3),
         child: SizedBox(
           width: tileWidth,
           height: tileHeight,
@@ -1037,7 +1037,7 @@ class NamingView extends StatelessWidget {
                       : imageHeight * 1.5;
                   final double desiredWidth = imageHeight * 0.75;
                   final double availableWidth =
-                      (maxWidth - 24).clamp(0.0, maxWidth).toDouble();
+                      (maxWidth - 12).clamp(0.0, maxWidth).toDouble();
                   final double tileWidth =
                       (availableWidth / 2).clamp(0.0, desiredWidth).toDouble();
                   final double tileHeight =
@@ -1101,7 +1101,7 @@ class NamingView extends StatelessWidget {
           ),
         if (liveTranscript.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.only(top: 6),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
@@ -1121,7 +1121,7 @@ class NamingView extends StatelessWidget {
           ),
         if (namingStatus.trim().isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.only(top: 6),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
@@ -1142,7 +1142,7 @@ class NamingView extends StatelessWidget {
           ),
         if (namingOutcome == null && !namingInProgress)
           Padding(
-            padding: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.only(top: 6),
             child: Wrap(
               alignment: WrapAlignment.center,
               spacing: 8,
@@ -1439,9 +1439,16 @@ class SessionBody extends StatelessWidget {
     const bool isWeb = kIsWeb;
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
-    final double panelGap = isWeb ? 4 : 12;
-    final double infoPanelVerticalPadding = isWeb ? 8 : 14;
-    final double trackTopPadding = isWeb ? 2 : 8;
+    final bool compactNamingLayout = isNaming;
+    final double panelGap = compactNamingLayout
+        ? (isWeb ? 1 : 4)
+        : (isWeb ? 4 : 12);
+    final double infoPanelVerticalPadding = compactNamingLayout
+        ? (isWeb ? 5 : 8)
+        : (isWeb ? 8 : 14);
+    final double trackTopPadding = compactNamingLayout
+        ? (isWeb ? 0 : 4)
+        : (isWeb ? 2 : 8);
     final double bottomBarHeight = namingInProgress ? 48.0 : 0.0;
     final double verticalInsets =
         MediaQuery.of(context).padding.vertical + 32 + bottomBarHeight;
@@ -1525,7 +1532,8 @@ class SessionBody extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (isLandscape) SizedBox(height: isWeb ? 2 : 4),
+        if (isLandscape)
+          SizedBox(height: compactNamingLayout ? 0 : (isWeb ? 2 : 4)),
         trialWidget,
         //const SizedBox(height: 32),
         Stack(
@@ -1708,7 +1716,7 @@ class SessionBody extends StatelessWidget {
             ),
           ],
         ),
-        SizedBox(height: panelGap),
+        if (panelGap > 0) SizedBox(height: panelGap),
         Column(
           children: [
             DashboardButtonRow(
