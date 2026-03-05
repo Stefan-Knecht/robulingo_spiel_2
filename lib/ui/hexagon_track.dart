@@ -98,7 +98,7 @@ class HexagonTrack extends StatelessWidget {
       builder: (context, constraints) {
         const double aspectRatio = 3 / 2;
         const double fallbackWidth = 900;
-        const double mountainWidthShare = 0.76;
+        const double mountainWidthShare = 0.78;
         final double baseWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : (constraints.maxHeight.isFinite
@@ -113,30 +113,19 @@ class HexagonTrack extends StatelessWidget {
         final double mountainWidth = totalWidth * mountainWidthShare;
         final double mountainHeight = mountainWidth / aspectRatio;
         final double sideWidth = (totalWidth - mountainWidth) / 2;
+        final double mountainLeft = (totalWidth - mountainWidth) / 2;
         final double iconSize =
             (mountainHeight * 0.30).clamp(24.0, sideWidth * 0.92).toDouble();
 
         return SizedBox(
           width: totalWidth,
           height: mountainHeight,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              SizedBox(
-                width: sideWidth,
-                child: Center(
-                  child: Tooltip(
-                    message: youTooltip,
-                    child: Image.asset(
-                      'assets/icons/you.webp',
-                      width: iconSize,
-                      height: iconSize,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(
+              Positioned(
+                left: mountainLeft,
+                top: 0,
                 width: mountainWidth,
                 height: mountainHeight,
                 child: Stack(
@@ -161,8 +150,28 @@ class HexagonTrack extends StatelessWidget {
                   ],
                 ),
               ),
-              SizedBox(
+              Positioned(
+                left: 0,
+                top: 0,
                 width: sideWidth,
+                height: mountainHeight,
+                child: Center(
+                  child: Tooltip(
+                    message: youTooltip,
+                    child: Image.asset(
+                      'assets/icons/you.webp',
+                      width: iconSize,
+                      height: iconSize,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 0,
+                top: 0,
+                width: sideWidth,
+                height: mountainHeight,
                 child: Center(
                   child: Tooltip(
                     message: rivalTooltip,
