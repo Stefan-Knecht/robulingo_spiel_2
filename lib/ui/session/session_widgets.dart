@@ -1482,28 +1482,13 @@ class SessionBody extends StatelessWidget {
         runsDone: runsDone,
         tooltipLanguageCode: tooltipLanguageCode,
         uiScale: namingHexaScale,
-        centerGrid: shrinkHexaWeb,
+        centerGrid: false,
         mountainTheme: mountainTheme,
         mountainYouWon: mountainYouWon,
         mountainRivalWon: mountainRivalWon,
       ),
     );
-    final Widget trackWidget = shrinkHexaWeb
-        ? LayoutBuilder(
-            builder: (context, constraints) {
-              final double maxWidth = constraints.maxWidth.isFinite
-                  ? constraints.maxWidth
-                  : size.width;
-              return Align(
-                alignment: Alignment.topCenter,
-                child: SizedBox(
-                  width: maxWidth * 0.7,
-                  child: baseTrackWidget,
-                ),
-              );
-            },
-          )
-        : baseTrackWidget;
+    final Widget trackWidget = baseTrackWidget;
     final Widget displayTrackWidget = isNaming
         ? SizedBox(
             height: imageHeight * 0.95,
