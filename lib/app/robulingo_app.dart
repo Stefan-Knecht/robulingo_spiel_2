@@ -311,7 +311,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   int get micStage => voiceState.micStage;
   set micStage(int value) => voiceState.micStage = value;
   late AnimationController micController;
-  late Animation<double> micAnimation;
   final List<bool> lastTenResults =
       []; // letzte 10 Spieler-Ergebnisse (true = korrekt)
 
@@ -466,7 +465,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       vsync: this,
       duration: const Duration(seconds: 1),
     );
-    micAnimation = CurvedAnimation(parent: micController, curve: Curves.linear);
     voiceController = VoiceController(
       speech: speech,
       namingController: namingController,
@@ -3783,7 +3781,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                     ],
                   ),
                   child: MicProgressBar(
-                    animation: micAnimation,
                     micStage: micStage,
                     micOn: micOn,
                     firstWindowSeconds: namingProgressFirstRatio,
