@@ -214,6 +214,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingProgressFirstRatio = 3;
   static const int namingProgressHintRatio = 2;
   static const int namingProgressRepeatRatio = 2;
+  static const bool debugMountainFastFinishEnabled = true;
   static const int debugMountainStartRun = 190;
   static const double moveSoundVolume = 0.5;
   static const double namingBeepVolume = 0.5;
@@ -480,13 +481,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         });
       },
     );
+    final int mountainStartIndex = (kDebugMode && debugMountainFastFinishEnabled)
+        ? debugMountainStartRun
+        : 0;
     ladderController = HexagonController(
       onChanged: _onLadderChanged,
       onYouWin: _handleWinYou,
       onRivalWin: _handleWinRival,
       onMove: _handleLadderMove,
       accuracyProvider: () => lastTenResults,
-      startIndex: debugMountainStartRun,
+      startIndex: mountainStartIndex,
     );
     api = ApiClient(
       workerHost: workerHost,
