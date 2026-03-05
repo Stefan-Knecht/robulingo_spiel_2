@@ -1373,6 +1373,9 @@ class SessionBody extends StatelessWidget {
     required this.onPlayAudioHint,
     required this.showDashboardButton,
     required this.showGlobalHourglass,
+    required this.mountainTheme,
+    required this.mountainYouWon,
+    required this.mountainRivalWon,
     required this.onPrimeMic,
     required this.onOpenMicSettings,
     required this.onContinueWithoutMic,
@@ -1424,6 +1427,9 @@ class SessionBody extends StatelessWidget {
   final VoidCallback onPlayAudioHint;
   final bool showDashboardButton;
   final bool showGlobalHourglass;
+  final String mountainTheme;
+  final bool mountainYouWon;
+  final bool mountainRivalWon;
   final VoidCallback onPrimeMic;
   final VoidCallback onOpenMicSettings;
   final void Function(String reason) onContinueWithoutMic;
@@ -1473,6 +1479,9 @@ class SessionBody extends StatelessWidget {
         tooltipLanguageCode: tooltipLanguageCode,
         uiScale: namingHexaScale,
         centerGrid: shrinkHexaWeb,
+        mountainTheme: mountainTheme,
+        mountainYouWon: mountainYouWon,
+        mountainRivalWon: mountainRivalWon,
       ),
     );
     final Widget trackWidget = shrinkHexaWeb

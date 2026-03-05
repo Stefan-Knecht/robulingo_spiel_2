@@ -91,6 +91,9 @@ class _HexagonDemoPageState extends State<HexagonDemoPage> {
                 youTrail: controller.state.youTrail,
                 rivalTrail: controller.state.rivalTrail,
                 tooltipLanguageCode: 'en',
+                mountainTheme: 'default',
+                mountainYouWon: false,
+                mountainRivalWon: false,
               ),
               const SizedBox(height: 12),
               Wrap(

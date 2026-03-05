@@ -17,6 +17,9 @@ class HexagonTrack extends StatelessWidget {
     required this.youTrail,
     required this.rivalTrail,
     required this.tooltipLanguageCode,
+    required this.mountainTheme,
+    required this.mountainYouWon,
+    required this.mountainRivalWon,
     this.uiScale = 1.0,
     this.centerGrid = false,
     this.runsDone = 0,
@@ -33,14 +36,18 @@ class HexagonTrack extends StatelessWidget {
   final List<HexTrailPoint> youTrail;
   final List<HexTrailPoint> rivalTrail;
   final String tooltipLanguageCode;
+  final String mountainTheme;
+  final bool mountainYouWon;
+  final bool mountainRivalWon;
   final double uiScale;
   final bool centerGrid;
   final int runsDone;
 
   String _backgroundAsset() {
-    if (rivalFlagVisible) return 'assets/icons/mountain_orange.png';
-    if (youFlagVisible) return 'assets/icons/mountain_blue.png';
-    return 'assets/icons/mountain_color.png';
+    final prefix = 'assets/icons/Mountain_${mountainTheme}_';
+    if (mountainRivalWon) return '${prefix}orange.webp';
+    if (mountainYouWon) return '${prefix}blue.webp';
+    return '${prefix}color.webp';
   }
 
   @override

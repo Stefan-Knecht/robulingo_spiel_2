@@ -56,6 +56,7 @@ import 'package:robulingo_flutter/logic/user_identity.dart';
 import 'package:robulingo_flutter/logic/item_presentation_policy.dart';
 import 'package:robulingo_flutter/logic/voice_state.dart';
 import 'package:robulingo_flutter/logic/naming_locale_helper.dart';
+import 'package:robulingo_flutter/logic/mountain_background_cycle.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
 import 'package:robulingo_flutter/ui/history_panel.dart';
 import 'package:robulingo_flutter/ui/lang_selector.dart';
@@ -244,6 +245,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   final AudioPlayer namingBeepPlayer2 = AudioPlayer();
   final OnboardingStore onboardingStore = OnboardingStore();
   final SessionCacheStore sessionCacheStore = SessionCacheStore();
+  final MountainThemeCycleStore mountainThemeCycleStore =
+      MountainThemeCycleStore();
   final UserDeltaStore userDeltaStore = UserDeltaStore();
   final UserIdentity userIdentity = UserIdentity();
   UserCurriculumDelta? userDelta;
@@ -374,6 +377,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool showRestartSplash =
       false; // Startbildschirm nur beim Wiederstart, nicht beim ersten Start
   bool sessionEnded = false;
+  String _mountainThemeDayKey = '';
+  int _mountainThemeIndex = 0;
+  bool? _mountainWinnerIsYou;
+  Timer? _mountainThemeAdvanceTimer;
   final Map<String, int> nativeSeenCounts =
       {}; // wie oft Ziel-Item angezeigt wurde
   final Map<String, int> phoneticSeenCounts =
@@ -504,6 +511,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _historyPanelHasSupervisorInfo = historyPanelHasSupervisorInfo();
     unawaited(_restoreHistoryPanelDraft());
     _loadSavedOnboarding();
+    unawaited(_loadMountainThemeCycle());
     unawaited(_checkForAppUpdateAtStartup());
   }
 
@@ -515,6 +523,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     } else if (state == AppLifecycleState.resumed) {
       unawaited(handleInactivityBadgeOnAppResumed());
       unawaited(_recheckMicPermissionAfterResume());
+      unawaited(_loadMountainThemeCycle());
     }
   }
 
@@ -689,6 +698,48 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {});
   }
 
+  String get _activeMountainTheme {
+    if (kMountainThemeOrder.isEmpty) return 'default';
+    final safe = _mountainThemeIndex % kMountainThemeOrder.length;
+    final idx = safe < 0 ? safe + kMountainThemeOrder.length : safe;
+    return kMountainThemeOrder[idx];
+  }
+
+  Future<void> _loadMountainThemeCycle() async {
+    final snapshot = await mountainThemeCycleStore.loadForToday();
+    if (!mounted) return;
+    setState(() {
+      _mountainThemeDayKey = snapshot.dayKey;
+      _mountainThemeIndex = snapshot.themeIndex;
+      _mountainWinnerIsYou = null;
+    });
+  }
+
+  void _queueMountainThemeAdvance({required bool winnerIsYou}) {
+    final todayKey = mountainDayKey(DateTime.now());
+    if (_mountainThemeDayKey != todayKey) {
+      _mountainThemeDayKey = todayKey;
+      _mountainThemeIndex = 0;
+    }
+    _mountainThemeAdvanceTimer?.cancel();
+    setState(() {
+      _mountainWinnerIsYou = winnerIsYou;
+    });
+    _mountainThemeAdvanceTimer = Timer(const Duration(milliseconds: 1300), () {
+      if (!mounted) return;
+      final today = mountainDayKey(DateTime.now());
+      final next = (_mountainThemeIndex + 1) % kMountainThemeOrder.length;
+      setState(() {
+        _mountainThemeDayKey = today;
+        _mountainThemeIndex = next;
+        _mountainWinnerIsYou = null;
+      });
+      unawaited(
+        mountainThemeCycleStore.saveForToday(dayKey: today, themeIndex: next),
+      );
+    });
+  }
+
   void _handleWinYou() {
     if (loggerReady) {
       unawaited(logger.log('win', {'side': 'you', 'lang': lang}));
@@ -701,6 +752,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     _playFanfare();
     _saveOnboardingSnapshot();
+    _queueMountainThemeAdvance(winnerIsYou: true);
   }
 
   void _handleWinRival() {
@@ -714,6 +766,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     _playFanfare();
     _saveOnboardingSnapshot();
+    _queueMountainThemeAdvance(winnerIsYou: false);
   }
 
   Future<void> _openHistoryPanel() async {
@@ -3362,6 +3415,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _micControllerDisposed = true;
     micController.dispose();
     nativeSelectTimer?.cancel();
+    _mountainThemeAdvanceTimer?.cancel();
     _resumeEmojiAckRetryTimer?.cancel();
     _keyboardFocusNode.dispose();
     if (loggerReady) {
@@ -3683,6 +3737,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           },
           showDashboardButton: showDashboardButton,
           showGlobalHourglass: showGlobalHourglass,
+          mountainTheme: _activeMountainTheme,
+          mountainYouWon: _mountainWinnerIsYou == true,
+          mountainRivalWon: _mountainWinnerIsYou == false,
           onPrimeMic: _primeMicAndStart,
           onOpenMicSettings: _openMicSettings,
           onContinueWithoutMic: _continueWithoutMicNaming,
