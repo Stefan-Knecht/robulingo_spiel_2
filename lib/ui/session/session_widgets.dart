@@ -147,6 +147,10 @@ const Map<String, Map<String, String>> _sessionMenuTooltipTexts = {
     'en': 'Session menu',
     'de': 'Sitzungsmenü',
   },
+  'open_dashboard': {
+    'en': 'Open player dashboard',
+    'de': 'Spieler-Dashboard öffnen',
+  },
   'exit_to_resume_panel': {
     'en': 'Exit to resume panel',
     'de': 'Zum Resume-Panel',
@@ -1805,12 +1809,10 @@ class SessionBody extends StatelessWidget {
       }
     }
 
-    if (onExitToResumePanel == null) {
-      return layout;
-    }
-
     final menuTooltip =
         _sessionMenuTooltipText('session_menu', tooltipLanguageCode);
+    final dashboardTooltip =
+        _sessionMenuTooltipText('open_dashboard', tooltipLanguageCode);
     final exitTooltip =
         _sessionMenuTooltipText('exit_to_resume_panel', tooltipLanguageCode);
 
@@ -1822,7 +1824,9 @@ class SessionBody extends StatelessWidget {
           bottom: 8,
           child: _SessionMenuButton(
             menuTooltip: menuTooltip,
+            openDashboardTooltip: dashboardTooltip,
             exitToResumeTooltip: exitTooltip,
+            onOpenDashboard: onOpenDashboard,
             onExitToResumePanel: onExitToResumePanel,
           ),
         ),
@@ -1905,12 +1909,16 @@ class _HintPanel extends StatelessWidget {
 class _SessionMenuButton extends StatefulWidget {
   const _SessionMenuButton({
     required this.menuTooltip,
+    required this.openDashboardTooltip,
     required this.exitToResumeTooltip,
+    required this.onOpenDashboard,
     this.onExitToResumePanel,
   });
 
   final String menuTooltip;
+  final String openDashboardTooltip;
   final String exitToResumeTooltip;
+  final VoidCallback onOpenDashboard;
   final Future<void> Function()? onExitToResumePanel;
 
   @override
@@ -1920,7 +1928,7 @@ class _SessionMenuButton extends StatefulWidget {
 class _SessionMenuButtonState extends State<_SessionMenuButton> {
   bool _busy = false;
 
-  bool get _hasActions => widget.onExitToResumePanel != null;
+  bool get _hasActions => true;
 
   void _showSnack(String message) {
     if (!mounted || message.trim().isEmpty) return;
@@ -1958,6 +1966,25 @@ class _SessionMenuButtonState extends State<_SessionMenuButton> {
       ),
       builder: (sheetContext) {
         final List<Widget> entries = [];
+
+        entries.add(
+          _SessionMenuEntry(
+            tooltip: widget.openDashboardTooltip,
+            leading: Image.asset(
+              'assets/icons/progress.webp',
+              width: 26,
+              height: 26,
+              fit: BoxFit.contain,
+            ),
+            onTap: () async {
+              Navigator.of(sheetContext).pop();
+              await _runAction(
+                () async => widget.onOpenDashboard(),
+                label: 'Open dashboard',
+              );
+            },
+          ),
+        );
 
         if (widget.onExitToResumePanel != null) {
           entries.add(
