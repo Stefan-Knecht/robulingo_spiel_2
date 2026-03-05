@@ -1733,7 +1733,7 @@ class SessionBody extends StatelessWidget {
         Column(
           children: [
             DashboardButtonRow(
-              show: showDashboardButton || ladder.hasFlagAppeared,
+              show: showDashboardButton,
               showHourglass: showGlobalHourglass,
               hourglassWiggle: showGlobalHourglass && (!isNaming || micOn),
               onTap: onOpenDashboard,

@@ -62,6 +62,7 @@ import 'package:robulingo_flutter/ui/lang_selector.dart';
 import 'package:robulingo_flutter/ui/mic_gate.dart';
 import 'package:robulingo_flutter/ui/mic_progress_bar.dart';
 import 'package:robulingo_flutter/ui/native_lang_selector.dart';
+import 'package:robulingo_flutter/ui/run_progress_ring.dart';
 import 'package:robulingo_flutter/ui/session/session_widgets.dart';
 import 'package:robulingo_flutter/ui/start_curriculum_selector.dart';
 import 'package:robulingo_flutter/ui/training_calendar_panel.dart';
@@ -3569,9 +3570,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             : min(size.height * 0.38, 320.0);
         final double imageHeight =
             kIsWeb && isNamingView ? baseImageHeight * 0.68 : baseImageHeight;
-        final bool showDashboardButton = ladder.hasFlagAppeared ||
-            ladder.winsYou > 0 ||
-            ladder.winsRival > 0;
+        final int runsDone = comprehensionHistory.length + namingHistory.length;
+        final bool showDashboardButton = runsDone >= kRunCycleGoalRuns;
         final bool showHourglass = namingInProgress || batchLoading || loading;
         assert(() {
           if (currentSlot.mode == PresentationMode.naming && !isNamingView) {
@@ -3635,7 +3635,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                 forceShowNamingText);
         body = SessionBody(
           ladder: ladder,
-          runsDone: comprehensionHistory.length + namingHistory.length,
+          runsDone: runsDone,
           isNaming: isNamingView,
           imageHeight: imageHeight,
           leftImageBytes: leftImg,

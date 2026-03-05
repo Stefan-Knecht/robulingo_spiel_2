@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+const int kRunCycleGoalRuns = 200;
+
 class RunProgressRing extends StatefulWidget {
   const RunProgressRing(
     this.runsDone, {
@@ -26,10 +28,8 @@ class _RunProgressRingState extends State<RunProgressRing>
   late final Animation<double> _scaleAnimation;
   late final Animation<double> _glowAnimation;
 
-  static const int _goalRuns = 200;
-
   bool _isCycleCompleted(int runs) {
-    return runs > 0 && runs % _goalRuns == 0;
+    return runs > 0 && runs % kRunCycleGoalRuns == 0;
   }
 
   @override
@@ -73,8 +73,9 @@ class _RunProgressRingState extends State<RunProgressRing>
   Widget build(BuildContext context) {
     final int safeRuns = widget.runsDone < 0 ? 0 : widget.runsDone;
     final bool completedCycle = _isCycleCompleted(safeRuns);
-    final int cycleRuns = safeRuns % _goalRuns;
-    final double progress = completedCycle ? 1.0 : (cycleRuns / _goalRuns);
+    final int cycleRuns = safeRuns % kRunCycleGoalRuns;
+    final double progress =
+        completedCycle ? 1.0 : (cycleRuns / kRunCycleGoalRuns);
     final Color ringColor = widget.color ?? const Color(0xFF2E7D32);
     final Color ringTrackColor = widget.trackColor ?? const Color(0x1F2E7D32);
 
