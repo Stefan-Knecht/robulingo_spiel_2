@@ -19,7 +19,7 @@ const String _notificationChannelName = 'DailyWords Inactivity Reminder';
 const String _notificationChannelDescription =
     'Shows recurring badge reminders after inactivity.';
 const int _badgeNotificationId = 48048;
-const Duration _inactivityThreshold = Duration(hours: 24);
+const Duration _inactivityThreshold = Duration(hours: 48);
 
 @pragma('vm:entry-point')
 void _inactivityBadgeCallbackDispatcher() {
@@ -76,10 +76,13 @@ Future<void> _runInactivityBadgeCheck() async {
   if ((nowMs - lastOpenedMs) < _inactivityThreshold.inMilliseconds) return;
   if ((nowMs - lastReminderMs) < _inactivityThreshold.inMilliseconds) return;
   await _showBadgeReminder();
+  // Restart the reminder cycle from the moment the reminder is shown.
   await prefs.setInt(_lastBadgeReminderAtEpochMsKey, nowMs);
 }
 
 Future<void> _scheduleInactivityCheck() async {
+  // Intentionally chained one-off scheduling:
+  // each completed run re-enqueues the next inactivity check.
   await Workmanager().registerOneOffTask(
     _workUniqueName,
     _workTaskName,

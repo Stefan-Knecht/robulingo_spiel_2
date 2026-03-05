@@ -11,7 +11,7 @@ void main() {
     expect(out.attempts, 1);
     expect(out.correctCount, 1);
     expect(out.correct, isTrue);
-    expect(out.moves, 2);
+    expect(out.moves, 1);
     expect(out.usedHint, isFalse);
   });
 

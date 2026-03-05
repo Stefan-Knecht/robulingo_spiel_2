@@ -19,13 +19,15 @@ Future<NamingFlowOutcome?> runNamingFlow({
   required bool userInitiated,
   Duration firstWindow = const Duration(seconds: 4),
   Duration repeatWindow = const Duration(seconds: 3),
+  Future<String?>? localeIdFuture,
 }) async {
-  final String? localeId = await namingLocaleHelper.resolveAndLog(
-    speech: voiceController.speech,
-    lang: lang,
-    overrides: speechLocaleOverrides,
-    protocolLog: protocolLog,
-  );
+  final String? localeId = await (localeIdFuture ??
+      namingLocaleHelper.resolveAndLog(
+        speech: voiceController.speech,
+        lang: lang,
+        overrides: speechLocaleOverrides,
+        protocolLog: protocolLog,
+      ));
   return voiceController.startNamingFlow(
     token: token,
     targetText: trial.target.text,

@@ -323,7 +323,7 @@ class NamingController {
       onPhase(NamingPhase.finished);
       return NamingFlowOutcome(
         correct: firstCorrect,
-        moves: firstCorrect ? 2 : 0,
+        moves: firstCorrect ? 1 : 0,
         transcript: _liveTranscript,
         attempts: 1,
         correctCount: firstCorrect ? 1 : 0,
@@ -786,7 +786,7 @@ NamingFlowOutcome simulateNamingRunOutcome({
   if (firstCorrect || !allowRepeat) {
     return NamingFlowOutcome(
       correct: firstCorrect,
-      moves: firstCorrect ? 2 : 0,
+      moves: firstCorrect ? 1 : 0,
       transcript: '',
       attempts: 1,
       correctCount: firstCorrect ? 1 : 0,

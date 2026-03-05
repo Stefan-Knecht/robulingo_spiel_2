@@ -80,11 +80,22 @@ class HexagonTrack extends StatelessWidget {
   final bool centerGrid;
   final int runsDone;
 
+  String _normalizedTheme() {
+    const supported = <String>{'default', 'summer', 'snow', 'night'};
+    return supported.contains(mountainTheme) ? mountainTheme : 'default';
+  }
+
   String _backgroundAsset() {
-    final prefix = 'assets/icons/Mountain_${mountainTheme}_';
+    final prefix = 'assets/icons/Mountain_${_normalizedTheme()}_';
     if (mountainRivalWon) return '${prefix}orange.webp';
     if (mountainYouWon) return '${prefix}blue.webp';
     return '${prefix}color.webp';
+  }
+
+  String _fallbackBackgroundAsset() {
+    if (mountainRivalWon) return 'assets/icons/mountain_orange.png';
+    if (mountainYouWon) return 'assets/icons/mountain_blue.png';
+    return 'assets/icons/mountain_color.png';
   }
 
   @override
@@ -107,9 +118,8 @@ class HexagonTrack extends StatelessWidget {
         final double maxTotalWidthFromHeight = constraints.maxHeight.isFinite
             ? (constraints.maxHeight * aspectRatio) / mountainWidthShare
             : double.infinity;
-        final double totalWidth = (baseWidth * scale)
-            .clamp(0.0, maxTotalWidthFromHeight)
-            .toDouble();
+        final double totalWidth =
+            (baseWidth * scale).clamp(0.0, maxTotalWidthFromHeight).toDouble();
         final double mountainWidth = totalWidth * mountainWidthShare;
         final double mountainHeight = mountainWidth / aspectRatio;
         final double sideWidth = (totalWidth - mountainWidth) / 2;
@@ -135,6 +145,15 @@ class HexagonTrack extends StatelessWidget {
                       _backgroundAsset(),
                       fit: BoxFit.fill,
                       filterQuality: FilterQuality.high,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Image.asset(
+                          _fallbackBackgroundAsset(),
+                          fit: BoxFit.fill,
+                          filterQuality: FilterQuality.high,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const SizedBox.expand(),
+                        );
+                      },
                     ),
                     ColoredBox(color: Colors.white.withValues(alpha: 0.32)),
                     CustomPaint(

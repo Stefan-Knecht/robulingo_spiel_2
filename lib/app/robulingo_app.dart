@@ -211,6 +211,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingFirstWindowSec = 4;
   static const int namingRepeatWindowSec = 3;
   static const int namingHintWindowSec = 3;
+  static const int namingStartLeadInMs = 1000;
   static const int namingProgressFirstRatio = 3;
   static const int namingProgressHintRatio = 2;
   static const int namingProgressRepeatRatio = 2;
@@ -337,6 +338,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Trial? currentTrial;
   Trial? _lastDisplayTrial;
   bool _namingTransition = false;
+  bool _namingStartPending = false;
+  DateTime? _namingItemDisplayedAt;
+  int _namingItemDisplayToken = -1;
   PresentationSlot currentSlot = const PresentationSlot(
       mode: PresentationMode.comprehension, targetUuid: '');
   PresentationSlot? pendingNextSlot;
@@ -358,6 +362,18 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   final Map<String, int> audioMinSequenceIndex = {};
   final Map<String, bool> audioUrlOkCache = {};
   final Map<String, int> _imageVariantCursorByUuid = {};
+
+  bool get _namingSessionBusy => namingInProgress || _namingStartPending;
+
+  Duration _remainingNamingLeadIn(int token) {
+    if (_namingItemDisplayToken != token || _namingItemDisplayedAt == null) {
+      return const Duration(milliseconds: namingStartLeadInMs);
+    }
+    final elapsed = DateTime.now().difference(_namingItemDisplayedAt!);
+    final remaining = Duration(milliseconds: namingStartLeadInMs) - elapsed;
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
   int currentTrialAudioToken = -1;
   String? currentTrialAudioUuid;
   Uri? currentTrialAudioUri;
@@ -486,9 +502,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         });
       },
     );
-    final int mountainStartIndex = (kDebugMode && debugMountainFastFinishEnabled)
-        ? debugMountainStartRun
-        : 0;
+    final int mountainStartIndex =
+        (kDebugMode && debugMountainFastFinishEnabled)
+            ? debugMountainStartRun
+            : 0;
     ladderController = HexagonController(
       onChanged: _onLadderChanged,
       onYouWin: _handleWinYou,
@@ -2287,7 +2304,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         namingHold = false;
         namingStatus = '';
         _liveTranscript = '';
+        _namingStartPending = false;
       }
+      _namingItemDisplayedAt = null;
+      _namingItemDisplayToken = -1;
     });
     _schedulePrefetchForSlot(slot);
     final trial = await _buildTrialForTarget(slot.targetUuid);
@@ -2297,6 +2317,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _namingTransition = false;
       if (trial != null) {
         _lastDisplayTrial = trial;
+        if (slot.mode == PresentationMode.naming) {
+          _namingItemDisplayedAt = DateTime.now();
+          _namingItemDisplayToken = token;
+        }
       }
     });
     if (trial != null && loggerReady) {
@@ -2660,7 +2684,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _primeMicAndStart({bool skipGate = false}) async {
-    if (namingInProgress) return;
+    if (_namingSessionBusy) return;
     final token = currentTrialToken;
     await _primeAudioForUserGestureAsync(
       skipGate ? 'naming-start-skip-gate' : 'naming-start',
@@ -2861,7 +2885,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   Future<void> _startNamingFlow(int token,
       {bool skipGate = false, bool userInitiated = false}) async {
-    if (namingInProgress || !_isNamingTrial()) return;
+    if (_namingSessionBusy || !_isNamingTrial()) return;
     if (token != currentTrialToken) return;
     if (!skipGate && !namingNoMicMode && _showMicGateIfNeeded(token)) return;
     debugPrint(
@@ -2873,12 +2897,40 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       });
       return;
     }
-    setState(() {
-      hasAnswered = true; // block Selektionen/Advances während Naming
-    });
     bool isCurrent() => mounted && token == currentTrialToken;
     final trial = currentTrial;
     if (trial == null) return;
+    final Future<String?>? localeFuture = namingNoMicMode
+        ? null
+        : namingLocaleHelper.resolveAndLog(
+            speech: voiceController.speech,
+            lang: lang,
+            overrides: speechLocaleOverrides,
+            protocolLog: protocolLog,
+          );
+    final leadIn = _remainingNamingLeadIn(token);
+    if (leadIn > Duration.zero) {
+      setState(() {
+        _namingStartPending = true;
+      });
+      await Future<void>.delayed(leadIn);
+      if (!mounted || token != currentTrialToken || !_isNamingTrial()) {
+        if (mounted && _namingStartPending) {
+          setState(() {
+            _namingStartPending = false;
+          });
+        } else {
+          _namingStartPending = false;
+        }
+        return;
+      }
+      setState(() {
+        _namingStartPending = false;
+      });
+    }
+    setState(() {
+      hasAnswered = true; // block Selektionen/Advances während Naming
+    });
     final result = namingNoMicMode
         ? await _runNoMicNamingFlow(token, trial: trial)
         : await runNamingFlow(
@@ -2907,6 +2959,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             userInitiated: userInitiated,
             firstWindow: const Duration(seconds: namingFirstWindowSec),
             repeatWindow: const Duration(seconds: namingRepeatWindowSec),
+            localeIdFuture: localeFuture,
           );
 
     if (!mounted || token != currentTrialToken) return;
@@ -3154,9 +3207,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   void _gotoNextTrial() {
     if (_disposed || !mounted) return;
-    if (namingInProgress) {
+    if (_namingSessionBusy) {
       debugPrint(
-          '[trial][next-blocked] namingInProgress=true token=$currentTrialToken idx=$trialIndex');
+          '[trial][next-blocked] namingBusy=true token=$currentTrialToken idx=$trialIndex');
       return;
     }
     voiceController.cancelActive();
@@ -3372,7 +3425,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
-      if (_isNamingTrial() && !namingInProgress && !micGateActive) {
+      if (_isNamingTrial() && !_namingSessionBusy && !micGateActive) {
         unawaited(_startNamingFlowFromKeyboard());
         return true;
       }
@@ -3740,6 +3793,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           namingHold: namingHold,
           showHourglass: showHourglass,
           namingInProgress: namingInProgress,
+          namingStartPending: _namingStartPending,
           micOn: micOn,
           micStage: micStage,
           namingPaused: namingPaused,
