@@ -31,6 +31,7 @@ class VoiceState {
   bool micGateGranted = false;
   bool micOn = false;
   int micStage = -1;
+  bool namingPaused = false;
 }
 
 /// Encapsulates the speech/naming flow and mic readiness logic.
@@ -49,6 +50,7 @@ class VoiceController {
   final VoiceState state;
   final VoidCallback onStateChanged;
   bool _micControllerFailed = false;
+  Completer<void>? _resumeCompleter;
 
   void _safeMicStop() {
     if (_micControllerFailed) return;
@@ -109,11 +111,51 @@ class VoiceController {
     try {
       speech.stop();
     } catch (_) {}
+    state.namingPaused = false;
+    _resumeCompleter?.complete();
+    _resumeCompleter = null;
     state.namingInProgress = false;
     state.micOn = false;
     state.micStage = -1;
     _safeMicStop();
     onStateChanged();
+  }
+
+  bool canToggleRecordingPause() {
+    if (!state.namingInProgress) return false;
+    return state.micStage == 0 || state.micStage == 2;
+  }
+
+  void pauseRecording() {
+    if (!canToggleRecordingPause() || state.namingPaused) return;
+    state.namingPaused = true;
+    state.micOn = false;
+    onStateChanged();
+  }
+
+  void resumeRecording() {
+    if (!state.namingInProgress || !state.namingPaused) return;
+    state.namingPaused = false;
+    if (state.micStage == 0 || state.micStage == 2) {
+      state.micOn = true;
+    }
+    _resumeCompleter?.complete();
+    _resumeCompleter = null;
+    onStateChanged();
+  }
+
+  void toggleRecordingPause() {
+    if (state.namingPaused) {
+      resumeRecording();
+    } else {
+      pauseRecording();
+    }
+  }
+
+  Future<void> _waitUntilResumed() {
+    if (!state.namingPaused) return Future<void>.value();
+    _resumeCompleter ??= Completer<void>();
+    return _resumeCompleter!.future;
   }
 
   Future<NamingFlowOutcome?> startNamingFlow({
@@ -159,7 +201,9 @@ class VoiceController {
     state.namingStatus = '';
     state.micStage = 0;
     state.micOn = true;
+    state.namingPaused = false;
     state.liveTranscript = '';
+    _resumeCompleter = null;
     onStateChanged();
     _safeMicPulseLoop();
 
@@ -209,11 +253,16 @@ class VoiceController {
       repeatWindow: repeatWindow,
       allowRepeat: allowRepeat,
       localeId: localeId,
+      isPaused: () => state.namingPaused,
+      waitUntilResumed: _waitUntilResumed,
     );
 
     state.namingInProgress = false;
     state.micOn = false;
     state.micStage = -1;
+    state.namingPaused = false;
+    _resumeCompleter?.complete();
+    _resumeCompleter = null;
     _safeMicStop();
     if (result == null) {
       state.namingOutcome = null;

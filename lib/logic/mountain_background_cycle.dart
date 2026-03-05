@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:shared_preferences/shared_preferences.dart';
 
 const List<String> kMountainThemeOrder = <String>[
@@ -28,10 +30,37 @@ class MountainThemeCycleSnapshot {
 class MountainThemeCycleStore {
   static const String _dayStorageKey = 'robulingo_mountain_theme_day';
   static const String _indexStorageKey = 'robulingo_mountain_theme_index';
+  static String? _fallbackDayKey;
+  static int _fallbackThemeIndex = 0;
+
+  Future<SharedPreferences?> _tryGetPrefs() async {
+    try {
+      return await SharedPreferences.getInstance();
+    } on MissingPluginException catch (error, stackTrace) {
+      debugPrint('[mountain-theme][prefs-unavailable] $error');
+      debugPrint('[mountain-theme][stack] $stackTrace');
+      return null;
+    } catch (error, stackTrace) {
+      debugPrint('[mountain-theme][prefs-error] $error');
+      debugPrint('[mountain-theme][stack] $stackTrace');
+      return null;
+    }
+  }
 
   Future<MountainThemeCycleSnapshot> loadForToday({DateTime? now}) async {
     final todayKey = mountainDayKey(now ?? DateTime.now());
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _tryGetPrefs();
+    if (prefs == null) {
+      if (_fallbackDayKey != todayKey) {
+        _fallbackDayKey = todayKey;
+        _fallbackThemeIndex = 0;
+      }
+      _fallbackThemeIndex = _normalizeThemeIndex(_fallbackThemeIndex);
+      return MountainThemeCycleSnapshot(
+        dayKey: todayKey,
+        themeIndex: _fallbackThemeIndex,
+      );
+    }
     final storedDay = prefs.getString(_dayStorageKey);
     if (storedDay != todayKey) {
       await prefs.setString(_dayStorageKey, todayKey);
@@ -53,9 +82,15 @@ class MountainThemeCycleStore {
     required String dayKey,
     required int themeIndex,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
+    final normalized = _normalizeThemeIndex(themeIndex);
+    final prefs = await _tryGetPrefs();
+    if (prefs == null) {
+      _fallbackDayKey = dayKey;
+      _fallbackThemeIndex = normalized;
+      return;
+    }
     await prefs.setString(_dayStorageKey, dayKey);
-    await prefs.setInt(_indexStorageKey, _normalizeThemeIndex(themeIndex));
+    await prefs.setInt(_indexStorageKey, normalized);
   }
 
   int _normalizeThemeIndex(int index) {
@@ -64,4 +99,3 @@ class MountainThemeCycleStore {
     return mod < 0 ? mod + kMountainThemeOrder.length : mod;
   }
 }
-

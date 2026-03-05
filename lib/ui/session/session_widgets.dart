@@ -1356,6 +1356,8 @@ class SessionBody extends StatelessWidget {
     required this.showHourglass,
     required this.namingInProgress,
     required this.micOn,
+    required this.micStage,
+    required this.namingPaused,
     required this.showTinySpinner,
     required this.liveTranscript,
     required this.targetText,
@@ -1384,6 +1386,7 @@ class SessionBody extends StatelessWidget {
     required this.onOpenMicSettings,
     required this.onContinueWithoutMic,
     required this.onSkipNaming,
+    required this.onToggleNamingPauseResume,
     required this.onSelect,
     required this.onOpenDashboard,
     required this.tooltipLanguageCode,
@@ -1410,6 +1413,8 @@ class SessionBody extends StatelessWidget {
   final bool showHourglass;
   final bool namingInProgress;
   final bool micOn;
+  final int micStage;
+  final bool namingPaused;
   final bool showTinySpinner;
   final String liveTranscript;
   final String targetText;
@@ -1438,6 +1443,7 @@ class SessionBody extends StatelessWidget {
   final VoidCallback onOpenMicSettings;
   final void Function(String reason) onContinueWithoutMic;
   final void Function(String reason) onSkipNaming;
+  final VoidCallback onToggleNamingPauseResume;
   final void Function(bool choseLeft) onSelect;
   final VoidCallback onOpenDashboard;
   final String tooltipLanguageCode;
@@ -1732,8 +1738,13 @@ class SessionBody extends StatelessWidget {
           children: [
             DashboardButtonRow(
               show: showDashboardButton || ladder.hasFlagAppeared,
-              showHourglass: showGlobalHourglass,
-              hourglassWiggle: showGlobalHourglass && (!isNaming || micOn),
+              showHourglass: isNaming && namingInProgress,
+              hourglassWiggle:
+                  isNaming && namingInProgress && micOn && !namingPaused,
+              hourglassMicStage: micStage,
+              hourglassMicOn: micOn,
+              hourglassMicPaused: namingPaused,
+              onHourglassTap: onToggleNamingPauseResume,
               onTap: onOpenDashboard,
             ),
           ],

@@ -13,6 +13,7 @@ class MicProgressBar extends StatefulWidget {
     super.key,
     required this.micStage,
     required this.micOn,
+    required this.isPaused,
     required this.firstWindowSeconds,
     required this.repeatWindowSeconds,
     this.hintWindowSeconds = 3,
@@ -20,6 +21,7 @@ class MicProgressBar extends StatefulWidget {
 
   final int micStage;
   final bool micOn;
+  final bool isPaused;
   final int firstWindowSeconds;
   final int repeatWindowSeconds;
   final int hintWindowSeconds;
@@ -30,6 +32,8 @@ class MicProgressBar extends StatefulWidget {
 
 class _MicProgressBarState extends State<MicProgressBar> {
   DateTime _stageStartedAt = DateTime.now();
+  DateTime? _pausedAt;
+  Duration _pausedTotal = Duration.zero;
   Timer? _ticker;
 
   bool get _stageActive {
@@ -39,6 +43,8 @@ class _MicProgressBarState extends State<MicProgressBar> {
 
   void _markStageStart() {
     _stageStartedAt = DateTime.now();
+    _pausedAt = widget.isPaused ? DateTime.now() : null;
+    _pausedTotal = Duration.zero;
   }
 
   void _syncTicker() {
@@ -56,10 +62,14 @@ class _MicProgressBarState extends State<MicProgressBar> {
 
   double _elapsedProgress(int seconds) {
     final int durationMs = (seconds <= 0 ? 1 : seconds * 1000);
-    final int elapsedMs = DateTime.now()
-        .difference(_stageStartedAt)
-        .inMilliseconds
-        .clamp(0, durationMs);
+    final now = DateTime.now();
+    var paused = _pausedTotal;
+    if (widget.isPaused && _pausedAt != null) {
+      paused += now.difference(_pausedAt!);
+    }
+    final int rawElapsedMs = now.difference(_stageStartedAt).inMilliseconds;
+    final int pausedMs = paused.inMilliseconds;
+    final int elapsedMs = (rawElapsedMs - pausedMs).clamp(0, durationMs);
     return elapsedMs / durationMs;
   }
 
@@ -74,10 +84,22 @@ class _MicProgressBarState extends State<MicProgressBar> {
   void didUpdateWidget(covariant MicProgressBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     final bool stageChanged = oldWidget.micStage != widget.micStage;
+    final bool pausedChanged = oldWidget.isPaused != widget.isPaused;
+    if (pausedChanged) {
+      if (widget.isPaused) {
+        _pausedAt = DateTime.now();
+      } else if (_pausedAt != null) {
+        _pausedTotal += DateTime.now().difference(_pausedAt!);
+        _pausedAt = null;
+      }
+    }
+    final bool resumedFromPause = oldWidget.isPaused &&
+        !widget.isPaused &&
+        (widget.micStage == 0 || widget.micStage == 2);
     final bool listeningRestarted = oldWidget.micOn != widget.micOn &&
         widget.micOn &&
         (widget.micStage == 0 || widget.micStage == 2);
-    if (stageChanged || listeningRestarted) {
+    if (stageChanged || (listeningRestarted && !resumedFromPause)) {
       _markStageStart();
     }
     _syncTicker();
@@ -91,15 +113,9 @@ class _MicProgressBarState extends State<MicProgressBar> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isListeningStage = widget.micStage == 0 || widget.micStage == 2;
     final bool firstListening = widget.micStage == 0;
     final bool hintPlaying = widget.micStage == 1;
     final bool repeatListening = widget.micStage == 2;
-    final bool isHintStage = widget.micStage == 1;
-    final IconData movingIcon = isHintStage ? Icons.volume_up : Icons.mic;
-    final Color bubbleColor = isHintStage
-        ? const Color(0xFFFFF2D6)
-        : (widget.micOn ? const Color(0xFFE8F7EE) : Colors.white);
     final int firstFlex = widget.firstWindowSeconds.clamp(1, 60);
     final int hintFlex = widget.hintWindowSeconds.clamp(1, 60);
     final int repeatFlex = widget.repeatWindowSeconds.clamp(1, 60);
@@ -151,13 +167,15 @@ class _MicProgressBarState extends State<MicProgressBar> {
       );
     }
 
-    final double firstProgress = firstListening && widget.micOn
+    final double firstProgress =
+        firstListening && (widget.micOn || widget.isPaused)
         ? _elapsedProgress(widget.firstWindowSeconds)
         : (widget.micStage > 0 ? 1.0 : 0.0);
     final double hintProgress = hintPlaying
         ? _elapsedProgress(widget.hintWindowSeconds)
         : (widget.micStage > 1 ? 1.0 : 0.0);
-    final double repeatProgress = repeatListening && widget.micOn
+    final double repeatProgress =
+        repeatListening && (widget.micOn || widget.isPaused)
         ? _elapsedProgress(widget.repeatWindowSeconds)
         : 0.0;
 
@@ -190,25 +208,6 @@ class _MicProgressBarState extends State<MicProgressBar> {
               progress: repeatProgress,
             ),
           ],
-        ),
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0xFF3F4A52), width: 1),
-            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
-          ),
-          child: Icon(
-            movingIcon,
-            size: 18,
-            color: isListeningStage && widget.micOn
-                ? const Color(0xFF0FA958)
-                : (isHintStage
-                    ? const Color(0xFFF39C12)
-                    : const Color(0xFF607D8B)),
-          ),
         ),
       ],
     );
