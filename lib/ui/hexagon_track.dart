@@ -59,38 +59,75 @@ class HexagonTrack extends StatelessWidget {
       builder: (context, constraints) {
         const double aspectRatio = 3 / 2;
         const double fallbackWidth = 900;
+        const double mountainWidthShare = 0.76;
         final double baseWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : (constraints.maxHeight.isFinite
                 ? constraints.maxHeight * aspectRatio
                 : fallbackWidth);
-        final double maxWidthFromHeight = constraints.maxHeight.isFinite
-            ? constraints.maxHeight * aspectRatio
+        final double maxTotalWidthFromHeight = constraints.maxHeight.isFinite
+            ? (constraints.maxHeight * aspectRatio) / mountainWidthShare
             : double.infinity;
-        final double width =
-            (baseWidth * scale).clamp(0.0, maxWidthFromHeight).toDouble();
-        final double height = width / aspectRatio;
+        final double totalWidth = (baseWidth * scale)
+            .clamp(0.0, maxTotalWidthFromHeight)
+            .toDouble();
+        final double mountainWidth = totalWidth * mountainWidthShare;
+        final double mountainHeight = mountainWidth / aspectRatio;
+        final double sideWidth = (totalWidth - mountainWidth) / 2;
+        final double iconSize =
+            (mountainHeight * 0.30).clamp(24.0, sideWidth * 0.92).toDouble();
 
         return SizedBox(
-          width: width,
-          height: height,
-          child: Stack(
-            fit: StackFit.expand,
+          width: totalWidth,
+          height: mountainHeight,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Image.asset(
-                _backgroundAsset(),
-                fit: BoxFit.fill,
-                filterQuality: FilterQuality.high,
+              SizedBox(
+                width: sideWidth,
+                child: Center(
+                  child: Image.asset(
+                    'assets/icons/you.webp',
+                    width: iconSize,
+                    height: iconSize,
+                    fit: BoxFit.contain,
+                  ),
+                ),
               ),
-              ColoredBox(color: Colors.white.withValues(alpha: 0.32)),
-              CustomPaint(
-                painter: _MountainTrackPainter(
-                  leftSteps: tracks.left,
-                  rightSteps: tracks.right,
-                  youIndex: youIndex,
-                  rivalIndex: rivalIndex,
-                  youTrail: youTrail,
-                  rivalTrail: rivalTrail,
+              SizedBox(
+                width: mountainWidth,
+                height: mountainHeight,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.asset(
+                      _backgroundAsset(),
+                      fit: BoxFit.fill,
+                      filterQuality: FilterQuality.high,
+                    ),
+                    ColoredBox(color: Colors.white.withValues(alpha: 0.32)),
+                    CustomPaint(
+                      painter: _MountainTrackPainter(
+                        leftSteps: tracks.left,
+                        rightSteps: tracks.right,
+                        youIndex: youIndex,
+                        rivalIndex: rivalIndex,
+                        youTrail: youTrail,
+                        rivalTrail: rivalTrail,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: sideWidth,
+                child: Center(
+                  child: Image.asset(
+                    'assets/icons/rival.webp',
+                    width: iconSize,
+                    height: iconSize,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
             ],
