@@ -1491,6 +1491,19 @@ class SessionBody extends StatelessWidget {
             },
           )
         : baseTrackWidget;
+    final Widget displayTrackWidget = isNaming
+        ? SizedBox(
+            height: imageHeight * 0.95,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.topCenter,
+                child: trackWidget,
+              ),
+            ),
+          )
+        : trackWidget;
 
     final trialWidget = isNaming
         ? NamingView(
@@ -1740,7 +1753,7 @@ class SessionBody extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            trackWidget,
+            displayTrackWidget,
             content,
           ],
         ),
@@ -1751,7 +1764,7 @@ class SessionBody extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            trackWidget,
+            displayTrackWidget,
             if (isWeb) const SizedBox(height: 2),
             content,
           ],
@@ -1773,13 +1786,13 @@ class SessionBody extends StatelessWidget {
           ),
         );
         layout = Column(
-          mainAxisAlignment: MainAxisAlignment.start,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            landscapeTrackWidget,
-            content,
-          ],
-        );
+            mainAxisAlignment: MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              isNaming ? displayTrackWidget : landscapeTrackWidget,
+              content,
+            ],
+          );
       }
     }
 

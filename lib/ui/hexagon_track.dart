@@ -57,7 +57,11 @@ class HexagonTrack extends StatelessWidget {
             : (constraints.maxHeight.isFinite
                 ? constraints.maxHeight * aspectRatio
                 : fallbackWidth);
-        final double width = baseWidth * scale;
+        final double maxWidthFromHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight * aspectRatio
+            : double.infinity;
+        final double width =
+            (baseWidth * scale).clamp(0.0, maxWidthFromHeight).toDouble();
         final double height = width / aspectRatio;
 
         return SizedBox(
