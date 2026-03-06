@@ -284,6 +284,8 @@ class NamingController {
     Duration repeatWindow = const Duration(seconds: 3),
     bool allowRepeat = true,
     String? localeId,
+    bool Function()? isPaused,
+    Future<void> Function()? waitUntilResumed,
   }) async {
     _flowToken++;
     _sessionId++;
@@ -307,6 +309,8 @@ class NamingController {
       scorer: scorer,
       onTranscript: onTranscript,
       localeId: localeId,
+      isPaused: isPaused,
+      waitUntilResumed: waitUntilResumed,
     );
     if (!_isValid(localFlow, sessionId, isCurrent)) return null;
 
@@ -319,7 +323,7 @@ class NamingController {
       onPhase(NamingPhase.finished);
       return NamingFlowOutcome(
         correct: firstCorrect,
-        moves: firstCorrect ? 2 : 0,
+        moves: firstCorrect ? 1 : 0,
         transcript: _liveTranscript,
         attempts: 1,
         correctCount: firstCorrect ? 1 : 0,
@@ -341,6 +345,8 @@ class NamingController {
       scorer: scorer,
       onTranscript: onTranscript,
       localeId: localeId,
+      isPaused: isPaused,
+      waitUntilResumed: waitUntilResumed,
     );
     if (!_isValid(localFlow, sessionId, isCurrent)) return null;
 
@@ -380,6 +386,8 @@ class NamingController {
     required void Function(String transcript) onTranscript,
     void Function(String transcript, bool correct)? onScored,
     String? localeId,
+    bool Function()? isPaused,
+    Future<void> Function()? waitUntilResumed,
   }) async {
     final transcript = await _listenForDuration(
       duration,
@@ -388,6 +396,8 @@ class NamingController {
       isCurrent,
       onTranscript,
       localeId,
+      isPaused: isPaused,
+      waitUntilResumed: waitUntilResumed,
     );
     print('transcript: $transcript');
     if (!_isValid(flowToken, sessionId, isCurrent)) {
@@ -405,6 +415,7 @@ class NamingController {
     bool Function() isCurrent,
     void Function(String transcript) onTranscript,
     String? localeId,
+    {bool Function()? isPaused, Future<void> Function()? waitUntilResumed}
   ) async {
     _liveTranscript = '';
     _lastRecognizedWords = '';
@@ -494,11 +505,68 @@ class NamingController {
       );
     }
 
-    Future<void> waitForResult(Duration timeout) async {
+    Future<void> waitForResult(
+      Duration timeout, {
+      required String? activeLocale,
+      required stt.ListenMode mode,
+      required bool onDevice,
+      required bool partialResults,
+    }) async {
       final left = remainingBudget();
       if (left <= Duration.zero) return;
       final effectiveTimeout = timeout <= left ? timeout : left;
-      await Future.any([completer.future, Future.delayed(effectiveTimeout)]);
+      var remaining = effectiveTimeout;
+      var chunkStartedAt = DateTime.now();
+
+      Future<void> restartListening() async {
+        await startListen(
+          activeLocale,
+          mode: mode,
+          onDevice: onDevice,
+          partialResults: partialResults,
+        );
+      }
+
+      while (remaining > Duration.zero &&
+          !completer.isCompleted &&
+          _isValid(flowToken, sessionId, isCurrent)) {
+        final paused = isPaused?.call() ?? false;
+        if (paused) {
+          final elapsed = DateTime.now().difference(chunkStartedAt);
+          remaining -= elapsed;
+          if (remaining <= Duration.zero) break;
+          await _stopListening();
+          while ((isPaused?.call() ?? false) &&
+              _isValid(flowToken, sessionId, isCurrent)) {
+            if (waitUntilResumed != null) {
+              await waitUntilResumed();
+            } else {
+              await Future<void>.delayed(const Duration(milliseconds: 70));
+            }
+          }
+          if (!_isValid(flowToken, sessionId, isCurrent)) break;
+          try {
+            await restartListening();
+          } catch (e) {
+            _log(
+                '[naming][listen-restart-error] locale="$activeLocale" mode=$mode onDevice=$onDevice err=$e');
+            break;
+          }
+          chunkStartedAt = DateTime.now();
+          continue;
+        }
+
+        final slice = remaining <= const Duration(milliseconds: 120)
+            ? remaining
+            : const Duration(milliseconds: 120);
+        await Future.any([completer.future, Future.delayed(slice)]);
+        if (completer.isCompleted) break;
+        if (!_isValid(flowToken, sessionId, isCurrent)) break;
+        final elapsed = DateTime.now().difference(chunkStartedAt);
+        remaining -= elapsed;
+        chunkStartedAt = DateTime.now();
+      }
+
       await _stopListening();
     }
 
@@ -620,6 +688,10 @@ class NamingController {
         isAndroid
             ? duration + const Duration(milliseconds: 2600)
             : duration + const Duration(seconds: 1),
+        activeLocale: attemptLocale,
+        mode: primaryMode,
+        onDevice: false,
+        partialResults: true,
       );
       if (gotResultEvent || !_isValid(flowToken, sessionId, isCurrent)) break;
       if (!gotSoundLevel) break;
@@ -632,9 +704,15 @@ class NamingController {
           onDevice: false,
           partialResults: true,
         );
-        await waitForResult(isAndroid
-            ? const Duration(milliseconds: 1800)
-            : const Duration(milliseconds: 900));
+        await waitForResult(
+          isAndroid
+              ? const Duration(milliseconds: 1800)
+              : const Duration(milliseconds: 900),
+          activeLocale: attemptLocale,
+          mode: alternateMode,
+          onDevice: false,
+          partialResults: true,
+        );
       } catch (e) {
         _log(
             '[naming][listen-error] alt locale="$attemptLocale" mode=$alternateMode onDevice=false err=$e');
@@ -652,7 +730,13 @@ class NamingController {
             onDevice: true,
             partialResults: false,
           );
-          await waitForResult(const Duration(milliseconds: 1200));
+          await waitForResult(
+            const Duration(milliseconds: 1200),
+            activeLocale: attemptLocale,
+            mode: stt.ListenMode.confirmation,
+            onDevice: true,
+            partialResults: false,
+          );
         } catch (e) {
           _log(
               '[naming][listen-error] onDevice locale="$attemptLocale" mode=confirmation err=$e');
@@ -702,7 +786,7 @@ NamingFlowOutcome simulateNamingRunOutcome({
   if (firstCorrect || !allowRepeat) {
     return NamingFlowOutcome(
       correct: firstCorrect,
-      moves: firstCorrect ? 2 : 0,
+      moves: firstCorrect ? 1 : 0,
       transcript: '',
       attempts: 1,
       correctCount: firstCorrect ? 1 : 0,

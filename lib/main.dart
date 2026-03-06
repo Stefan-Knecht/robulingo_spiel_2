@@ -31,33 +31,33 @@ const List<Locale> _supportedLocales = <Locale>[
 ];
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await initializeInactivityBadgeFeature();
-  FlutterError.onError = (details) {
-    FlutterError.presentError(details);
-    _lastError.value = details.exceptionAsString();
-  };
-  PlatformDispatcher.instance.onError = (error, stack) {
-    FlutterError.reportError(
-        FlutterErrorDetails(exception: error, stack: stack));
-    _lastError.value = error.toString();
-    return true;
-  };
-  ErrorWidget.builder = (details) {
-    return Material(
-      color: Colors.white,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'Error: ${details.exceptionAsString()}',
-            textAlign: TextAlign.center,
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    await initializeInactivityBadgeFeature();
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      _lastError.value = details.exceptionAsString();
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FlutterError.reportError(
+          FlutterErrorDetails(exception: error, stack: stack));
+      _lastError.value = error.toString();
+      return true;
+    };
+    ErrorWidget.builder = (details) {
+      return Material(
+        color: Colors.white,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Error: ${details.exceptionAsString()}',
+              textAlign: TextAlign.center,
+            ),
           ),
         ),
-      ),
-    );
-  };
-  runZonedGuarded(() {
+      );
+    };
     runApp(
       MaterialApp(
         debugShowCheckedModeBanner: false,

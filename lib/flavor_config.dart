@@ -68,8 +68,15 @@ final String _rawAppFlavor =
         .trim()
         .toLowerCase();
 
+String _resolveFlavorId() {
+  final host = Uri.base.host.trim().toLowerCase();
+  if (host.contains('dailywords')) return 'dailywords';
+  if (host.contains('robulingo')) return 'robulingo';
+  return _rawAppFlavor;
+}
+
 final AppFlavorConfig activeFlavor =
-    _rawAppFlavor == 'dailywords' ? _dailyWordsFlavor : _robuLingoFlavor;
+    _resolveFlavorId() == 'dailywords' ? _dailyWordsFlavor : _robuLingoFlavor;
 
 Map<String, String> withFlavorHeader([Map<String, String>? headers]) {
   final out = <String, String>{};

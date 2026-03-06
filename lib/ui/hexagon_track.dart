@@ -1,31 +1,9 @@
-// ------------------------------------------------------------
-// Ziel (Laien): Hexagon-Gitter als gemeinsames Rennfeld rendern (Spieler & Rival).
-// Strategie: Gleiche Maße wie Ladder nutzen: Track-Breite in 20 Teilstücke, Hex-Form via vorgegebene Punkte, 10x3 Grid.
-// ------------------------------------------------------------
-import 'dart:math';
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../logic/hexagon_controller.dart';
-import '../logic/hexagon_grid.dart';
-import 'run_progress_ring.dart';
+import '../logic/mountain_tracks.dart';
 
-const Map<String, Map<String, String>> _hexTrackTooltipTexts = {
-  'virtual_rival': {
-    'en': 'Your virtual rival',
-    'de': 'Dein virtueller Gegner',
-    'ar': 'منافسك الافتراضي',
-    'fr': 'Votre rival virtuel',
-    'es': 'Tu rival virtual',
-    'it': 'Il tuo rivale virtuale',
-    'ru': 'Ваш виртуальный соперник',
-    'hi': 'आपका आभासी प्रतिद्वंद्वी',
-    'el': 'Ο εικονικός σου αντίπαλος',
-    'zh': '你的虚拟对手',
-    'tr': 'Sanal rakibin',
-    'ja': 'あなたのバーチャルライバル',
-  },
+const Map<String, Map<String, String>> _trackTooltipTexts = {
   'you': {
     'en': 'You',
     'de': 'Du',
@@ -40,10 +18,24 @@ const Map<String, Map<String, String>> _hexTrackTooltipTexts = {
     'tr': 'Sen',
     'ja': 'あなた',
   },
+  'rival': {
+    'en': 'Rival',
+    'de': 'Rivale',
+    'ar': 'منافس',
+    'fr': 'Rival',
+    'es': 'Rival',
+    'it': 'Rivale',
+    'ru': 'Соперник',
+    'hi': 'प्रतिद्वंद्वी',
+    'el': 'Αντίπαλος',
+    'zh': '对手',
+    'tr': 'Rakip',
+    'ja': 'ライバル',
+  },
 };
 
-String _hexTrackTooltipText(String key, String langCode) {
-  final values = _hexTrackTooltipTexts[key];
+String _trackTooltipText(String key, String langCode) {
+  final values = _trackTooltipTexts[key];
   if (values == null) return key;
   return values[langCode] ?? values['en'] ?? key;
 }
@@ -62,6 +54,9 @@ class HexagonTrack extends StatelessWidget {
     required this.youTrail,
     required this.rivalTrail,
     required this.tooltipLanguageCode,
+    required this.mountainTheme,
+    required this.mountainYouWon,
+    required this.mountainRivalWon,
     this.uiScale = 1.0,
     this.centerGrid = false,
     this.runsDone = 0,
@@ -78,512 +73,370 @@ class HexagonTrack extends StatelessWidget {
   final List<HexTrailPoint> youTrail;
   final List<HexTrailPoint> rivalTrail;
   final String tooltipLanguageCode;
+  final String mountainTheme;
+  final bool mountainYouWon;
+  final bool mountainRivalWon;
   final double uiScale;
   final bool centerGrid;
   final int runsDone;
 
+  String _normalizedTheme() {
+    const supported = <String>{'default', 'summer', 'snow', 'night'};
+    return supported.contains(mountainTheme) ? mountainTheme : 'default';
+  }
+
+  String _backgroundAsset() {
+    final prefix = 'assets/icons/Mountain_${_normalizedTheme()}_';
+    if (mountainRivalWon) return '${prefix}orange.webp';
+    if (mountainYouWon) return '${prefix}blue.webp';
+    return '${prefix}color.webp';
+  }
+
+  String _fallbackBackgroundAsset() {
+    if (mountainRivalWon) return 'assets/icons/mountain_orange.png';
+    if (mountainYouWon) return 'assets/icons/mountain_blue.png';
+    return 'assets/icons/mountain_color.png';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final rivalTooltip =
-        _hexTrackTooltipText('virtual_rival', tooltipLanguageCode);
-    final playerTooltip = _hexTrackTooltipText('you', tooltipLanguageCode);
-    final size = MediaQuery.of(context).size;
-    final bool isLandscape = size.width > size.height;
-    final double scale = (kIsWeb ? 0.75 : 1.0) * uiScale;
-    final double labelWidth = (isLandscape ? 100.0 : 52.0) * scale;
-    final double iconSize = (isLandscape ? 176.0 : 52.0) * scale;
-    final double flagSize = (isLandscape ? 160.0 : 44.0) * scale;
-    final double marginFactor = isLandscape ? 0.2 : 0.15;
-    final double flagColumnWidth = (isLandscape ? 100.0 : 58.0) * scale;
-    final double gridStrokeWidth = (isLandscape ? 1.6 : 1.0) * scale;
-    final double markerRadius = (isLandscape ? 48.0 : 10.0) * scale;
-    final double trailStrokeWidth = (isLandscape ? 10.0 : 5.0) * scale;
-    final EdgeInsets outerPadding = EdgeInsets.symmetric(
-      horizontal: (isLandscape ? 16 : 8) * scale,
-      vertical: 8 * scale,
-    );
+    final tracks = buildDefaultMountainTracks();
+    final double scale = uiScale.clamp(0.4, 2.0);
+    final youTooltip = _trackTooltipText('you', tooltipLanguageCode);
+    final rivalTooltip = _trackTooltipText('rival', tooltipLanguageCode);
 
-    return Padding(
-      padding: outerPadding,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final unitGrid = buildHexGrid(side: 1.0);
-          final double unitMinX =
-              unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a < b ? a : b);
-          final double unitMaxX =
-              unitGrid.nodes.map((p) => p.dx).reduce((a, b) => a > b ? a : b);
-          final double widthFactor = unitMaxX - unitMinX;
-          final double availableWidthBase = centerGrid
-              ? constraints.maxWidth
-              : constraints.maxWidth - labelWidth - flagColumnWidth;
-          final double maxAvailableWidth = 2000.0 * uiScale;
-          final double availableWidth = (availableWidthBase * scale)
-              .clamp(80.0 * scale, maxAvailableWidth)
-              .toDouble();
-          final double side = availableWidth / (widthFactor + 2 * marginFactor);
+    final board = LayoutBuilder(
+      builder: (context, constraints) {
+        const double aspectRatio = 3 / 2;
+        const double fallbackWidth = 900;
+        const double mountainWidthShare = 0.78;
+        final double baseWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : (constraints.maxHeight.isFinite
+                ? constraints.maxHeight * aspectRatio
+                : fallbackWidth);
+        final double maxTotalWidthFromHeight = constraints.maxHeight.isFinite
+            ? (constraints.maxHeight * aspectRatio) / mountainWidthShare
+            : double.infinity;
+        final double totalWidth =
+            (baseWidth * scale).clamp(0.0, maxTotalWidthFromHeight).toDouble();
+        final double mountainWidth = totalWidth * mountainWidthShare;
+        final double mountainHeight = mountainWidth / aspectRatio;
+        final double sideWidth = (totalWidth - mountainWidth) / 2;
+        final double mountainLeft = (totalWidth - mountainWidth) / 2;
+        final double iconSize =
+            (mountainHeight * 0.30).clamp(24.0, sideWidth * 0.92).toDouble();
 
-          final grid = buildHexGrid(side: side);
-          final double minX =
-              grid.nodes.map((p) => p.dx).reduce((a, b) => a < b ? a : b);
-          final double maxX =
-              grid.nodes.map((p) => p.dx).reduce((a, b) => a > b ? a : b);
-          final double minY =
-              grid.nodes.map((p) => p.dy).reduce((a, b) => a < b ? a : b);
-          final double maxY =
-              grid.nodes.map((p) => p.dy).reduce((a, b) => a > b ? a : b);
-          final double margin = side * marginFactor;
-          final Offset translation = Offset(-minX + margin, -minY + margin);
-
-          final List<_HexCell> shiftedCells = grid.cells
-              .map((cell) => _HexCell(
-                    row: cell.row,
-                    col: cell.col,
-                    points: cell.points.map((p) => p + translation).toList(),
-                  ))
-              .toList();
-          final List<Offset> shiftedNodes =
-              grid.nodes.map((p) => p + translation).toList();
-
-          final trackWidth = (maxX - minX) + 2 * margin;
-          final trackHeight = (maxY - minY) + 2 * margin;
-          const int lastCol = hexagonGridCols - 1;
-          final List<_Edge> finishEdges = shiftedCells
-              .where((c) => c.col == lastCol && c.row == 1)
-              .map((c) => _Edge(c.points[1], c.points[2]))
-              .toList();
-          final iconsHeight = iconSize * 2 + 12 * scale;
-          final baseHeight =
-              iconsHeight > trackHeight ? iconsHeight : trackHeight;
-          final totalWidth = labelWidth + trackWidth + flagColumnWidth;
-          final int playerStartIdx = grid.nodeIndexFor(0, 0, 4) ?? 0;
-          final int rivalStartIdx = grid.nodeIndexFor(2, 0, 5) ?? 0;
-          final Offset playerStartPos = shiftedNodes[playerStartIdx];
-          final Offset rivalStartPos = shiftedNodes[rivalStartIdx];
-          final double topBandStart = 0.05 * trackHeight;
-          final double topBandEnd = 0.4 * trackHeight;
-          final double bottomBandStart = 0.6 * trackHeight;
-          final double bottomBandEnd = 0.95 * trackHeight;
-          final double topBandMin = topBandStart;
-          final double topBandMax = topBandEnd - iconSize;
-          final double bottomBandMin = bottomBandStart;
-          final double bottomBandMax = bottomBandEnd - iconSize;
-          final double safeTopMax =
-              topBandMax >= topBandMin ? topBandMax : topBandMin;
-          final double safeBottomMax =
-              bottomBandMax >= bottomBandMin ? bottomBandMax : bottomBandMin;
-          double playerTop =
-              ((playerStartPos.dy - iconSize / 2).clamp(topBandMin, safeTopMax))
-                  .toDouble();
-          double rivalTop = ((rivalStartPos.dy - iconSize / 2)
-                  .clamp(bottomBandMin, safeBottomMax))
-              .toDouble();
-          final double flagTopPlayer = (trackHeight / 2) - flagSize - 4;
-          final double flagTopRival = (trackHeight / 2) + 4;
-          final bool showGoalFlags = !youFlagVisible && !rivalFlagVisible;
-          final double goalFlagsSize = flagSize * 3.0;
-          final double upperFlagTop =
-              flagTopPlayer < flagTopRival ? flagTopPlayer : flagTopRival;
-          final double lowerFlagTop =
-              flagTopPlayer > flagTopRival ? flagTopPlayer : flagTopRival;
-          final double upperFlagCenter = upperFlagTop + flagSize / 2;
-          final double lowerFlagCenter = lowerFlagTop + flagSize / 2;
-          final double goalFlagsTop =
-              ((upperFlagCenter + lowerFlagCenter) / 2) - goalFlagsSize / 2;
-          final double runRingSize = flagSize * 0.75;
-          final double runRingTop = ((lowerFlagTop + flagSize + 4 * scale)
-                  .clamp(0.0, max(0.0, trackHeight - runRingSize)))
-              .toDouble();
-
-          if (centerGrid) {
-            final double totalHeight = baseHeight + 24 * scale;
-            return SizedBox(
-              height: totalHeight,
-              width: constraints.maxWidth,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: SizedBox(
-                  width: trackWidth,
-                  height: totalHeight,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      SizedBox(
-                        width: trackWidth,
-                        height: trackHeight,
-                        child: CustomPaint(
-                          size: Size(trackWidth, trackHeight),
-                          painter: _HexagonPainter(
-                            cells: shiftedCells,
-                            nodes: shiftedNodes,
-                            youIndex: youIndex,
-                            rivalIndex: rivalIndex,
-                            youTrail: youTrail,
-                            rivalTrail: rivalTrail,
-                            finishEdges: finishEdges,
-                            gridStrokeWidth: gridStrokeWidth,
-                            markerRadius: markerRadius,
-                            trailStrokeWidth: trailStrokeWidth,
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        left: -labelWidth,
-                        top: 0,
-                        child: SizedBox(
-                          width: labelWidth,
-                          height: trackHeight,
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              Positioned(
-                                left: (labelWidth - iconSize) / 2,
-                                top: rivalTop,
-                                child: Tooltip(
-                                  message: rivalTooltip,
-                                  child: Image.asset(
-                                    'assets/icons/rival.webp',
-                                    width: iconSize,
-                                    height: iconSize,
-                                    fit: BoxFit.contain,
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                left: (labelWidth - iconSize) / 2,
-                                top: playerTop,
-                                child: Tooltip(
-                                  message: playerTooltip,
-                                  child: Image.asset(
-                                    'assets/icons/player.webp',
-                                    width: iconSize,
-                                    height: iconSize,
-                                    fit: BoxFit.contain,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        left: trackWidth,
-                        top: 0,
-                        child: SizedBox(
-                          width: flagColumnWidth,
-                          height: trackHeight,
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              if (showGoalFlags)
-                                Positioned(
-                                  left: (flagColumnWidth - goalFlagsSize) / 2,
-                                  top: goalFlagsTop,
-                                  child: Image.asset(
-                                    'assets/icons/goalflags.webp',
-                                    width: goalFlagsSize,
-                                    height: goalFlagsSize,
-                                    fit: BoxFit.contain,
-                                  ),
-                                ),
-                              if (youFlagVisible)
-                                Positioned(
-                                  left: (flagColumnWidth - flagSize) / 2,
-                                  top: flagTopPlayer,
-                                  child: Transform.rotate(
-                                    angle: youFlagAngle,
-                                    child: Image.asset(
-                                      'assets/icons/flag_player_$youFlagShowIndex.webp',
-                                      width: flagSize,
-                                      height: flagSize,
-                                      fit: BoxFit.contain,
-                                    ),
-                                  ),
-                                ),
-                              if (rivalFlagVisible)
-                                Positioned(
-                                  left: (flagColumnWidth - flagSize) / 2,
-                                  top: flagTopRival,
-                                  child: Transform.rotate(
-                                    angle: rivalFlagAngle,
-                                    child: Image.asset(
-                                      'assets/icons/flag_rival_$rivalFlagShowIndex.webp',
-                                      width: flagSize,
-                                      height: flagSize,
-                                      fit: BoxFit.contain,
-                                    ),
-                                  ),
-                                ),
-                              Positioned(
-                                left: (flagColumnWidth - runRingSize) / 2,
-                                top: runRingTop,
-                                child: RunProgressRing(
-                                  runsDone,
-                                  size: runRingSize,
-                                  strokeWidth: runRingSize * 0.14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }
-
-          return SizedBox(
-            height: baseHeight + 24 * scale,
-            width: totalWidth,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        return SizedBox(
+          width: totalWidth,
+          height: mountainHeight,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                left: mountainLeft,
+                top: 0,
+                width: mountainWidth,
+                height: mountainHeight,
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    SizedBox(
-                      width: labelWidth,
-                      height: trackHeight,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Positioned(
-                            left: (labelWidth - iconSize) / 2,
-                            top: rivalTop,
-                            child: Tooltip(
-                              message: rivalTooltip,
-                              child: Image.asset(
-                                'assets/icons/rival.webp',
-                                width: iconSize,
-                                height: iconSize,
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            left: (labelWidth - iconSize) / 2,
-                            top: playerTop,
-                            child: Tooltip(
-                              message: playerTooltip,
-                              child: Image.asset(
-                                'assets/icons/player.webp',
-                                width: iconSize,
-                                height: iconSize,
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                    Image.asset(
+                      _backgroundAsset(),
+                      fit: BoxFit.fill,
+                      filterQuality: FilterQuality.high,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Image.asset(
+                          _fallbackBackgroundAsset(),
+                          fit: BoxFit.fill,
+                          filterQuality: FilterQuality.high,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const SizedBox.expand(),
+                        );
+                      },
                     ),
-                    SizedBox(
-                      width: trackWidth,
-                      height: trackHeight,
-                      child: CustomPaint(
-                        size: Size(trackWidth, trackHeight),
-                        painter: _HexagonPainter(
-                          cells: shiftedCells,
-                          nodes: shiftedNodes,
-                          youIndex: youIndex,
-                          rivalIndex: rivalIndex,
-                          youTrail: youTrail,
-                          rivalTrail: rivalTrail,
-                          finishEdges: finishEdges,
-                          gridStrokeWidth: gridStrokeWidth,
-                          markerRadius: markerRadius,
-                          trailStrokeWidth: trailStrokeWidth,
-                        ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: flagColumnWidth,
-                      height: trackHeight,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          if (showGoalFlags)
-                            Positioned(
-                              left: (flagColumnWidth - goalFlagsSize) / 2,
-                              top: goalFlagsTop,
-                              child: Image.asset(
-                                'assets/icons/goalflags.webp',
-                                width: goalFlagsSize,
-                                height: goalFlagsSize,
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                          if (youFlagVisible)
-                            Positioned(
-                              left: (flagColumnWidth - flagSize) / 2,
-                              top: flagTopPlayer,
-                              child: Transform.rotate(
-                                angle: youFlagAngle,
-                                child: Image.asset(
-                                  'assets/icons/flag_player_$youFlagShowIndex.webp',
-                                  width: flagSize,
-                                  height: flagSize,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ),
-                          if (rivalFlagVisible)
-                            Positioned(
-                              left: (flagColumnWidth - flagSize) / 2,
-                              top: flagTopRival,
-                              child: Transform.rotate(
-                                angle: rivalFlagAngle,
-                                child: Image.asset(
-                                  'assets/icons/flag_rival_$rivalFlagShowIndex.webp',
-                                  width: flagSize,
-                                  height: flagSize,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ),
-                          Positioned(
-                            left: (flagColumnWidth - runRingSize) / 2,
-                            top: runRingTop,
-                            child: RunProgressRing(
-                              runsDone,
-                              size: runRingSize,
-                              strokeWidth: runRingSize * 0.14,
-                            ),
-                          ),
-                        ],
+                    ColoredBox(color: Colors.white.withValues(alpha: 0.32)),
+                    CustomPaint(
+                      painter: _MountainTrackPainter(
+                        leftSteps: tracks.left,
+                        rightSteps: tracks.right,
+                        youIndex: youIndex,
+                        rivalIndex: rivalIndex,
+                        youTrail: youTrail,
+                        rivalTrail: rivalTrail,
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          );
-        },
-      ),
+              ),
+              Positioned(
+                left: 0,
+                top: 0,
+                width: sideWidth,
+                height: mountainHeight,
+                child: Center(
+                  child: Tooltip(
+                    message: youTooltip,
+                    child: Image.asset(
+                      'assets/icons/you.webp',
+                      width: iconSize,
+                      height: iconSize,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 0,
+                top: 0,
+                width: sideWidth,
+                height: mountainHeight,
+                child: Center(
+                  child: Tooltip(
+                    message: rivalTooltip,
+                    child: Image.asset(
+                      'assets/icons/rival.webp',
+                      width: iconSize,
+                      height: iconSize,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!centerGrid) return board;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: FractionallySizedBox(widthFactor: 0.9, child: board),
     );
   }
 }
 
-class _HexagonPainter extends CustomPainter {
-  _HexagonPainter({
-    required this.cells,
-    required this.nodes,
+class _MountainTrackPainter extends CustomPainter {
+  _MountainTrackPainter({
+    required this.leftSteps,
+    required this.rightSteps,
     required this.youIndex,
     required this.rivalIndex,
     required this.youTrail,
     required this.rivalTrail,
-    required this.finishEdges,
-    required this.gridStrokeWidth,
-    required this.markerRadius,
-    required this.trailStrokeWidth,
   });
 
-  final List<_HexCell> cells;
-  final List<Offset> nodes;
+  final List<Offset> leftSteps;
+  final List<Offset> rightSteps;
   final int youIndex;
   final int rivalIndex;
   final List<HexTrailPoint> youTrail;
   final List<HexTrailPoint> rivalTrail;
-  final List<_Edge> finishEdges;
-  final double gridStrokeWidth;
-  final double markerRadius;
-  final double trailStrokeWidth;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final nodePositions = nodes;
+    final left = leftSteps.map((p) => _toCanvas(p, size)).toList();
+    final right = rightSteps.map((p) => _toCanvas(p, size)).toList();
+    final leftVisited = youTrail.map((e) => e.index).toSet();
+    final rightVisited = rivalTrail.map((e) => e.index).toSet();
 
-    final gridPaint = Paint()
-      ..color = Colors.black
+    _drawTrackPolyline(canvas, left, const Color(0xFF1E40AF));
+    _drawTrackPolyline(canvas, right, const Color(0xFFD97706));
+
+    _drawTrail(
+      canvas,
+      left,
+      youTrail,
+      const Color(0xCC1E40AF),
+      size.shortestSide * 0.0062,
+    );
+    _drawTrail(
+      canvas,
+      right,
+      rivalTrail,
+      const Color(0xCCD97706),
+      size.shortestSide * 0.0062,
+    );
+
+    _drawNodes(
+      canvas,
+      left,
+      visited: leftVisited,
+      baseColor: const Color(0xFF1D4ED8),
+      otherColor: const Color(0xFF6B7280),
+      radius: size.shortestSide * 0.0052,
+    );
+    _drawNodes(
+      canvas,
+      right,
+      visited: rightVisited,
+      baseColor: const Color(0xFFF59E0B),
+      otherColor: const Color(0xFF6B7280),
+      radius: size.shortestSide * 0.0052,
+    );
+
+    _drawNextHighlight(
+      canvas,
+      points: left,
+      currentIndex: youIndex,
+      color: const Color(0xFF1D4ED8),
+      radius: size.shortestSide * 0.011,
+    );
+    _drawNextHighlight(
+      canvas,
+      points: right,
+      currentIndex: rivalIndex,
+      color: const Color(0xFFF59E0B),
+      radius: size.shortestSide * 0.011,
+    );
+
+    _drawClimber(
+      canvas,
+      points: left,
+      index: youIndex,
+      fill: const Color(0xFF1D4ED8),
+      radius: size.shortestSide * 0.063,
+      yOffset: -size.shortestSide * 0.0255,
+    );
+    _drawClimber(
+      canvas,
+      points: right,
+      index: rivalIndex,
+      fill: const Color(0xFFF59E0B),
+      radius: size.shortestSide * 0.063,
+      yOffset: size.shortestSide * 0.0255,
+    );
+  }
+
+  void _drawTrackPolyline(Canvas canvas, List<Offset> points, Color color) {
+    if (points.length < 2) return;
+    final path = Path()..moveTo(points.first.dx, points.first.dy);
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.70)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = gridStrokeWidth;
-    for (final cell in cells) {
-      final path = Path()..addPolygon(cell.points, true);
-      canvas.drawPath(path, gridPaint);
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 5.04;
+    canvas.drawPath(path, paint);
+  }
+
+  void _drawTrail(
+    Canvas canvas,
+    List<Offset> points,
+    List<HexTrailPoint> trail,
+    Color color,
+    double width,
+  ) {
+    if (trail.length < 2) return;
+    final clean = trail
+        .map((e) => e.index)
+        .where((i) => i >= 0 && i < points.length)
+        .toList();
+    if (clean.length < 2) return;
+
+    final path = Path()..moveTo(points[clean.first].dx, points[clean.first].dy);
+    for (int i = 1; i < clean.length; i++) {
+      path.lineTo(points[clean[i]].dx, points[clean[i]].dy);
     }
 
-    final finishPaint = Paint()
-      ..color = Colors.green.shade700.withValues(alpha: 0.95)
-      ..strokeWidth = 8.0;
-    for (final edge in finishEdges) {
-      canvas.drawLine(edge.a, edge.b, finishPaint);
-    }
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(path, paint);
+  }
 
-    void drawTrail(List<HexTrailPoint> trail, Color color) {
-      if (trail.length < 2) return;
-      final paint = Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = trailStrokeWidth
-        ..strokeCap = StrokeCap.round;
-      final points = trail
-          .map((pt) => (pt.index >= 0 && pt.index < nodePositions.length)
-              ? nodePositions[pt.index]
-              : null)
-          .where((p) => p != null)
-          .cast<Offset>()
-          .toList();
-      for (int i = 0; i < points.length - 1; i++) {
-        canvas.drawLine(points[i], points[i + 1], paint);
-      }
-    }
+  void _drawNodes(
+    Canvas canvas,
+    List<Offset> points, {
+    required Set<int> visited,
+    required Color baseColor,
+    required Color otherColor,
+    required double radius,
+  }) {
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = radius * 0.65;
+    final fill = Paint()..style = PaintingStyle.fill;
 
-    drawTrail(youTrail, Colors.blue.withValues(alpha: 0.65));
-    drawTrail(rivalTrail, Colors.orange.withValues(alpha: 0.65));
-
-    Offset? nodeFor(int idx) {
-      if (idx < 0 || idx >= nodePositions.length) return null;
-      return nodePositions[idx];
-    }
-
-    final youCenter = nodeFor(youIndex);
-    final rivalCenter = nodeFor(rivalIndex);
-    if (youCenter != null) {
-      final paint = Paint()
-        ..color = Colors.blue.withValues(alpha: 0.8)
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(
-          youCenter.translate(0, -markerRadius * 0.3), markerRadius, paint);
-    }
-    if (rivalCenter != null) {
-      final paint = Paint()
-        ..color = Colors.orange.withValues(alpha: 0.8)
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(
-          rivalCenter.translate(0, markerRadius * 0.3), markerRadius, paint);
+    for (int i = 0; i < points.length; i++) {
+      final isVisited = visited.contains(i);
+      fill.color = isVisited
+          ? baseColor.withValues(alpha: 0.88)
+          : Colors.white.withValues(alpha: 0.80);
+      stroke.color = isVisited
+          ? Colors.white.withValues(alpha: 0.95)
+          : otherColor.withValues(alpha: 0.86);
+      canvas.drawCircle(points[i], radius, fill);
+      canvas.drawCircle(points[i], radius, stroke);
     }
   }
 
+  void _drawNextHighlight(
+    Canvas canvas, {
+    required List<Offset> points,
+    required int currentIndex,
+    required Color color,
+    required double radius,
+  }) {
+    if (points.isEmpty) return;
+    final next = (currentIndex + 1).clamp(0, points.length - 1);
+    if (next == currentIndex && currentIndex >= points.length - 1) return;
+    final center = points[next];
+
+    final halo = Paint()
+      ..color = color.withValues(alpha: 0.22)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, radius * 1.95, halo);
+
+    final ring = Paint()
+      ..color = color.withValues(alpha: 0.96)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = radius * 0.55;
+    canvas.drawCircle(center, radius, ring);
+  }
+
+  void _drawClimber(
+    Canvas canvas, {
+    required List<Offset> points,
+    required int index,
+    required Color fill,
+    required double radius,
+    required double yOffset,
+  }) {
+    if (points.isEmpty) return;
+    final clamped = index.clamp(0, points.length - 1);
+    final center = points[clamped].translate(0, yOffset);
+
+    final body = Paint()
+      ..color = fill
+      ..style = PaintingStyle.fill;
+    final outline = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = radius * 0.25;
+
+    canvas.drawCircle(center, radius, body);
+    canvas.drawCircle(center, radius, outline);
+  }
+
+  Offset _toCanvas(Offset normalized, Size size) {
+    return Offset(normalized.dx * size.width, normalized.dy * size.height);
+  }
+
   @override
-  bool shouldRepaint(covariant _HexagonPainter oldDelegate) {
-    return oldDelegate.youIndex != youIndex ||
+  bool shouldRepaint(covariant _MountainTrackPainter oldDelegate) {
+    return oldDelegate.leftSteps != leftSteps ||
+        oldDelegate.rightSteps != rightSteps ||
+        oldDelegate.youIndex != youIndex ||
         oldDelegate.rivalIndex != rivalIndex ||
         oldDelegate.youTrail != youTrail ||
-        oldDelegate.rivalTrail != rivalTrail ||
-        oldDelegate.nodes != nodes ||
-        oldDelegate.finishEdges != finishEdges ||
-        oldDelegate.trailStrokeWidth != trailStrokeWidth;
+        oldDelegate.rivalTrail != rivalTrail;
   }
-}
-
-class _HexCell {
-  _HexCell({required this.row, required this.col, required this.points});
-  final int row;
-  final int col;
-  final List<Offset> points;
-}
-
-class _Edge {
-  _Edge(this.a, this.b);
-  final Offset a;
-  final Offset b;
-
-  @override
-  bool operator ==(Object other) {
-    return other is _Edge &&
-        ((a == other.a && b == other.b) || (a == other.b && b == other.a));
-  }
-
-  @override
-  int get hashCode => a.hashCode ^ b.hashCode;
 }

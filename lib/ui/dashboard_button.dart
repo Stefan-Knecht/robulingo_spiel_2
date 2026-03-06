@@ -13,12 +13,20 @@ class DashboardButtonRow extends StatefulWidget {
     required this.onTap,
     this.showHourglass = false,
     this.hourglassWiggle = false,
+    this.hourglassMicStage = -1,
+    this.hourglassMicOn = false,
+    this.hourglassMicPaused = false,
+    this.onHourglassTap,
   });
 
   final bool show;
   final VoidCallback onTap;
   final bool showHourglass;
   final bool hourglassWiggle;
+  final int hourglassMicStage;
+  final bool hourglassMicOn;
+  final bool hourglassMicPaused;
+  final VoidCallback? onHourglassTap;
 
   @override
   State<DashboardButtonRow> createState() => _DashboardButtonRowState();
@@ -42,13 +50,21 @@ class _DashboardButtonRowState extends State<DashboardButtonRow> with SingleTick
   @override
   void didUpdateWidget(covariant DashboardButtonRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.hourglassWiggle != widget.hourglassWiggle || oldWidget.showHourglass != widget.showHourglass) {
+    if (oldWidget.hourglassWiggle != widget.hourglassWiggle ||
+        oldWidget.showHourglass != widget.showHourglass ||
+        oldWidget.hourglassMicStage != widget.hourglassMicStage ||
+        oldWidget.hourglassMicOn != widget.hourglassMicOn ||
+        oldWidget.hourglassMicPaused != widget.hourglassMicPaused) {
       _syncWiggle();
     }
   }
 
   void _syncWiggle() {
-    if (widget.showHourglass && widget.hourglassWiggle) {
+    final bool isListeningStage =
+        widget.hourglassMicStage == 0 || widget.hourglassMicStage == 2;
+    final bool recordingActive =
+        isListeningStage && widget.hourglassMicOn && !widget.hourglassMicPaused;
+    if (widget.showHourglass && widget.hourglassWiggle && recordingActive) {
       _wiggle.repeat(reverse: true);
     } else {
       _wiggle.stop();
@@ -94,8 +110,12 @@ class _DashboardButtonRowState extends State<DashboardButtonRow> with SingleTick
                   borderRadius: BorderRadius.circular(14),
                   boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
                 ),
-                child: const Center(
-                  child: Icon(Icons.mic, size: 24, color: Colors.black87),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: widget.onHourglassTap,
+                  child: Center(
+                    child: _hourglassIcon(),
+                  ),
                 ),
               ),
             ),
@@ -103,6 +123,19 @@ class _DashboardButtonRowState extends State<DashboardButtonRow> with SingleTick
         ],
       ),
     );
+  }
+
+  Widget _hourglassIcon() {
+    final bool isListeningStage =
+        widget.hourglassMicStage == 0 || widget.hourglassMicStage == 2;
+    final bool isHintStage = widget.hourglassMicStage == 1;
+    final bool recordingActive =
+        isListeningStage && widget.hourglassMicOn && !widget.hourglassMicPaused;
+    final IconData icon = isHintStage ? Icons.volume_up : Icons.mic;
+    final Color color = isHintStage
+        ? const Color(0xFFF39C12)
+        : (recordingActive ? const Color(0xFF0FA958) : Colors.black54);
+    return Icon(icon, size: 24, color: color);
   }
 
   Widget _dashButton({required VoidCallback onTap}) {

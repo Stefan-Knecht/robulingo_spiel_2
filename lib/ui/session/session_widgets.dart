@@ -147,6 +147,10 @@ const Map<String, Map<String, String>> _sessionMenuTooltipTexts = {
     'en': 'Session menu',
     'de': 'Sitzungsmenü',
   },
+  'open_dashboard': {
+    'en': 'Open player dashboard',
+    'de': 'Spieler-Dashboard öffnen',
+  },
   'exit_to_resume_panel': {
     'en': 'Exit to resume panel',
     'de': 'Zum Resume-Panel',
@@ -921,6 +925,7 @@ class NamingView extends StatelessWidget {
     required this.namingHold,
     required this.showHourglass,
     required this.namingInProgress,
+    required this.namingStartPending,
     required this.showTinySpinner,
     required this.liveTranscript,
     required this.onStartNaming,
@@ -943,6 +948,7 @@ class NamingView extends StatelessWidget {
   final bool namingHold;
   final bool showHourglass;
   final bool namingInProgress;
+  final bool namingStartPending;
   final bool showTinySpinner;
   final String liveTranscript;
   final VoidCallback onStartNaming;
@@ -954,9 +960,9 @@ class NamingView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const bool isWeb = kIsWeb;
-    final double gapHourglass = isWeb ? 2 : 6;
-    final double cardMargin = isWeb ? 4 : 8;
-    final double cardPadding = isWeb ? 8 : 12;
+    const double gapHourglass = isWeb ? 1 : 4;
+    const double cardMargin = isWeb ? 2 : 6;
+    const double cardPadding = isWeb ? 6 : 10;
     final bool isCorrect = namingOutcome == true;
     final Color borderColor = namingOutcome == null
         ? Colors.grey.shade400
@@ -977,7 +983,11 @@ class NamingView extends StatelessWidget {
       required double tileHeight,
     }) {
       final bool showOutcome = isTarget && namingOutcome != null;
-      final Widget image = Image.memory(bytes, fit: BoxFit.contain);
+      final Widget image = Image.memory(
+        bytes,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) => _imageLoadFallback(),
+      );
       final Widget imageLayer = dimNonTarget
           ? Stack(
               fit: StackFit.expand,
@@ -992,7 +1002,7 @@ class NamingView extends StatelessWidget {
           : image;
 
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 3),
         child: SizedBox(
           width: tileWidth,
           height: tileHeight,
@@ -1019,8 +1029,8 @@ class NamingView extends StatelessWidget {
       children: [
         AnimatedContainer(
           duration: const Duration(milliseconds: 250),
-          margin: EdgeInsets.all(cardMargin),
-          padding: EdgeInsets.all(cardPadding),
+          margin: const EdgeInsets.all(cardMargin),
+          padding: const EdgeInsets.all(cardPadding),
           decoration: BoxDecoration(
             color: cardFill,
             border: Border.all(
@@ -1037,7 +1047,7 @@ class NamingView extends StatelessWidget {
                       : imageHeight * 1.5;
                   final double desiredWidth = imageHeight * 0.75;
                   final double availableWidth =
-                      (maxWidth - 24).clamp(0.0, maxWidth).toDouble();
+                      (maxWidth - 12).clamp(0.0, maxWidth).toDouble();
                   final double tileWidth =
                       (availableWidth / 2).clamp(0.0, desiredWidth).toDouble();
                   final double tileHeight =
@@ -1095,13 +1105,13 @@ class NamingView extends StatelessWidget {
         ),
         if (showHourglass && !isWeb)
           Padding(
-            padding: EdgeInsets.only(top: gapHourglass),
+            padding: const EdgeInsets.only(top: gapHourglass),
             child: Icon(Icons.hourglass_top,
                 size: 18, color: Colors.grey.shade700),
           ),
         if (liveTranscript.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.only(top: 6),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
@@ -1121,7 +1131,7 @@ class NamingView extends StatelessWidget {
           ),
         if (namingStatus.trim().isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.only(top: 6),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
@@ -1140,26 +1150,30 @@ class NamingView extends StatelessWidget {
               ),
             ),
           ),
-        if (namingOutcome == null && !namingInProgress)
+        if (namingOutcome == null && !namingInProgress && !namingStartPending)
           Padding(
-            padding: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.only(top: 6),
             child: Wrap(
               alignment: WrapAlignment.center,
               spacing: 8,
               runSpacing: 8,
               children: [
                 ElevatedButton.icon(
-                  onPressed: namingInProgress ? null : onStartNaming,
+                  onPressed: (namingInProgress || namingStartPending)
+                      ? null
+                      : onStartNaming,
                   icon: const Icon(Icons.mic, size: 16),
                   label: Text(!micPrimed ? 'Start naming' : 'Retry mic'),
                 ),
                 OutlinedButton.icon(
-                  onPressed: namingInProgress ? null : onOpenSettings,
+                  onPressed: (namingInProgress || namingStartPending)
+                      ? null
+                      : onOpenSettings,
                   icon: const Icon(Icons.settings, size: 16),
                   label: const Text('Settings'),
                 ),
                 TextButton(
-                  onPressed: namingInProgress
+                  onPressed: (namingInProgress || namingStartPending)
                       ? null
                       : () => onContinueWithoutMic('manual_button'),
                   child: const Text('Without mic'),
@@ -1320,6 +1334,8 @@ class _TrialOption extends StatelessWidget {
                 child: Image.memory(
                   imageBytes,
                   fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _imageLoadFallback(),
                 ),
               ),
             ),
@@ -1328,6 +1344,14 @@ class _TrialOption extends StatelessWidget {
       ),
     );
   }
+}
+
+Widget _imageLoadFallback() {
+  return Container(
+    color: const Color(0xFFF3F4F6),
+    alignment: Alignment.center,
+    child: const Icon(Icons.broken_image_outlined, color: Color(0xFF9CA3AF)),
+  );
 }
 
 class SessionBody extends StatelessWidget {
@@ -1351,7 +1375,10 @@ class SessionBody extends StatelessWidget {
     required this.namingHold,
     required this.showHourglass,
     required this.namingInProgress,
+    required this.namingStartPending,
     required this.micOn,
+    required this.micStage,
+    required this.namingPaused,
     required this.showTinySpinner,
     required this.liveTranscript,
     required this.targetText,
@@ -1373,10 +1400,14 @@ class SessionBody extends StatelessWidget {
     required this.onPlayAudioHint,
     required this.showDashboardButton,
     required this.showGlobalHourglass,
+    required this.mountainTheme,
+    required this.mountainYouWon,
+    required this.mountainRivalWon,
     required this.onPrimeMic,
     required this.onOpenMicSettings,
     required this.onContinueWithoutMic,
     required this.onSkipNaming,
+    required this.onToggleNamingPauseResume,
     required this.onSelect,
     required this.onOpenDashboard,
     required this.tooltipLanguageCode,
@@ -1402,7 +1433,10 @@ class SessionBody extends StatelessWidget {
   final bool namingHold;
   final bool showHourglass;
   final bool namingInProgress;
+  final bool namingStartPending;
   final bool micOn;
+  final int micStage;
+  final bool namingPaused;
   final bool showTinySpinner;
   final String liveTranscript;
   final String targetText;
@@ -1424,10 +1458,14 @@ class SessionBody extends StatelessWidget {
   final VoidCallback onPlayAudioHint;
   final bool showDashboardButton;
   final bool showGlobalHourglass;
+  final String mountainTheme;
+  final bool mountainYouWon;
+  final bool mountainRivalWon;
   final VoidCallback onPrimeMic;
   final VoidCallback onOpenMicSettings;
   final void Function(String reason) onContinueWithoutMic;
   final void Function(String reason) onSkipNaming;
+  final VoidCallback onToggleNamingPauseResume;
   final void Function(bool choseLeft) onSelect;
   final VoidCallback onOpenDashboard;
   final String tooltipLanguageCode;
@@ -1439,9 +1477,13 @@ class SessionBody extends StatelessWidget {
     const bool isWeb = kIsWeb;
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
-    final double panelGap = isWeb ? 4 : 12;
-    final double infoPanelVerticalPadding = isWeb ? 8 : 14;
-    final double trackTopPadding = isWeb ? 2 : 8;
+    final bool compactNamingLayout = isNaming;
+    final double panelGap =
+        compactNamingLayout ? (isWeb ? 1 : 4) : (isWeb ? 4 : 12);
+    final double infoPanelVerticalPadding =
+        compactNamingLayout ? (isWeb ? 5 : 8) : (isWeb ? 8 : 14);
+    final double trackTopPadding =
+        compactNamingLayout ? (isWeb ? 0 : 4) : (isWeb ? 2 : 8);
     final double bottomBarHeight = namingInProgress ? 48.0 : 0.0;
     final double verticalInsets =
         MediaQuery.of(context).padding.vertical + 32 + bottomBarHeight;
@@ -1465,25 +1507,26 @@ class SessionBody extends StatelessWidget {
         runsDone: runsDone,
         tooltipLanguageCode: tooltipLanguageCode,
         uiScale: namingHexaScale,
-        centerGrid: shrinkHexaWeb,
+        centerGrid: false,
+        mountainTheme: mountainTheme,
+        mountainYouWon: mountainYouWon,
+        mountainRivalWon: mountainRivalWon,
       ),
     );
-    final Widget trackWidget = shrinkHexaWeb
-        ? LayoutBuilder(
-            builder: (context, constraints) {
-              final double maxWidth = constraints.maxWidth.isFinite
-                  ? constraints.maxWidth
-                  : size.width;
-              return Align(
+    final Widget trackWidget = baseTrackWidget;
+    final Widget displayTrackWidget = isNaming
+        ? SizedBox(
+            height: imageHeight * 0.95,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
                 alignment: Alignment.topCenter,
-                child: SizedBox(
-                  width: maxWidth * 0.7,
-                  child: baseTrackWidget,
-                ),
-              );
-            },
+                child: trackWidget,
+              ),
+            ),
           )
-        : baseTrackWidget;
+        : trackWidget;
 
     final trialWidget = isNaming
         ? NamingView(
@@ -1500,6 +1543,7 @@ class SessionBody extends StatelessWidget {
             namingHold: namingHold,
             showHourglass: showHourglass,
             namingInProgress: namingInProgress,
+            namingStartPending: namingStartPending,
             showTinySpinner: showTinySpinner,
             liveTranscript: liveTranscript,
             onStartNaming: onPrimeMic,
@@ -1525,7 +1569,8 @@ class SessionBody extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (isLandscape) SizedBox(height: isWeb ? 2 : 4),
+        if (isLandscape)
+          SizedBox(height: compactNamingLayout ? 0 : (isWeb ? 2 : 4)),
         trialWidget,
         //const SizedBox(height: 32),
         Stack(
@@ -1708,13 +1753,18 @@ class SessionBody extends StatelessWidget {
             ),
           ],
         ),
-        SizedBox(height: panelGap),
+        if (panelGap > 0) SizedBox(height: panelGap),
         Column(
           children: [
             DashboardButtonRow(
               show: showDashboardButton || ladder.hasFlagAppeared,
-              showHourglass: showGlobalHourglass,
-              hourglassWiggle: showGlobalHourglass && (!isNaming || micOn),
+              showHourglass: isNaming && namingInProgress,
+              hourglassWiggle:
+                  isNaming && namingInProgress && micOn && !namingPaused,
+              hourglassMicStage: micStage,
+              hourglassMicOn: micOn,
+              hourglassMicPaused: namingPaused,
+              onHourglassTap: onToggleNamingPauseResume,
               onTap: onOpenDashboard,
             ),
           ],
@@ -1732,7 +1782,7 @@ class SessionBody extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            trackWidget,
+            displayTrackWidget,
             content,
           ],
         ),
@@ -1743,7 +1793,7 @@ class SessionBody extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            trackWidget,
+            displayTrackWidget,
             if (isWeb) const SizedBox(height: 2),
             content,
           ],
@@ -1768,19 +1818,17 @@ class SessionBody extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            landscapeTrackWidget,
+            isNaming ? displayTrackWidget : landscapeTrackWidget,
             content,
           ],
         );
       }
     }
 
-    if (onExitToResumePanel == null) {
-      return layout;
-    }
-
     final menuTooltip =
         _sessionMenuTooltipText('session_menu', tooltipLanguageCode);
+    final dashboardTooltip =
+        _sessionMenuTooltipText('open_dashboard', tooltipLanguageCode);
     final exitTooltip =
         _sessionMenuTooltipText('exit_to_resume_panel', tooltipLanguageCode);
 
@@ -1792,7 +1840,9 @@ class SessionBody extends StatelessWidget {
           bottom: 8,
           child: _SessionMenuButton(
             menuTooltip: menuTooltip,
+            openDashboardTooltip: dashboardTooltip,
             exitToResumeTooltip: exitTooltip,
+            onOpenDashboard: onOpenDashboard,
             onExitToResumePanel: onExitToResumePanel,
           ),
         ),
@@ -1875,12 +1925,16 @@ class _HintPanel extends StatelessWidget {
 class _SessionMenuButton extends StatefulWidget {
   const _SessionMenuButton({
     required this.menuTooltip,
+    required this.openDashboardTooltip,
     required this.exitToResumeTooltip,
+    required this.onOpenDashboard,
     this.onExitToResumePanel,
   });
 
   final String menuTooltip;
+  final String openDashboardTooltip;
   final String exitToResumeTooltip;
+  final VoidCallback onOpenDashboard;
   final Future<void> Function()? onExitToResumePanel;
 
   @override
@@ -1890,7 +1944,7 @@ class _SessionMenuButton extends StatefulWidget {
 class _SessionMenuButtonState extends State<_SessionMenuButton> {
   bool _busy = false;
 
-  bool get _hasActions => widget.onExitToResumePanel != null;
+  bool get _hasActions => true;
 
   void _showSnack(String message) {
     if (!mounted || message.trim().isEmpty) return;
@@ -1928,6 +1982,25 @@ class _SessionMenuButtonState extends State<_SessionMenuButton> {
       ),
       builder: (sheetContext) {
         final List<Widget> entries = [];
+
+        entries.add(
+          _SessionMenuEntry(
+            tooltip: widget.openDashboardTooltip,
+            leading: Image.asset(
+              'assets/icons/progress.webp',
+              width: 26,
+              height: 26,
+              fit: BoxFit.contain,
+            ),
+            onTap: () async {
+              Navigator.of(sheetContext).pop();
+              await _runAction(
+                () async => widget.onOpenDashboard(),
+                label: 'Open dashboard',
+              );
+            },
+          ),
+        );
 
         if (widget.onExitToResumePanel != null) {
           entries.add(
