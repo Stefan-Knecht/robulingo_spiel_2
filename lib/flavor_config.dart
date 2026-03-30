@@ -34,6 +34,7 @@ const AppFlavorConfig _robuLingoFlavor = AppFlavorConfig(
     'start_curriculum_a.json',
     'start_curriculum_b.json',
     'start_curriculum_t.json',
+    'start_curriculum_dialog.json',
     'start_curriculum_s.json',
     'start_curriculum_l.json',
   ],

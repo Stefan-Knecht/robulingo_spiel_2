@@ -68,6 +68,11 @@ class StartCurriculumSelector extends StatelessWidget {
           asset: _iconForStartKey('start_curriculum_t.json'),
           fileName: 'start_curriculum_t.json'));
     }
+    if (allowed.contains('start_curriculum_dialog.json')) {
+      secondRow.add(_StartOption(
+          asset: _iconForStartKey('start_curriculum_dialog.json'),
+          fileName: 'start_curriculum_dialog.json'));
+    }
     if (secondRow.isNotEmpty) {
       optionRows.add(secondRow);
     }

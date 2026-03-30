@@ -109,6 +109,7 @@ const Map<String, String> startCurriculumIcons = {
   'start_curriculum_a.json': 'assets/icons/cross.webp',
   'start_curriculum_b.json': 'assets/icons/toddler.webp',
   'start_curriculum_t.json': 'assets/icons/talk.webp',
+  'start_curriculum_dialog.json': 'assets/icons/talk.webp',
   'start_curriculum_s.json': 'assets/icons/step.webp',
   'start_curriculum_l.json': 'assets/icons/glasses.webp',
 };

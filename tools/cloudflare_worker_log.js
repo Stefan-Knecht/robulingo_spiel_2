@@ -1628,6 +1628,9 @@ function moduleDisplayName(raw) {
   if (lowered === 'start_curriculum_b' || lowered === 'start_curriculum_b.json') {
     return 'Foundational Words';
   }
+  if (lowered === 'start_curriculum_dialog' || lowered === 'start_curriculum_dialog.json') {
+    return 'Dialog';
+  }
   return value;
 }
 
