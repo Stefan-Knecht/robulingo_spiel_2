@@ -63,6 +63,7 @@ import 'package:robulingo_flutter/ui/lang_selector.dart';
 import 'package:robulingo_flutter/ui/mic_gate.dart';
 import 'package:robulingo_flutter/ui/mic_progress_bar.dart';
 import 'package:robulingo_flutter/ui/native_lang_selector.dart';
+import 'package:robulingo_flutter/ui/realtalk_screen.dart';
 import 'package:robulingo_flutter/ui/session/session_widgets.dart';
 import 'package:robulingo_flutter/ui/start_curriculum_selector.dart';
 import 'package:robulingo_flutter/ui/training_calendar_panel.dart';
@@ -3553,6 +3554,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           body: SafeArea(
             child: StartCurriculumSelector(
               onSelect: _onSelectStart,
+              targetLanguageCode: lang,
+              nativeLanguageCode: nativeLang,
+              onOpenRealTalk: _openRealTalk,
               onPickSelected:
                   activeFlavor.allowPickManifest ? _enterPickFlow : null,
               showHistoryButton: true,
@@ -3961,6 +3965,29 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         // best-effort shutdown
       }
     }
+  }
+
+  Future<void> _openRealTalk(Uri uri) async {
+    if (!mounted) return;
+    final useInAppRealTalk = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
+    if (!useInAppRealTalk) {
+      await launchUrl(
+        uri,
+        mode: LaunchMode.platformDefault,
+        webOnlyWindowName: '_self',
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RealTalkScreen(
+          initialUri: uri,
+          onReturnToResumePanel: _exitToResumePanelIfAvailable,
+        ),
+      ),
+    );
   }
 
   void _invalidateActiveSessionFlow() {

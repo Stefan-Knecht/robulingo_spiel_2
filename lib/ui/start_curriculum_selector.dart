@@ -83,14 +83,54 @@ String _tooltipText(BuildContext context, String tooltipKey) {
   return table[languageCode] ?? table['en'] ?? '';
 }
 
-void _openRealTalk(BuildContext context) {
+String _normalizedLangCode(String? value) {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+Uri? _buildRealTalkUri(
+  BuildContext context, {
+  String? targetLanguageCode,
+  String? nativeLanguageCode,
+}) {
   final rawUrl = activeFlavor.realTalkUrl?.trim();
-  if (rawUrl == null || rawUrl.isEmpty) return;
+  if (rawUrl == null || rawUrl.isEmpty) return null;
   final uri = Uri.tryParse(rawUrl);
-  if (uri == null) return;
+  if (uri == null) return null;
+  final l2 = _normalizedLangCode(targetLanguageCode);
+  final l1Fallback = _normalizedLangCode(
+    nativeLanguageCode ?? Localizations.localeOf(context).languageCode,
+  );
+  final queryParameters = Map<String, String>.from(uri.queryParameters);
+  if (l1Fallback.isNotEmpty) {
+    queryParameters['l1'] = l1Fallback;
+  }
+  if (l2.isNotEmpty) {
+    queryParameters['l2'] = l2;
+    final localeId = speechLocaleOverrides[l2];
+    if (localeId != null && localeId.isNotEmpty) {
+      queryParameters['locale'] = localeId;
+    }
+  }
+  queryParameters['return_to'] = activeFlavor.dashboardLandingUrl;
+  return uri.replace(
+    queryParameters: queryParameters.isEmpty ? null : queryParameters,
+  );
+}
+
+void _openRealTalkExternal(
+  BuildContext context, {
+  String? targetLanguageCode,
+  String? nativeLanguageCode,
+}) {
+  final resolvedUri = _buildRealTalkUri(
+    context,
+    targetLanguageCode: targetLanguageCode,
+    nativeLanguageCode: nativeLanguageCode,
+  );
+  if (resolvedUri == null) return;
   unawaited(
     launchUrl(
-      uri,
+      resolvedUri,
       mode: LaunchMode.platformDefault,
       webOnlyWindowName: '_self',
     ),
@@ -101,6 +141,9 @@ class StartCurriculumSelector extends StatelessWidget {
   const StartCurriculumSelector({
     super.key,
     required this.onSelect,
+    this.targetLanguageCode,
+    this.nativeLanguageCode,
+    this.onOpenRealTalk,
     this.onPickSelected,
     this.showHistoryButton = false,
     this.onOpenHistory,
@@ -108,6 +151,9 @@ class StartCurriculumSelector extends StatelessWidget {
   });
 
   final void Function(String fileName) onSelect;
+  final String? targetLanguageCode;
+  final String? nativeLanguageCode;
+  final Future<void> Function(Uri uri)? onOpenRealTalk;
   final VoidCallback? onPickSelected;
   final bool showHistoryButton;
   final VoidCallback? onOpenHistory;
@@ -149,7 +195,23 @@ class StartCurriculumSelector extends StatelessWidget {
       dialogFeatureOptions.add(
         _StartOption(
           asset: 'assets/icons/dialog.webp',
-          onTap: () => _openRealTalk(context),
+          onTap: () {
+            final uri = _buildRealTalkUri(
+              context,
+              targetLanguageCode: targetLanguageCode,
+              nativeLanguageCode: nativeLanguageCode,
+            );
+            if (uri == null) return;
+            if (onOpenRealTalk != null) {
+              unawaited(onOpenRealTalk!(uri));
+              return;
+            }
+            _openRealTalkExternal(
+              context,
+              targetLanguageCode: targetLanguageCode,
+              nativeLanguageCode: nativeLanguageCode,
+            );
+          },
           iconScale: 1.32,
           tooltipKey: 'dialog_browser',
         ),
