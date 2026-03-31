@@ -3,6 +3,7 @@ class AppFlavorConfig {
     required this.id,
     required this.brandLogoAsset,
     required this.dashboardLandingUrl,
+    this.realTalkUrl,
     required this.consentInfoUrl,
     required this.registerInfoUrl,
     required this.allowedStartCurricula,
@@ -15,6 +16,7 @@ class AppFlavorConfig {
   final String id;
   final String brandLogoAsset;
   final String dashboardLandingUrl;
+  final String? realTalkUrl;
   final String consentInfoUrl;
   final String registerInfoUrl;
   final List<String> allowedStartCurricula;
@@ -28,6 +30,7 @@ const AppFlavorConfig _robuLingoFlavor = AppFlavorConfig(
   id: 'robulingo',
   brandLogoAsset: 'assets/icons/RL_logo.webp',
   dashboardLandingUrl: 'https://www.dailywords-project.org/',
+  realTalkUrl: null,
   consentInfoUrl: 'https://www.dailywords-project.org/trial',
   registerInfoUrl: 'https://www.dailywords-project.org/register/',
   allowedStartCurricula: <String>[
@@ -50,11 +53,13 @@ const AppFlavorConfig _dailyWordsFlavor = AppFlavorConfig(
   id: 'dailywords',
   brandLogoAsset: 'assets/icons/DailyWords.webp',
   dashboardLandingUrl: 'https://www.dailywords-project.org/',
+  realTalkUrl: 'https://dailywords-project.org/realtalk',
   consentInfoUrl: 'https://www.dailywords-project.org/trial',
   registerInfoUrl: 'https://www.dailywords-project.org/register/',
   allowedStartCurricula: <String>[
     'start_curriculum_a.json',
     'start_curriculum_b.json',
+    'start_curriculum_dialog.json',
   ],
   allowPickManifest: false,
   defaultStartCurriculum: 'start_curriculum_a.json',

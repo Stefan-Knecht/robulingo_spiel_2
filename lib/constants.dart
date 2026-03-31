@@ -109,10 +109,27 @@ const Map<String, String> startCurriculumIcons = {
   'start_curriculum_a.json': 'assets/icons/cross.webp',
   'start_curriculum_b.json': 'assets/icons/toddler.webp',
   'start_curriculum_t.json': 'assets/icons/talk.webp',
-  'start_curriculum_dialog.json': 'assets/icons/talk.webp',
+  'start_curriculum_dialog.json': 'assets/icons/Learner.webp',
   'start_curriculum_s.json': 'assets/icons/step.webp',
   'start_curriculum_l.json': 'assets/icons/glasses.webp',
 };
+
+const Map<String, double> startCurriculumIconScales = {
+  'start_curriculum_dialog.json': 1.2,
+};
+
+double startCurriculumIconScaleForKey(String key) {
+  return startCurriculumIconScales[key] ?? 1.0;
+}
+
+double startCurriculumIconScaleForAsset(String asset) {
+  for (final entry in startCurriculumIcons.entries) {
+    if (entry.value == asset) {
+      return startCurriculumIconScaleForKey(entry.key);
+    }
+  }
+  return 1.0;
+}
 
 /// File that lists available pick manifests in the curriculum bucket.
 const String pickManifestIndexKey = 'pick_manifest_index.json';
