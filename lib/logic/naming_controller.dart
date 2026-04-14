@@ -130,11 +130,57 @@ class NamingController {
 
   Future<MicInitResult> ensureMicReadyDetailed() async {
     try {
+      if (isMacOS) {
+        try {
+          final ok = await speech.initialize(
+            onStatus: (s) {
+              if (onStatus != null) onStatus!(s);
+            },
+            onError: (e) => _handleInitializeError(e),
+            finalTimeout: const Duration(seconds: 4),
+          );
+          final hasSpeechPerm = await speech.hasPermission;
+          final effectiveStatus = hasSpeechPerm
+              ? PermissionStatus.granted
+              : PermissionStatus.denied;
+          _log(
+              '[naming][init-macos] ok=$ok available=${speech.isAvailable} hasSpeechPerm=$hasSpeechPerm');
+          return MicInitResult(
+            ready: ok && speech.isAvailable,
+            micGranted: hasSpeechPerm,
+            speechGranted: hasSpeechPerm,
+            initOk: ok,
+            isAvailable: speech.isAvailable,
+            hasPermission: hasSpeechPerm,
+            platform: operatingSystem,
+            micStatus: effectiveStatus,
+            speechStatus: effectiveStatus,
+            isMicPermanentlyDenied: false,
+            isSpeechPermanentlyDenied: false,
+          );
+        } catch (e) {
+          _log('[naming][init-macos-error] $e');
+          return MicInitResult(
+            ready: false,
+            micGranted: false,
+            speechGranted: false,
+            initOk: false,
+            isAvailable: false,
+            hasPermission: false,
+            platform: operatingSystem,
+            micStatus: PermissionStatus.denied,
+            speechStatus: PermissionStatus.denied,
+            isMicPermanentlyDenied: false,
+            isSpeechPermanentlyDenied: false,
+          );
+        }
+      }
+
       final micStatus = await Permission.microphone.request();
       final bool micGrantedEffective = micStatus.isGranted;
       PermissionStatus speechStatus = PermissionStatus.granted;
       bool speechGrantedEffective = true;
-      if (isIOS || isMacOS) {
+      if (isIOS) {
         // Try to request speech; do not hard-fail if it misreports (simulator quirks).
         speechStatus = await Permission.speech.status;
         if (!speechStatus.isGranted && !speechStatus.isPermanentlyDenied) {
@@ -409,14 +455,14 @@ class NamingController {
   }
 
   Future<String> _listenForDuration(
-    Duration duration,
-    int flowToken,
-    int sessionId,
-    bool Function() isCurrent,
-    void Function(String transcript) onTranscript,
-    String? localeId,
-    {bool Function()? isPaused, Future<void> Function()? waitUntilResumed}
-  ) async {
+      Duration duration,
+      int flowToken,
+      int sessionId,
+      bool Function() isCurrent,
+      void Function(String transcript) onTranscript,
+      String? localeId,
+      {bool Function()? isPaused,
+      Future<void> Function()? waitUntilResumed}) async {
     _liveTranscript = '';
     _lastRecognizedWords = '';
     _lastConfidence = -1;

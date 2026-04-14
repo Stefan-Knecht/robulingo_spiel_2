@@ -6,6 +6,7 @@
 import 'dart:async';
 
 import 'package:flutter/animation.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'naming_controller.dart';
@@ -32,6 +33,40 @@ class VoiceState {
   bool micOn = false;
   int micStage = -1;
   bool namingPaused = false;
+  bool micCheckRan = false;
+  String micPlatform = '';
+  PermissionStatus lastMicStatus = PermissionStatus.denied;
+  PermissionStatus lastSpeechStatus = PermissionStatus.denied;
+  bool lastMicGranted = false;
+  bool lastSpeechGranted = false;
+  bool lastInitOk = false;
+  bool lastSpeechAvailable = false;
+  bool lastSpeechHasPermission = false;
+  bool listenCheckRan = false;
+  bool lastListenGotSoundLevel = false;
+  bool lastListenGotResultEvent = false;
+  double lastListenMaxSoundLevel = -120;
+  String lastListenLocale = '-';
+
+  void rememberMicInitResult(MicInitResult res) {
+    micCheckRan = true;
+    micPlatform = res.platform;
+    lastMicStatus = res.micStatus;
+    lastSpeechStatus = res.speechStatus;
+    lastMicGranted = res.micGranted;
+    lastSpeechGranted = res.speechGranted;
+    lastInitOk = res.initOk;
+    lastSpeechAvailable = res.isAvailable;
+    lastSpeechHasPermission = res.hasPermission;
+  }
+
+  void rememberListenDiagnostics(NamingController controller) {
+    listenCheckRan = true;
+    lastListenGotSoundLevel = controller.lastListenGotSoundLevel;
+    lastListenGotResultEvent = controller.lastListenGotResultEvent;
+    lastListenMaxSoundLevel = controller.lastListenMaxSoundLevel;
+    lastListenLocale = controller.lastListenLocale;
+  }
 }
 
 /// Encapsulates the speech/naming flow and mic readiness logic.
@@ -71,25 +106,22 @@ class VoiceController {
     }
   }
 
-  bool _permissionsGranted(dynamic res) {
-    try {
-      return res.micGranted == true && res.speechGranted != false;
-    } catch (_) {
-      return false;
-    }
-  }
-
   Future<void> initSpeech() async {
     // No-op by default: do not prompt for permissions implicitly.
     // Mic permission should be requested only via explicit user action.
   }
 
-  Future<bool> ensureMicReady({VoidCallback? onPermanentDisable}) async {
-    if (state.micReady) return true;
+  Future<bool> ensureMicReady({
+    VoidCallback? onPermanentDisable,
+    bool forceRecheck = false,
+  }) async {
+    if (state.micReady && !forceRecheck) return true;
     final res = await namingController.ensureMicReadyDetailed();
+    state.rememberMicInitResult(res);
     state.micPermanentlyDenied = res.isMicPermanentlyDenied;
     state.speechPermanentlyDenied = res.isSpeechPermanentlyDenied;
     if (!res.ready) {
+      state.micReady = false;
       if (res.isMicPermanentlyDenied || res.isSpeechPermanentlyDenied) {
         onPermanentDisable?.call();
       }
@@ -256,6 +288,7 @@ class VoiceController {
       isPaused: () => state.namingPaused,
       waitUntilResumed: _waitUntilResumed,
     );
+    state.rememberListenDiagnostics(namingController);
 
     state.namingInProgress = false;
     state.micOn = false;

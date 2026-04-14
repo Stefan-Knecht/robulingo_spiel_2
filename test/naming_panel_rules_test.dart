@@ -15,7 +15,9 @@ void main() {
     expect(out.usedHint, isFalse);
   });
 
-  test('naming run allows exactly one hint+repeat listen when first is incorrect', () {
+  test(
+      'naming run allows exactly one hint+repeat listen when first is incorrect',
+      () {
     final out = simulateNamingRunOutcome(
       firstCorrect: false,
       repeatCorrect: true,

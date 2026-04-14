@@ -12,11 +12,13 @@ class MicGate extends StatefulWidget {
     required this.onAllow,
     required this.onDeny,
     required this.onTimeout,
+    required this.instructionText,
   });
 
   final VoidCallback onAllow;
   final VoidCallback onDeny;
   final VoidCallback onTimeout;
+  final String instructionText;
 
   @override
   State<MicGate> createState() => _MicGateState();
@@ -74,53 +76,79 @@ class _MicGateState extends State<MicGate> with SingleTickerProviderStateMixin {
         body: SafeArea(
           child: Stack(
             children: [
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.arrow_downward,
-                      size: 64, color: Colors.green.shade800),
-                  const SizedBox(height: 18),
-                  AnimatedBuilder(
-                    animation: _ctrl,
-                    builder: (context, child) {
-                      return Transform.translate(
-                        offset: Offset(_ctrl.value * 20, 0),
-                        child: child,
-                      );
-                    },
-                    child: GestureDetector(
-                      onTap: _handleAllow,
-                      child: Container(
-                        width: 110,
-                        height: 110,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.greenAccent,
-                          boxShadow: [
-                            BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4)),
-                          ],
-                        ),
-                        child: const Icon(Icons.mic, size: 54, color: Colors.black),
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.arrow_downward,
+                        size: 64, color: Colors.green.shade800),
+                    const SizedBox(height: 18),
+                    AnimatedBuilder(
+                      animation: _ctrl,
+                      builder: (context, child) {
+                        return Transform.translate(
+                          offset: Offset(_ctrl.value * 16, 0),
+                          child: child,
+                        );
+                      },
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.double_arrow_rounded,
+                              size: 56, color: Colors.green.shade800),
+                          const SizedBox(width: 10),
+                          GestureDetector(
+                            onTap: _handleAllow,
+                            child: Container(
+                              width: 110,
+                              height: 110,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.greenAccent,
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: Colors.black26,
+                                      blurRadius: 10,
+                                      offset: Offset(0, 4)),
+                                ],
+                              ),
+                              child: const Icon(Icons.mic,
+                                  size: 54, color: Colors.black),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 18),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 28),
+                      child: Text(
+                        widget.instructionText,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF334155),
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
               Positioned(
                 bottom: 20,
                 right: 20,
                 child: IconButton(
-                tooltip: '',
-                icon: const Icon(Icons.close, size: 28),
-                onPressed: () {
-                  if (_handled) return;
-                  _handled = true;
-                  widget.onDeny();
-                },
+                  tooltip: '',
+                  icon: const Icon(Icons.close, size: 28),
+                  onPressed: () {
+                    if (_handled) return;
+                    _handled = true;
+                    widget.onDeny();
+                  },
+                ),
               ),
-            ),
             ],
           ),
         ),

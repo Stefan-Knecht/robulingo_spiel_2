@@ -533,12 +533,26 @@ class _RestartSplashState extends State<RestartSplash> {
                                       },
                                       behavior: HitTestBehavior.opaque,
                                       child: SizedBox(
-                                        width: moduleIconSize + 6,
-                                        height: moduleIconSize + 6,
+                                        width: moduleIconSize *
+                                                startCurriculumIconScaleForAsset(
+                                                    widget.moduleProgress
+                                                        .iconAsset) +
+                                            6,
+                                        height: moduleIconSize *
+                                                startCurriculumIconScaleForAsset(
+                                                    widget.moduleProgress
+                                                        .iconAsset) +
+                                            6,
                                         child: Image.asset(
                                           widget.moduleProgress.iconAsset,
-                                          width: moduleIconSize,
-                                          height: moduleIconSize,
+                                          width: moduleIconSize *
+                                              startCurriculumIconScaleForAsset(
+                                                  widget.moduleProgress
+                                                      .iconAsset),
+                                          height: moduleIconSize *
+                                              startCurriculumIconScaleForAsset(
+                                                  widget.moduleProgress
+                                                      .iconAsset),
                                           fit: BoxFit.contain,
                                         ),
                                       ),
@@ -922,12 +936,17 @@ class NamingView extends StatelessWidget {
     required this.micDenied,
     required this.micPermanentlyDenied,
     required this.speechPermanentlyDenied,
+    required this.micStatusDetails,
     required this.namingHold,
     required this.showHourglass,
     required this.namingInProgress,
     required this.namingStartPending,
     required this.showTinySpinner,
     required this.liveTranscript,
+    required this.startNamingLabel,
+    required this.retryMicLabel,
+    required this.settingsLabel,
+    required this.withoutMicLabel,
     required this.onStartNaming,
     required this.onOpenSettings,
     required this.onContinueWithoutMic,
@@ -945,12 +964,17 @@ class NamingView extends StatelessWidget {
   final bool micDenied;
   final bool micPermanentlyDenied;
   final bool speechPermanentlyDenied;
+  final String micStatusDetails;
   final bool namingHold;
   final bool showHourglass;
   final bool namingInProgress;
   final bool namingStartPending;
   final bool showTinySpinner;
   final String liveTranscript;
+  final String startNamingLabel;
+  final String retryMicLabel;
+  final String settingsLabel;
+  final String withoutMicLabel;
   final VoidCallback onStartNaming;
   final VoidCallback onOpenSettings;
   final void Function(String reason) onContinueWithoutMic;
@@ -1150,6 +1174,28 @@ class NamingView extends StatelessWidget {
               ),
             ),
           ),
+        if (micStatusDetails.trim().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: Text(
+                micStatusDetails,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF334155),
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ),
         if (namingOutcome == null && !namingInProgress && !namingStartPending)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -1163,20 +1209,20 @@ class NamingView extends StatelessWidget {
                       ? null
                       : onStartNaming,
                   icon: const Icon(Icons.mic, size: 16),
-                  label: Text(!micPrimed ? 'Start naming' : 'Retry mic'),
+                  label: Text(!micPrimed ? startNamingLabel : retryMicLabel),
                 ),
                 OutlinedButton.icon(
                   onPressed: (namingInProgress || namingStartPending)
                       ? null
                       : onOpenSettings,
                   icon: const Icon(Icons.settings, size: 16),
-                  label: const Text('Settings'),
+                  label: Text(settingsLabel),
                 ),
                 TextButton(
                   onPressed: (namingInProgress || namingStartPending)
                       ? null
                       : () => onContinueWithoutMic('manual_button'),
-                  child: const Text('Without mic'),
+                  child: Text(withoutMicLabel),
                 ),
               ],
             ),
@@ -1372,6 +1418,7 @@ class SessionBody extends StatelessWidget {
     required this.micDenied,
     required this.micPermanentlyDenied,
     required this.speechPermanentlyDenied,
+    required this.micStatusDetails,
     required this.namingHold,
     required this.showHourglass,
     required this.namingInProgress,
@@ -1381,6 +1428,10 @@ class SessionBody extends StatelessWidget {
     required this.namingPaused,
     required this.showTinySpinner,
     required this.liveTranscript,
+    required this.startNamingLabel,
+    required this.retryMicLabel,
+    required this.settingsLabel,
+    required this.withoutMicLabel,
     required this.targetText,
     required this.targetPhonetic,
     required this.phoneticButtonVisible,
@@ -1430,6 +1481,7 @@ class SessionBody extends StatelessWidget {
   final bool micDenied;
   final bool micPermanentlyDenied;
   final bool speechPermanentlyDenied;
+  final String micStatusDetails;
   final bool namingHold;
   final bool showHourglass;
   final bool namingInProgress;
@@ -1439,6 +1491,10 @@ class SessionBody extends StatelessWidget {
   final bool namingPaused;
   final bool showTinySpinner;
   final String liveTranscript;
+  final String startNamingLabel;
+  final String retryMicLabel;
+  final String settingsLabel;
+  final String withoutMicLabel;
   final String targetText;
   final String? targetPhonetic;
   final bool phoneticButtonVisible;
@@ -1540,12 +1596,17 @@ class SessionBody extends StatelessWidget {
             micDenied: micDenied,
             micPermanentlyDenied: micPermanentlyDenied,
             speechPermanentlyDenied: speechPermanentlyDenied,
+            micStatusDetails: micStatusDetails,
             namingHold: namingHold,
             showHourglass: showHourglass,
             namingInProgress: namingInProgress,
             namingStartPending: namingStartPending,
             showTinySpinner: showTinySpinner,
             liveTranscript: liveTranscript,
+            startNamingLabel: startNamingLabel,
+            retryMicLabel: retryMicLabel,
+            settingsLabel: settingsLabel,
+            withoutMicLabel: withoutMicLabel,
             onStartNaming: onPrimeMic,
             onOpenSettings: onOpenMicSettings,
             onContinueWithoutMic: onContinueWithoutMic,

@@ -17,7 +17,8 @@ String _iconForStartKey(String key) =>
     'assets/icons/cross.webp';
 
 String _tooltipText(BuildContext context, String tooltipKey) {
-  final languageCode = Localizations.localeOf(context).languageCode.toLowerCase();
+  final languageCode =
+      Localizations.localeOf(context).languageCode.toLowerCase();
   const messages = <String, Map<String, String>>{
     'daily_words': {
       'de': 'Wörter des täglichen Lebens',
@@ -50,10 +51,13 @@ String _tooltipText(BuildContext context, String tooltipKey) {
     'dialog_browser': {
       'de': 'Dialog-Training braucht anspruchsvolle Browser und Geräte',
       'en': 'Dialog training needs capable browsers and devices',
-      'es': 'El entrenamiento de dialogo necesita navegadores y dispositivos potentes',
-      'fr': 'L entrainement au dialogue a besoin de navigateurs et d appareils performants',
+      'es':
+          'El entrenamiento de dialogo necesita navegadores y dispositivos potentes',
+      'fr':
+          'L entrainement au dialogue a besoin de navigateurs et d appareils performants',
       'it': 'L allenamento al dialogo richiede browser e dispositivi capaci',
-      'el': 'Η προπόνηση διαλόγου χρειάζεται ισχυρά προγράμματα περιήγησης και συσκευές',
+      'el':
+          'Η προπόνηση διαλόγου χρειάζεται ισχυρά προγράμματα περιήγησης και συσκευές',
       'ru': 'Тренировка диалога требует мощных браузеров и устройств',
       'tr': 'Diyalog egitimi guclu tarayicilar ve cihazlar gerektirir',
       'ar': 'يتطلب تدريب الحوار متصفحات واجهزة قوية',
@@ -168,15 +172,16 @@ class StartCurriculumSelector extends StatelessWidget {
     final bool isLandscape = size.width > size.height;
     final double logoHeight = size.height * (isLandscape ? 0.16 : 0.2);
     final double logoWidth = size.width * (isLandscape ? 0.4 : 0.85);
-    final double tileSize = isLandscape
-        ? min(90.0, size.height * 0.22)
-        : min(110.0, size.width * 0.28);
-    final double iconSize = tileSize * 0.5;
-    final double rowSpacing = isLandscape ? 12.0 : 12.0;
+    final double primaryTileSize = isLandscape
+        ? min(220.0, size.height * 0.44)
+        : min(200.0, size.width * 0.5);
+    final double primaryIconSize = primaryTileSize * 0.58;
+    final double secondaryTileSize =
+        max(72.0, min(96.0, primaryTileSize / 3.0));
+    final double secondaryIconSize = secondaryTileSize * 0.54;
+    final double rowSpacing = isLandscape ? 18.0 : 16.0;
     final double verticalPadding = isLandscape ? 16.0 : 32.0;
-    final double featureTileMaxSize = isLandscape
-        ? min(180.0, size.height * 0.3)
-        : min(220.0, size.width * 0.42);
+    final double featureTileMaxSize = secondaryTileSize;
 
     final allowed = activeFlavor.allowedStartCurricula.toSet();
     final dialogFeatureOptions = <_StartOption>[];
@@ -285,8 +290,8 @@ class StartCurriculumSelector extends StatelessWidget {
           _OptionsRow(
             options: optionRows.first,
             onSelect: onSelect,
-            tileSize: tileSize,
-            iconSize: iconSize,
+            tileSize: primaryTileSize,
+            iconSize: primaryIconSize,
           ),
         ],
         if (dialogFeatureOptions.isNotEmpty) ...[
@@ -302,8 +307,8 @@ class StartCurriculumSelector extends StatelessWidget {
           _OptionsRow(
             options: optionRows[i],
             onSelect: onSelect,
-            tileSize: tileSize,
-            iconSize: iconSize,
+            tileSize: secondaryTileSize,
+            iconSize: secondaryIconSize,
           ),
         ],
       ],
@@ -404,6 +409,7 @@ class _FeatureOptionsRow extends StatelessWidget {
           (availableWidth - spacing * (options.length - 1)) / options.length,
         );
         final iconSize = tileSize * 0.7;
+        final buttonPadding = EdgeInsets.all(tileSize * 0.16);
 
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -417,7 +423,7 @@ class _FeatureOptionsRow extends StatelessWidget {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       elevation: 4,
-                      padding: const EdgeInsets.all(18),
+                      padding: buttonPadding,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(24),
                         side: const BorderSide(color: Colors.black, width: 2),
@@ -478,6 +484,7 @@ class _OptionsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final buttonPadding = EdgeInsets.all(tileSize * 0.16);
     final rowChildren = options
         .map(
           (opt) => SizedBox(
@@ -488,7 +495,7 @@ class _OptionsRow extends StatelessWidget {
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   elevation: 3,
-                  padding: const EdgeInsets.all(16),
+                  padding: buttonPadding,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(18),
                     side: const BorderSide(color: Colors.black, width: 2),
