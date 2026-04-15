@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:robulingo_flutter/data/hint_models.dart';
 import 'package:robulingo_flutter/constants.dart';
 import 'package:robulingo_flutter/flavor_config.dart';
+import 'package:robulingo_flutter/logic/competition_asset_resolver.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
 import 'package:robulingo_flutter/ui/dashboard_button.dart';
@@ -1567,6 +1568,8 @@ class SessionBody extends StatelessWidget {
         mountainTheme: mountainTheme,
         mountainYouWon: mountainYouWon,
         mountainRivalWon: mountainRivalWon,
+        wins: ladder.winsYou,
+        rivalWins: ladder.winsRival,
       ),
     );
     final Widget trackWidget = baseTrackWidget;

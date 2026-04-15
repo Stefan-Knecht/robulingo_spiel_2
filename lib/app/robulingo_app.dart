@@ -75,13 +75,13 @@ import 'package:robulingo_flutter/utils/text_utils.dart';
 const Set<String> _phoneticEligibleLangs = {'el', 'ar', 'ru', 'zh', 'hi', 'ja'};
 const int _phoneticGlobalOverrideRuns = 40;
 const Map<String, Map<String, String>> _namingInstructionTexts = {
-  'start_gate_prompt': {
+  'naming_auto_start_prompt': {
     'en':
-        'Tap the screen or press Space to start naming. Starts automatically in 4 seconds.',
+        'Microphone check starts now. Recording starts automatically 3 seconds after the image appears.',
     'de':
-        'Tippe auf den Bildschirm oder drücke die Leertaste, um das Benennen zu starten. Es beginnt automatisch in 4 Sekunden.',
+        'Die Mikrofonprüfung startet jetzt. Die Aufnahme beginnt automatisch 3 Sekunden nach der Bildpräsentation.',
     'el':
-        'Αγγίξτε την οθόνη ή πατήστε Space για να ξεκινήσει η ονομασία. Αρχίζει αυτόματα σε 4 δευτερόλεπτα.',
+        'Ο έλεγχος μικροφώνου ξεκινά τώρα. Η εγγραφή αρχίζει αυτόματα 3 δευτερόλεπτα μετά την παρουσίαση της εικόνας.',
   },
   'start_naming': {
     'en': 'Start naming',
@@ -280,7 +280,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingFirstWindowSec = 4;
   static const int namingRepeatWindowSec = 3;
   static const int namingHintWindowSec = 3;
-  static const int namingStartAutoDelayMs = 4000;
+  static const int namingStartAutoDelayMs = 3000;
   static const int namingProgressFirstRatio = 3;
   static const int namingProgressHintRatio = 2;
   static const int namingProgressRepeatRatio = 2;
@@ -408,7 +408,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Trial? _lastDisplayTrial;
   bool _namingTransition = false;
   bool _namingStartPending = false;
-  bool _namingAwaitingStartGesture = false;
   Timer? _namingStartAutoTimer;
   PresentationSlot currentSlot = const PresentationSlot(
       mode: PresentationMode.comprehension, targetUuid: '');
@@ -2403,7 +2402,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         namingStatus = '';
         _liveTranscript = '';
         _namingStartPending = false;
-        _namingAwaitingStartGesture = false;
       }
       _namingStartAutoTimer?.cancel();
       _namingStartAutoTimer = null;
@@ -2742,68 +2740,64 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(_persistSessionCache());
     if (_isNamingTrial()) {
       debugPrint('[trial][start] idx=$trialIndex token=$token naming=true');
-      return _armNamingStartGate(token);
+      return _scheduleNamingAutoStart(token);
     } else {
       debugPrint('[trial][start] idx=$trialIndex token=$token naming=false');
       return _playNextTrialAudio(token);
     }
   }
 
-  Future<void> _armNamingStartGate(int token) async {
+  Future<void> _prepareMicForNamingSession(int token) async {
+    if (!mounted || token != currentTrialToken || !_isNamingTrial()) return;
+    protocolLog.addNote(
+        'Naming mic preflight requested: token=$token action=ensure_mic_ready_at_session_start');
+    final ready = await voiceController.ensureMicReady(
+      forceRecheck: true,
+      onPermanentDisable: () {
+        if (!mounted || token != currentTrialToken) return;
+        setState(() {
+          micDenied = true;
+        });
+      },
+    );
+    if (!mounted || token != currentTrialToken || !_isNamingTrial()) return;
+    setState(() {
+      micDenied = !ready;
+      micPermanentlyDenied = voiceState.micPermanentlyDenied;
+      speechPermanentlyDenied = voiceState.speechPermanentlyDenied;
+      if (ready) {
+        micPrimed = true;
+        micPromptActive = false;
+        namingNoMicMode = false;
+      }
+    });
+    protocolLog.addNote(
+        'Naming mic preflight result: token=$token ready=$ready micPermanentDenied=$micPermanentlyDenied speechPermanentDenied=$speechPermanentlyDenied');
+  }
+
+  Future<void> _scheduleNamingAutoStart(int token) async {
     if (!mounted || token != currentTrialToken || !_isNamingTrial()) return;
     _namingStartAutoTimer?.cancel();
     setState(() {
       _namingStartPending = true;
-      _namingAwaitingStartGesture = true;
-      namingStatus = _instructionText('start_gate_prompt');
+      namingStatus = _instructionText('naming_auto_start_prompt');
     });
     protocolLog.addNote(
-        'Naming start gate armed: token=$token action=wait_for_space_or_tap_or_timeout');
+        'Naming auto-start armed: token=$token delay_ms=$namingStartAutoDelayMs');
+    unawaited(_prepareMicForNamingSession(token));
     _namingStartAutoTimer =
         Timer(const Duration(milliseconds: namingStartAutoDelayMs), () {
-      if (!mounted ||
-          token != currentTrialToken ||
-          !_namingAwaitingStartGesture) {
-        return;
-      }
-      protocolLog.addNote(
-          'Naming start gate timeout: token=$token action=auto_start_after_4s');
-      unawaited(_beginNamingAfterStartGate(token, source: 'timeout'));
-    });
-  }
-
-  Future<void> _beginNamingAfterStartGate(
-    int token, {
-    required String source,
-  }) async {
-    if (!mounted || token != currentTrialToken || !_isNamingTrial()) return;
-    if (source != 'timeout') {
-      await _primeAudioForUserGestureAsync('naming-start-gate-$source');
       if (!mounted || token != currentTrialToken || !_isNamingTrial()) return;
-    }
-    _namingStartAutoTimer?.cancel();
-    _namingStartAutoTimer = null;
-    setState(() {
-      _namingStartPending = false;
-      _namingAwaitingStartGesture = false;
-      if (namingStatus == _instructionText('start_gate_prompt')) {
-        namingStatus = '';
-      }
+      protocolLog.addNote(
+          'Naming auto-start timeout reached: token=$token action=prime_and_start_after_3s');
+      setState(() {
+        _namingStartPending = false;
+        if (namingStatus == _instructionText('naming_auto_start_prompt')) {
+          namingStatus = '';
+        }
+      });
+      unawaited(_primeMicAndStart(skipGate: true));
     });
-    protocolLog
-        .addNote('Naming start gate released: token=$token source=$source');
-    await _startNamingFlow(token, userInitiated: true);
-  }
-
-  bool _handleNamingStartGesture(String source) {
-    if (!_namingAwaitingStartGesture ||
-        namingInProgress ||
-        micGateActive ||
-        !_isNamingTrial()) {
-      return false;
-    }
-    unawaited(_beginNamingAfterStartGate(currentTrialToken, source: source));
-    return true;
   }
 
   Future<void> _openMicSettings() async {
@@ -3690,11 +3684,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         return true;
       }
     }
-    if (key == LogicalKeyboardKey.space) {
-      if (_handleNamingStartGesture('space-key')) {
-        return true;
-      }
-    }
     if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyF) {
       unawaited(_select(true));
       return true;
@@ -3710,7 +3699,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _startNamingFlowFromKeyboard() async {
     await _primeAudioForUserGestureAsync('naming-enter-key');
     if (!mounted) return;
-    await _startNamingFlow(currentTrialToken, userInitiated: true);
+    await _primeMicAndStart(skipGate: true);
   }
 
   bool _canAutofocusKeyboardShortcuts() {
@@ -3735,9 +3724,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) {
-        if (_handleNamingStartGesture('screen-tap')) {
-          return;
-        }
         if (_canAutofocusKeyboardShortcuts() && !_keyboardFocusNode.hasFocus) {
           _keyboardFocusNode.requestFocus();
         }

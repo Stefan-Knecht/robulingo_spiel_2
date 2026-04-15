@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:robulingo_flutter/logic/competition_asset_resolver.dart';
 
 import '../logic/hexagon_controller.dart';
 import '../logic/mountain_tracks.dart';
@@ -57,6 +58,8 @@ class HexagonTrack extends StatelessWidget {
     required this.mountainTheme,
     required this.mountainYouWon,
     required this.mountainRivalWon,
+    required this.wins,
+    required this.rivalWins,
     this.uiScale = 1.0,
     this.centerGrid = false,
     this.runsDone = 0,
@@ -76,6 +79,8 @@ class HexagonTrack extends StatelessWidget {
   final String mountainTheme;
   final bool mountainYouWon;
   final bool mountainRivalWon;
+  final int wins;
+  final int rivalWins;
   final double uiScale;
   final bool centerGrid;
   final int runsDone;
@@ -104,6 +109,11 @@ class HexagonTrack extends StatelessWidget {
     final double scale = uiScale.clamp(0.4, 2.0);
     final youTooltip = _trackTooltipText('you', tooltipLanguageCode);
     final rivalTooltip = _trackTooltipText('rival', tooltipLanguageCode);
+    final rivalAssetPath = RivalAssetResolver.pathFor(
+      wins: youIndex,
+      rivalWins: rivalIndex,
+      viewCount: runsDone ~/ 15,
+    );
 
     final board = LayoutBuilder(
       builder: (context, constraints) {
@@ -125,7 +135,7 @@ class HexagonTrack extends StatelessWidget {
         final double sideWidth = (totalWidth - mountainWidth) / 2;
         final double mountainLeft = (totalWidth - mountainWidth) / 2;
         final double iconSize =
-            (mountainHeight * 0.30).clamp(24.0, sideWidth * 0.92).toDouble();
+            (mountainHeight * 0.34).clamp(24.0, sideWidth * 0.98).toDouble();
 
         return SizedBox(
           width: totalWidth,
@@ -195,7 +205,7 @@ class HexagonTrack extends StatelessWidget {
                   child: Tooltip(
                     message: rivalTooltip,
                     child: Image.asset(
-                      'assets/icons/rival.webp',
+                      rivalAssetPath,
                       width: iconSize,
                       height: iconSize,
                       fit: BoxFit.contain,

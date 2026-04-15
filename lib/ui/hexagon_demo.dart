@@ -94,6 +94,8 @@ class _HexagonDemoPageState extends State<HexagonDemoPage> {
                 mountainTheme: 'default',
                 mountainYouWon: false,
                 mountainRivalWon: false,
+                wins: controller.state.winsYou,
+                rivalWins: controller.state.winsRival,
               ),
               const SizedBox(height: 12),
               Wrap(
