@@ -4,6 +4,7 @@
 // Schritte: RL-Logo zeigen, Wrap mit Flaggen bauen, Auswahl via Callback.
 // Tücken: Bei neuen Sprachen muss die Flaggenmap in constants.dart gepflegt werden.
 // ------------------------------------------------------------
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -15,12 +16,16 @@ class LangSelector extends StatefulWidget {
   const LangSelector({
     super.key,
     required this.onSelect,
+    this.initialSelectedLanguage,
+    this.autoSelectDelay = Duration.zero,
     this.showHistoryButton = false,
     this.onOpenHistory,
     this.historyHasSupervisorInfo = false,
   });
 
   final void Function(String lang) onSelect;
+  final String? initialSelectedLanguage;
+  final Duration autoSelectDelay;
   final bool showHistoryButton;
   final VoidCallback? onOpenHistory;
   final bool historyHasSupervisorInfo;
@@ -30,12 +35,73 @@ class LangSelector extends StatefulWidget {
 }
 
 class _LangSelectorState extends State<LangSelector> {
+  Timer? _autoSelectTimer;
+  String? _selectedLanguage;
+  bool _selectionHandled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedLanguage = _normalizeSupportedLanguage(
+      widget.initialSelectedLanguage,
+    );
+    _scheduleAutoSelect();
+  }
+
+  @override
+  void didUpdateWidget(covariant LangSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialSelectedLanguage != widget.initialSelectedLanguage ||
+        oldWidget.autoSelectDelay != widget.autoSelectDelay) {
+      _selectedLanguage = _normalizeSupportedLanguage(
+        widget.initialSelectedLanguage,
+      );
+      _scheduleAutoSelect();
+    }
+  }
+
+  @override
+  void dispose() {
+    _autoSelectTimer?.cancel();
+    super.dispose();
+  }
+
+  String? _normalizeSupportedLanguage(String? raw) {
+    final trimmed = raw?.trim().toLowerCase() ?? '';
+    if (trimmed.isEmpty) return null;
+    final candidate = trimmed.split(RegExp(r'[-_]')).first;
+    return langChoices.contains(candidate) ? candidate : null;
+  }
+
+  void _scheduleAutoSelect() {
+    _autoSelectTimer?.cancel();
+    final selectedLanguage = _selectedLanguage;
+    if (_selectionHandled ||
+        selectedLanguage == null ||
+        widget.autoSelectDelay <= Duration.zero) {
+      return;
+    }
+    _autoSelectTimer = Timer(widget.autoSelectDelay, () {
+      if (!mounted || _selectionHandled) return;
+      _selectionHandled = true;
+      widget.onSelect(selectedLanguage);
+    });
+  }
+
+  void _handleSelect(String lang) {
+    if (_selectionHandled) return;
+    _selectionHandled = true;
+    _autoSelectTimer?.cancel();
+    widget.onSelect(lang);
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool showHistoryButton =
         widget.showHistoryButton && widget.onOpenHistory != null;
-    final historyIconAsset =
-        widget.historyHasSupervisorInfo ? 'assets/icons/eye_red.webp' : 'assets/icons/eye.webp';
+    final historyIconAsset = widget.historyHasSupervisorInfo
+        ? 'assets/icons/eye_red.webp'
+        : 'assets/icons/eye.webp';
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
     final double logoHeight = size.height * (isLandscape ? 0.16 : 0.2);
@@ -45,20 +111,30 @@ class _LangSelectorState extends State<LangSelector> {
     final double spacing = isLandscape ? 16.0 : 24.0;
 
     Widget buildTile(String lang) {
+      final bool selected = lang == _selectedLanguage;
       return GestureDetector(
-        onTap: () => widget.onSelect(lang),
+        onTap: () => _handleSelect(lang),
         child: Container(
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: Colors.black, width: 2),
+            color: selected ? const Color(0xFFE8F1FF) : Colors.white,
+            border: Border.all(
+              color: selected ? const Color(0xFF2F6FED) : Colors.black,
+              width: selected ? 3 : 2,
+            ),
             borderRadius: BorderRadius.circular(18),
-            boxShadow: const [
-              BoxShadow(
+            boxShadow: [
+              const BoxShadow(
                 color: Colors.black12,
                 blurRadius: 4,
                 offset: Offset(0, 2),
-              )
+              ),
+              if (selected)
+                const BoxShadow(
+                  color: Color(0x223F7BFA),
+                  blurRadius: 10,
+                  offset: Offset(0, 3),
+                ),
             ],
           ),
           child: Text(

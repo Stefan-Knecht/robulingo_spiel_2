@@ -3,6 +3,7 @@
 // Verbindung: Wird direkt von robulingo_app.dart verwendet; nutzt HexagonTrack, Dashboard, Mic-UI.
 // Tücken: Erwartet Status/Callbacks aus dem App-State (Trials, Naming-Flow, Wins); kein eigener State.
 // ------------------------------------------------------------
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -286,7 +287,52 @@ class RestartSplash extends StatefulWidget {
 }
 
 class _RestartSplashState extends State<RestartSplash> {
+  static const Duration _autoProceedDelay = Duration(seconds: 8);
+
   bool _resumeFeedbackVisible = false;
+  Timer? _autoProceedTimer;
+  bool _autoProceedCanceled = false;
+  bool _startTriggered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleAutoProceed();
+  }
+
+  @override
+  void dispose() {
+    _autoProceedTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleAutoProceed() {
+    if (_autoProceedCanceled || _startTriggered) return;
+    _autoProceedTimer?.cancel();
+    _autoProceedTimer = Timer(_autoProceedDelay, () {
+      if (!mounted || _autoProceedCanceled || _startTriggered) return;
+      _triggerStart();
+    });
+  }
+
+  void _cancelAutoProceed() {
+    if (_autoProceedCanceled) return;
+    _autoProceedCanceled = true;
+    _autoProceedTimer?.cancel();
+    _autoProceedTimer = null;
+  }
+
+  void _triggerStart() {
+    if (_startTriggered) return;
+    _startTriggered = true;
+    _autoProceedTimer?.cancel();
+    _autoProceedTimer = null;
+    widget.onStart();
+  }
+
+  void _handleAnyPointerDown(PointerDownEvent event) {
+    _cancelAutoProceed();
+  }
 
   void _handleResumeFeedbackVisibilityChanged(bool visible) {
     if (_resumeFeedbackVisible == visible) return;
@@ -461,10 +507,12 @@ class _RestartSplashState extends State<RestartSplash> {
                       'lang': normalized,
                     })
                   : Uri.parse('https://www.dailywords-project.org/');
+              _cancelAutoProceed();
               await launchUrl(uri, mode: LaunchMode.externalApplication);
             }
 
             Future<void> openResumeMenu({required bool compact}) async {
+              _cancelAutoProceed();
               final double iconSize = compact ? 52 : 56;
               final double moduleIconSize = compact ? 48 : 54;
               final double menuIconSize = compact ? 34 : 38;
@@ -494,6 +542,7 @@ class _RestartSplashState extends State<RestartSplash> {
                                     child: GestureDetector(
                                       onTap: () {
                                         Navigator.of(sheetContext).pop();
+                                        _cancelAutoProceed();
                                         widget.onRestart();
                                       },
                                       child: Image.asset(
@@ -516,6 +565,7 @@ class _RestartSplashState extends State<RestartSplash> {
                                     tooltipMessage: tooltipDefaultLearning,
                                     onTap: () {
                                       Navigator.of(sheetContext).pop();
+                                      _cancelAutoProceed();
                                       widget.onSelectTrainingDepth(
                                           TrainingDepthMode.defaultMode);
                                     },
@@ -530,6 +580,7 @@ class _RestartSplashState extends State<RestartSplash> {
                                     child: GestureDetector(
                                       onTap: () {
                                         Navigator.of(sheetContext).pop();
+                                        _cancelAutoProceed();
                                         widget.onSelectModule();
                                       },
                                       behavior: HitTestBehavior.opaque,
@@ -576,6 +627,7 @@ class _RestartSplashState extends State<RestartSplash> {
                                     child: GestureDetector(
                                       onTap: () {
                                         Navigator.of(sheetContext).pop();
+                                        _cancelAutoProceed();
                                         widget.onOpenHistory();
                                       },
                                       behavior: HitTestBehavior.opaque,
@@ -601,6 +653,7 @@ class _RestartSplashState extends State<RestartSplash> {
                                     tooltipMessage: tooltipDeeperLearning,
                                     onTap: () {
                                       Navigator.of(sheetContext).pop();
+                                      _cancelAutoProceed();
                                       widget.onSelectTrainingDepth(
                                           TrainingDepthMode.deep);
                                     },
@@ -675,7 +728,7 @@ class _RestartSplashState extends State<RestartSplash> {
                         Tooltip(
                           message: tooltipStartLearning,
                           child: GestureDetector(
-                            onTap: widget.onStart,
+                            onTap: _triggerStart,
                             child: Image.asset(startArrowAsset,
                                 width: 88, height: 88),
                           ),
@@ -738,7 +791,7 @@ class _RestartSplashState extends State<RestartSplash> {
                       Tooltip(
                         message: tooltipStartLearning,
                         child: GestureDetector(
-                          onTap: widget.onStart,
+                          onTap: _triggerStart,
                           child: Image.asset(startArrowAsset,
                               width: 78, height: 78),
                         ),
@@ -792,82 +845,86 @@ class _RestartSplashState extends State<RestartSplash> {
     }
 
     return Scaffold(
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-            final compactLayout = constraints.maxHeight < 860 ||
-                constraints.maxWidth < 980 ||
-                textScale > 1.15;
-            final topSpacing = compactLayout ? 16.0 : 32.0;
-            final logoHeight = compactLayout ? 100.0 : 120.0;
-            final victoryHeight = compactLayout ? 170.0 : 200.0;
-            final compactCalendarHeight =
-                (constraints.maxHeight * 0.4).clamp(180.0, 280.0).toDouble();
-            final compactCalendarSectionHeight =
-                compactCalendarHeight + (_resumeFeedbackVisible ? 100.0 : 0.0);
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _handleAnyPointerDown,
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+              final compactLayout = constraints.maxHeight < 860 ||
+                  constraints.maxWidth < 980 ||
+                  textScale > 1.15;
+              final topSpacing = compactLayout ? 16.0 : 32.0;
+              final logoHeight = compactLayout ? 100.0 : 120.0;
+              final victoryHeight = compactLayout ? 170.0 : 200.0;
+              final compactCalendarHeight =
+                  (constraints.maxHeight * 0.4).clamp(180.0, 280.0).toDouble();
+              final compactCalendarSectionHeight = compactCalendarHeight +
+                  (_resumeFeedbackVisible ? 100.0 : 0.0);
 
-            final headSection = Column(
-              children: [
-                SizedBox(height: topSpacing),
-                Image.asset(activeFlavor.brandLogoAsset,
-                    height: logoHeight, fit: BoxFit.contain),
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: SizedBox(
-                    height: victoryHeight,
-                    child: VictoryPanel(
-                      wins: widget.wins,
-                      rivalWins: widget.rivalWins,
-                      rivalAssetPath: RivalAssetResolver.pathFor(
+              final headSection = Column(
+                children: [
+                  SizedBox(height: topSpacing),
+                  Image.asset(activeFlavor.brandLogoAsset,
+                      height: logoHeight, fit: BoxFit.contain),
+                  const SizedBox(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: SizedBox(
+                      height: victoryHeight,
+                      child: VictoryPanel(
                         wins: widget.wins,
                         rivalWins: widget.rivalWins,
-                        viewCount: widget.viewCount,
+                        rivalAssetPath: RivalAssetResolver.pathFor(
+                          wins: widget.wins,
+                          rivalWins: widget.rivalWins,
+                          viewCount: widget.viewCount,
+                        ),
+                        therapistAssetPath: TherapistAssetResolver.pathFor(
+                          wins: widget.wins,
+                          rivalWins: widget.rivalWins,
+                        ),
+                        youTooltipMessage: tooltipYou,
+                        rivalTooltipMessage: tooltipYourRival,
+                        showPlayerBadge: false,
+                        backgroundColor: Colors.transparent,
                       ),
-                      therapistAssetPath: TherapistAssetResolver.pathFor(
-                        wins: widget.wins,
-                        rivalWins: widget.rivalWins,
-                      ),
-                      youTooltipMessage: tooltipYou,
-                      rivalTooltipMessage: tooltipYourRival,
-                      showPlayerBadge: false,
-                      backgroundColor: Colors.transparent,
                     ),
                   ),
-                ),
-              ],
-            );
-
-            if (!compactLayout) {
-              return Column(
-                children: [
-                  headSection,
-                  const SizedBox(height: 12),
-                  Expanded(child: buildCalendarSection()),
-                  buildFooter(),
                 ],
               );
-            }
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                child: Column(
+              if (!compactLayout) {
+                return Column(
                   children: [
                     headSection,
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: compactCalendarSectionHeight,
-                      child: buildCalendarSection(),
-                    ),
+                    const SizedBox(height: 12),
+                    Expanded(child: buildCalendarSection()),
                     buildFooter(),
                   ],
+                );
+              }
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Column(
+                    children: [
+                      headSection,
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: compactCalendarSectionHeight,
+                        child: buildCalendarSection(),
+                      ),
+                      buildFooter(),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );

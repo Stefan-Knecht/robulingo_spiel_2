@@ -424,6 +424,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool? lastCorrect;
   bool? lastSelectionIsLeft;
   Timer? nativeSelectTimer;
+  static const Duration _openingPanelAutoProceedDelay = Duration(seconds: 8);
   final Map<String, int> correctCounts = {};
   final Map<String, int> audioPlayCounts = {};
   final Map<String, int> audioMaxSequenceIndex = {};
@@ -1639,7 +1640,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _onSelectStart(String fileName) async {
     final selectedStart = sanitizeStartCurriculum(fileName);
     nativeSelectTimer?.cancel();
-    nativeSelectTimer = Timer(const Duration(seconds: 20), () {
+    nativeSelectTimer = Timer(_openingPanelAutoProceedDelay, () {
       if (!mounted || !awaitingNative) return;
       _onSelectNative(null, selectedStart);
     });
@@ -1877,6 +1878,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
     unawaited(_loadHintPack(forceRefresh: true));
     await _loadInitial(startKey: sanitizeStartCurriculum(startKey));
+  }
+
+  String? _landingLanguageFromQuery() {
+    final raw = Uri.base.queryParameters['lang']?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    final candidate = raw.toLowerCase().split(RegExp(r'[-_]')).first;
+    return langChoices.contains(candidate) ? candidate : null;
   }
 
   Future<void> _loadInitial({String? startKey}) async {
@@ -3765,11 +3773,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   @override
   Widget build(BuildContext context) {
     if (awaitingLang) {
+      final landingLanguage = _landingLanguageFromQuery();
       return _wrapWithKeyboardShortcuts(
         Scaffold(
           body: SafeArea(
             child: LangSelector(
               onSelect: _onSelectLang,
+              initialSelectedLanguage: landingLanguage,
+              autoSelectDelay: landingLanguage == null
+                  ? Duration.zero
+                  : _openingPanelAutoProceedDelay,
             ),
           ),
         ),

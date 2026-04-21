@@ -141,7 +141,7 @@ void _openRealTalkExternal(
   );
 }
 
-class StartCurriculumSelector extends StatelessWidget {
+class StartCurriculumSelector extends StatefulWidget {
   const StartCurriculumSelector({
     super.key,
     required this.onSelect,
@@ -164,8 +164,57 @@ class StartCurriculumSelector extends StatelessWidget {
   final bool historyHasSupervisorInfo;
 
   @override
+  State<StartCurriculumSelector> createState() =>
+      _StartCurriculumSelectorState();
+}
+
+class _StartCurriculumSelectorState extends State<StartCurriculumSelector> {
+  static const Duration _defaultCrossDelay = Duration(seconds: 8);
+  Timer? _autoSelectTimer;
+  bool _handledAction = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (activeFlavor.allowedStartCurricula
+        .contains('start_curriculum_a.json')) {
+      _autoSelectTimer = Timer(_defaultCrossDelay, () {
+        if (!mounted || _handledAction) return;
+        _handledAction = true;
+        _cancelAutoSelect();
+        widget.onSelect('start_curriculum_a.json');
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _autoSelectTimer?.cancel();
+    super.dispose();
+  }
+
+  void _cancelAutoSelect() {
+    _autoSelectTimer?.cancel();
+    _autoSelectTimer = null;
+  }
+
+  void _handleSelect(String fileName) {
+    if (_handledAction) return;
+    _handledAction = true;
+    _cancelAutoSelect();
+    widget.onSelect(fileName);
+  }
+
+  void _handleTap(VoidCallback? action) {
+    if (_handledAction) return;
+    _handledAction = true;
+    _cancelAutoSelect();
+    action?.call();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final historyIconAsset = historyHasSupervisorInfo
+    final historyIconAsset = widget.historyHasSupervisorInfo
         ? 'assets/icons/eye_red.webp'
         : 'assets/icons/eye.webp';
     final size = MediaQuery.of(context).size;
@@ -203,18 +252,18 @@ class StartCurriculumSelector extends StatelessWidget {
           onTap: () {
             final uri = _buildRealTalkUri(
               context,
-              targetLanguageCode: targetLanguageCode,
-              nativeLanguageCode: nativeLanguageCode,
+              targetLanguageCode: widget.targetLanguageCode,
+              nativeLanguageCode: widget.nativeLanguageCode,
             );
             if (uri == null) return;
-            if (onOpenRealTalk != null) {
-              unawaited(onOpenRealTalk!(uri));
+            if (widget.onOpenRealTalk != null) {
+              unawaited(widget.onOpenRealTalk!(uri));
               return;
             }
             _openRealTalkExternal(
               context,
-              targetLanguageCode: targetLanguageCode,
-              nativeLanguageCode: nativeLanguageCode,
+              targetLanguageCode: widget.targetLanguageCode,
+              nativeLanguageCode: widget.nativeLanguageCode,
             );
           },
           iconScale: 1.32,
@@ -270,11 +319,11 @@ class StartCurriculumSelector extends StatelessWidget {
         iconScale: startCurriculumIconScaleForKey('start_curriculum_l.json'),
       ));
     }
-    if (activeFlavor.allowPickManifest && onPickSelected != null) {
+    if (activeFlavor.allowPickManifest && widget.onPickSelected != null) {
       thirdRow.add(
         _StartOption(
           asset: 'assets/icons/pick.webp',
-          onTap: onPickSelected,
+          onTap: widget.onPickSelected,
           iconScale: 1.0,
         ),
       );
@@ -289,26 +338,29 @@ class StartCurriculumSelector extends StatelessWidget {
         if (optionRows.isNotEmpty) ...[
           _OptionsRow(
             options: optionRows.first,
-            onSelect: onSelect,
+            onSelect: _handleSelect,
             tileSize: primaryTileSize,
             iconSize: primaryIconSize,
+            onTap: _handleTap,
           ),
         ],
         if (dialogFeatureOptions.isNotEmpty) ...[
           if (optionRows.isNotEmpty) SizedBox(height: rowSpacing),
           _FeatureOptionsRow(
             options: dialogFeatureOptions,
-            onSelect: onSelect,
+            onSelect: _handleSelect,
             maxTileSize: featureTileMaxSize,
+            onTap: _handleTap,
           ),
         ],
         for (int i = 1; i < optionRows.length; i++) ...[
           SizedBox(height: rowSpacing),
           _OptionsRow(
             options: optionRows[i],
-            onSelect: onSelect,
+            onSelect: _handleSelect,
             tileSize: secondaryTileSize,
             iconSize: secondaryIconSize,
+            onTap: _handleTap,
           ),
         ],
       ],
@@ -356,7 +408,7 @@ class StartCurriculumSelector extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(child: content),
-        if (showHistoryButton && onOpenHistory != null)
+        if (widget.showHistoryButton && widget.onOpenHistory != null)
           Positioned(
             left: 0,
             right: 0,
@@ -371,7 +423,7 @@ class StartCurriculumSelector extends StatelessWidget {
                     height: 28,
                     fit: BoxFit.contain,
                   ),
-                  onPressed: onOpenHistory,
+                  onPressed: () => _handleTap(widget.onOpenHistory),
                 ),
               ),
             ),
@@ -386,11 +438,13 @@ class _FeatureOptionsRow extends StatelessWidget {
     required this.options,
     required this.onSelect,
     required this.maxTileSize,
+    required this.onTap,
   });
 
   final List<_StartOption> options;
   final void Function(String fileName) onSelect;
   final double maxTileSize;
+  final void Function(VoidCallback? action) onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -430,12 +484,13 @@ class _FeatureOptionsRow extends StatelessWidget {
                       ),
                       backgroundColor: Colors.white,
                     ),
-                    onPressed: options[i].onTap ??
-                        () {
-                          if (options[i].fileName != null) {
-                            onSelect(options[i].fileName!);
-                          }
-                        },
+                    onPressed: () {
+                      if (options[i].onTap != null) {
+                        onTap(options[i].onTap);
+                      } else if (options[i].fileName != null) {
+                        onSelect(options[i].fileName!);
+                      }
+                    },
                     child: Image.asset(
                       options[i].asset,
                       width: iconSize * options[i].iconScale,
@@ -475,12 +530,14 @@ class _OptionsRow extends StatelessWidget {
     required this.onSelect,
     required this.tileSize,
     required this.iconSize,
+    required this.onTap,
   });
 
   final List<_StartOption> options;
   final void Function(String fileName) onSelect;
   final double tileSize;
   final double iconSize;
+  final void Function(VoidCallback? action) onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -502,12 +559,13 @@ class _OptionsRow extends StatelessWidget {
                   ),
                   backgroundColor: Colors.white,
                 ),
-                onPressed: opt.onTap ??
-                    () {
-                      if (opt.fileName != null) {
-                        onSelect(opt.fileName!);
-                      }
-                    },
+                onPressed: () {
+                  if (opt.onTap != null) {
+                    onTap(opt.onTap);
+                  } else if (opt.fileName != null) {
+                    onSelect(opt.fileName!);
+                  }
+                },
                 child: Image.asset(
                   opt.asset,
                   width: iconSize * opt.iconScale,
