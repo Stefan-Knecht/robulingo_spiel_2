@@ -1509,7 +1509,7 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
-                  'assets/icons/tap.webp',
+                  'assets/icons/tap.png',
                   width: size.width * 0.8,
                   fit: BoxFit.contain,
                   errorBuilder: (context, error, stackTrace) =>
