@@ -1511,8 +1511,9 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
                 Image.asset(
                   'assets/icons/tap.webp',
                   width: size.width * 0.8,
-                  height: size.height * 0.8,
                   fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _imageLoadFallback(),
                 ),
                 const SizedBox(height: 18),
                 Text(
