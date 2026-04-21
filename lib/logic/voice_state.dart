@@ -1,7 +1,7 @@
 // ------------------------------------------------------------
 // Ziel (Laien): Alle Mic-/Naming-Flags bündeln, damit UI/Controller dieselbe Quelle teilen.
 // Verbindung: VoiceController steuert diese Flags; robulingo_app.dart liest/schreibt sie für UI-Status.
-// Tücken: Mic-Gate/Priming/Blockierungen (20 Trials) werden hier verwaltet; kein Persist über Sessions.
+// Tücken: Mic-Priming und Blockierungen (20 Trials) werden hier verwaltet; kein Persist über Sessions.
 // ------------------------------------------------------------
 import 'dart:async';
 
@@ -28,8 +28,6 @@ class VoiceState {
   bool namingDisabled = false;
   int namingBlockRemaining = 0;
   bool namingNoMicMode = false;
-  int micGateToken = -1;
-  bool micGateGranted = false;
   bool micOn = false;
   int micStage = -1;
   bool namingPaused = false;
@@ -107,8 +105,7 @@ class VoiceController {
   }
 
   Future<void> initSpeech() async {
-    // No-op by default: do not prompt for permissions implicitly.
-    // Mic permission should be requested only via explicit user action.
+    // No-op by default: mic preflight is triggered by the naming-session flow.
   }
 
   Future<bool> ensureMicReady({

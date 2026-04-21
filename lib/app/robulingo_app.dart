@@ -60,7 +60,6 @@ import 'package:robulingo_flutter/logic/mountain_background_cycle.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
 import 'package:robulingo_flutter/ui/history_panel.dart';
 import 'package:robulingo_flutter/ui/lang_selector.dart';
-import 'package:robulingo_flutter/ui/mic_gate.dart';
 import 'package:robulingo_flutter/ui/mic_progress_bar.dart';
 import 'package:robulingo_flutter/ui/native_lang_selector.dart';
 import 'package:robulingo_flutter/ui/realtalk_screen.dart';
@@ -132,14 +131,6 @@ const Map<String, Map<String, String>> _namingInstructionTexts = {
     'en': 'No transcript captured. Please try again.',
     'de': 'Kein Transkript erfasst. Bitte versuche es erneut.',
     'el': 'Δεν καταγράφηκε κείμενο. Παρακαλώ δοκιμάστε ξανά.',
-  },
-  'mic_gate_instruction': {
-    'en':
-        'Tap the mic. In the next system dialog, choose the first or fullest Allow option for microphone access if you want naming to work. If this does not work, close this screen and continue without mic.',
-    'de':
-        'Tippe auf das Mikrofon. Wähle im nächsten Systemdialog die erste oder umfassendste Erlaubnis für den Mikrofonzugriff, wenn das Benennen funktionieren soll. Falls das nicht klappt, schließe diesen Bildschirm und fahre ohne Mikrofon fort.',
-    'el':
-        'Πατήστε το μικρόφωνο. Στο επόμενο παράθυρο του συστήματος, επιλέξτε την πρώτη ή πληρέστερη επιλογή άδειας για το μικρόφωνο, αν θέλετε να λειτουργεί η ονομασία. Αν δεν λειτουργήσει, κλείστε αυτήν την οθόνη και συνεχίστε χωρίς μικρόφωνο.',
   },
 };
 const Map<String, Map<String, String>> _noMicNamingTexts = {
@@ -343,8 +334,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   late NamingController namingController;
   final VoiceState voiceState = VoiceState();
   late VoiceController voiceController;
-  bool micGateActive = false;
-
   bool get micReady => voiceState.micReady;
   set micReady(bool value) => voiceState.micReady = value;
   bool get micPrimed => voiceState.micPrimed;
@@ -376,10 +365,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       voiceState.namingBlockRemaining = value;
   bool get namingNoMicMode => voiceState.namingNoMicMode;
   set namingNoMicMode(bool value) => voiceState.namingNoMicMode = value;
-  int get micGateToken => voiceState.micGateToken;
-  set micGateToken(int value) => voiceState.micGateToken = value;
-  bool get micGateGranted => voiceState.micGateGranted;
-  set micGateGranted(bool value) => voiceState.micGateGranted = value;
   bool get micOn => voiceState.micOn;
   set micOn(bool value) => voiceState.micOn = value;
   int get micStage => voiceState.micStage;
@@ -425,6 +410,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool? lastSelectionIsLeft;
   Timer? nativeSelectTimer;
   static const Duration _openingPanelAutoProceedDelay = Duration(seconds: 8);
+  bool _showTapPrimerPanel = false;
+  bool _tapPrimerConsumed = false;
   final Map<String, int> correctCounts = {};
   final Map<String, int> audioPlayCounts = {};
   final Map<String, int> audioMaxSequenceIndex = {};
@@ -1184,6 +1171,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   Future<void> _initializePresentationPolicy({
     int? fallbackCursorIndex,
+    bool showTapPrimer = false,
   }) async {
     final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
     final List<String> curriculumUuids = (curriculum.isNotEmpty)
@@ -1220,7 +1208,22 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
     final slot = presentationPolicy.currentSlot;
     if (slot.targetUuid.isEmpty) return;
+    _showTapPrimerPanel = showTapPrimer && !_tapPrimerConsumed;
     await _applySlot(slot, advanceToken: false);
+  }
+
+  Future<void> _dismissTapPrimer({required bool primeAudio}) async {
+    if (!_showTapPrimerPanel) return;
+    final token = currentTrialToken;
+    if (primeAudio) {
+      await _primeAudioForUserGestureAsync('tap-primer');
+    }
+    if (!mounted || token != currentTrialToken) return;
+    setState(() {
+      _showTapPrimerPanel = false;
+      _tapPrimerConsumed = true;
+    });
+    await _startTrial(token);
   }
 
   Future<_RestartCurriculumMetadata> _fetchRestartCurriculumMetadata(
@@ -1736,7 +1739,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _startPickGame(String key) async {
     if (!activeFlavor.allowPickManifest) return;
     _resetPickSelection();
-    await _loadInitial(startKey: key);
+    await _loadInitial(startKey: key, showTapPrimer: true);
   }
 
   void _resetPickSelection({bool showStart = false}) {
@@ -1877,7 +1880,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintRevealedUuid = null;
     });
     unawaited(_loadHintPack(forceRefresh: true));
-    await _loadInitial(startKey: sanitizeStartCurriculum(startKey));
+    await _loadInitial(
+      startKey: sanitizeStartCurriculum(startKey),
+      showTapPrimer: true,
+    );
   }
 
   String? _landingLanguageFromQuery() {
@@ -1887,7 +1893,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return langChoices.contains(candidate) ? candidate : null;
   }
 
-  Future<void> _loadInitial({String? startKey}) async {
+  Future<void> _loadInitial({
+    String? startKey,
+    bool showTapPrimer = false,
+  }) async {
     // Initialer Ladepfad: UI zurücksetzen, Curriculum holen,
     // dann so viele Batches laden, bis mindestens 1 valides Item da ist
     // oder nichts Brauchbares gefunden wird.
@@ -1974,6 +1983,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       sessionEnded = initData.sessionEnded;
       nativeSeenCounts.clear();
       curriculumStartOffset = initData.curriculumStartOffset;
+      _showTapPrimerPanel = false;
     });
     logger.setSessionContext(
         startKey: resolvedStart, lang: lang, nativeLang: nativeLang);
@@ -2038,7 +2048,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           loading = false;
         });
         if (mounted) {
-          await _initializePresentationPolicy();
+          await _initializePresentationPolicy(showTapPrimer: showTapPrimer);
         }
       }
     } catch (e) {
@@ -2745,6 +2755,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _startTrial(int token) async {
     if (!mounted || token != currentTrialToken) return;
     if (namingHold) return; // Benennen wartet auf Button (nur für 2AFC)
+    if (!_isNamingTrial() && _showTapPrimerPanel) {
+      debugPrint(
+          '[trial][start-blocked] idx=$trialIndex token=$token tap_primer=true');
+      return;
+    }
     unawaited(_persistSessionCache());
     if (_isNamingTrial()) {
       debugPrint('[trial][start] idx=$trialIndex token=$token naming=true');
@@ -2876,9 +2891,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       skipGate ? 'naming-start-skip-gate' : 'naming-start',
     );
     debugPrint(
-        '[naming][prime] token=$token skipGate=$skipGate gateGranted=$micGateGranted primed=$micPrimed');
-    protocolLog.addNote(
-        'Naming mic prime requested: token=$token skipGate=$skipGate gateGranted=$micGateGranted');
+        '[naming][prime] token=$token skipGate=$skipGate primed=$micPrimed');
+    protocolLog
+        .addNote('Naming mic prime requested: token=$token skipGate=$skipGate');
     setState(() {
       micDenied = false;
     });
@@ -2940,7 +2955,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         micPrimed = false;
         micPromptActive = true;
         namingHold = true;
-        micGateGranted = false;
       });
       return;
     }
@@ -3149,9 +3163,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       {bool skipGate = false, bool userInitiated = false}) async {
     if (_namingSessionBusy || !_isNamingTrial()) return;
     if (token != currentTrialToken) return;
-    if (!skipGate && !namingNoMicMode && _showMicGateIfNeeded(token)) return;
     debugPrint(
-        '[naming][flow-start] token=$token gateGranted=$micGateGranted primed=$micPrimed noMicMode=$namingNoMicMode');
+        '[naming][flow-start] token=$token primed=$micPrimed noMicMode=$namingNoMicMode');
     if (!namingNoMicMode && !micPrimed) {
       setState(() {
         micPromptActive = true;
@@ -3350,7 +3363,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       micPrimed = true;
       micPromptActive = false;
       namingHold = false;
-      micGateGranted = false;
     });
     await _startNamingFlow(token, skipGate: true, userInitiated: true);
   }
@@ -3486,10 +3498,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     if (namingBlockRemaining > 0) {
       namingBlockRemaining = max(0, namingBlockRemaining - 1);
-      if (namingBlockRemaining == 0) {
-        micGateGranted = false;
-        micGateToken = -1;
-      }
     }
     final nextSlot = pendingNextSlot ?? presentationPolicy.currentSlot;
     assert(() {
@@ -3504,7 +3512,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     pendingNextSlot = null;
     unawaited(_applySlot(nextSlot));
     debugPrint(
-        '[trial][next] idx=$trialIndex token=$currentTrialToken block=$namingBlockRemaining gateGranted=$micGateGranted');
+        '[trial][next] idx=$trialIndex token=$currentTrialToken block=$namingBlockRemaining');
   }
 
   void _togglePhoneticsForAllItems({
@@ -3519,72 +3527,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       phoneticForceHiddenByToggle = false;
       phoneticGlobalOverrideRemaining = _phoneticGlobalOverrideRuns;
     });
-  }
-
-  bool _showMicGateIfNeeded(int token) {
-    if (!_isNamingTrial()) return false;
-    if (namingNoMicMode) return false;
-    if (micGateGranted) return false;
-    if (micGateToken == token) return false;
-    micGateToken = token;
-    micGateActive = true;
-    if (_keyboardFocusNode.hasFocus) {
-      _keyboardFocusNode.unfocus();
-    }
-    debugPrint(
-        '[naming][gate-open] token=$token trialIdx=$trialIndex block=$namingBlockRemaining');
-    protocolLog.addNote(
-        'Naming mic gate opened: token=$token trialIdx=$trialIndex namingBlockRemaining=$namingBlockRemaining');
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || token != currentTrialToken) return;
-      Navigator.of(context)
-          .push<String>(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => MicGate(
-            onAllow: () => Navigator.of(context).pop('allow'),
-            onDeny: () => Navigator.of(context).pop('deny'),
-            onTimeout: () => Navigator.of(context).pop('timeout'),
-            instructionText: _instructionText('mic_gate_instruction'),
-          ),
-        ),
-      )
-          .then((result) {
-        if (!mounted || token != currentTrialToken) {
-          micGateActive = false;
-          return;
-        }
-        micGateToken = -1;
-        micGateActive = false;
-        if (result == 'allow') {
-          micGateGranted = true;
-          micPrimed = true;
-          protocolLog.addNote(
-              'Naming mic gate result: token=$token result=allow action=prime_and_start');
-          _primeMicAndStart(skipGate: true);
-        } else {
-          // deny oder timeout: weiter in No-Mic-Naming ohne ASR
-          setState(() {
-            namingBlockRemaining = 0;
-            namingNoMicMode = true;
-            namingOutcome = null;
-            namingStatus = '';
-            micDenied = true;
-            micPrimed = true;
-            micPromptActive = false;
-            namingHold = false;
-            micGateGranted = false;
-          });
-          protocolLog.addNote(
-              'Naming mic gate result: token=$token result=${result ?? 'null'} action=enable_no_mic_mode_and_start');
-          unawaited(
-              _startNamingFlow(token, skipGate: true, userInitiated: true));
-        }
-        debugPrint(
-            '[naming][gate-close] token=$token result=$result block=$namingBlockRemaining');
-      });
-    });
-    return true;
   }
 
   void _advancePlayer(bool correct) {
@@ -3683,7 +3625,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
-      if (_isNamingTrial() && !_namingSessionBusy && !micGateActive) {
+      if (_isNamingTrial() && !_namingSessionBusy) {
         unawaited(_startNamingFlowFromKeyboard());
         return true;
       }
@@ -3711,7 +3653,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   bool _canAutofocusKeyboardShortcuts() {
-    if (micGateActive) return false;
     final route = ModalRoute.of(context);
     if (route != null && !route.isCurrent) return false;
     final focusedWidget = FocusManager.instance.primaryFocus?.context?.widget;
@@ -4041,86 +3982,95 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                 namingOutcome != null ||
                 micStage >= 1 ||
                 forceShowNamingText);
-        body = SessionBody(
-          ladder: ladder,
-          runsDone: comprehensionHistory.length + namingHistory.length,
-          isNaming: isNamingView,
-          imageHeight: imageHeight,
-          leftImageBytes: leftImg,
-          rightImageBytes: rightImg,
-          targetOnLeft: trial.targetOnLeft,
-          hasAnswered: hasAnswered,
-          lastSelectionIsLeft: lastSelectionIsLeft,
-          namingOutcome: namingOutcome,
-          namingStatus: namingStatus,
-          micPrimed: micPrimed,
-          micDenied: micDenied,
-          micPermanentlyDenied: micPermanentlyDenied,
-          speechPermanentlyDenied: speechPermanentlyDenied,
-          micStatusDetails: _buildMicStatusDetails(),
-          namingHold: namingHold,
-          showHourglass: showHourglass,
-          namingInProgress: namingInProgress,
-          namingStartPending: _namingStartPending,
-          micOn: micOn,
-          micStage: micStage,
-          namingPaused: namingPaused,
-          showTinySpinner:
-              trialIsLoading && (namingBlockActive || _namingTransition),
-          liveTranscript: _liveTranscript,
-          startNamingLabel: _instructionText('start_naming'),
-          retryMicLabel: _instructionText('retry_mic'),
-          settingsLabel: _instructionText('settings'),
-          withoutMicLabel: _instructionText('without_mic'),
-          targetText: showL2Text ? trial.target.text : '',
-          targetPhonetic:
-              showL2Text && showPhonetic ? trial.target.phonetic : null,
-          phoneticButtonVisible: showL2Text && hasPhoneticData,
-          phoneticOverrideActive: showPhonetic,
-          onTogglePhonetic: hasPhoneticData
-              ? () => _togglePhoneticsForAllItems(
-                    currentlyVisible: showPhonetic,
-                  )
-              : null,
-          spokenCueText:
-              !isNamingView && !trialIsLoading ? trial.target.text : null,
-          nativeText: trial.target.nativeText,
-          showNative: showNative,
-          hintEntries: hintEntries,
-          hintLabel: hintLabel,
-          hintMissingText: hintMissingText,
-          hintButtonVisible: hintAvailable,
-          hintButtonActive: hintRevealedForItem,
-          onToggleHints: _toggleHintsForCurrent,
-          hintPanelKey: _hintPanelKey,
-          audioHintEnabled: !isNamingView && !trialIsLoading,
-          onPlayAudioHint: () {
-            unawaited(_playHintAudioForItem(trial.target));
-          },
-          showDashboardButton: showDashboardButton,
-          showGlobalHourglass: showGlobalHourglass,
-          mountainTheme: _activeMountainTheme,
-          mountainYouWon: _mountainWinnerIsYou == true,
-          mountainRivalWon: _mountainWinnerIsYou == false,
-          onPrimeMic: _primeMicAndStart,
-          onOpenMicSettings: _openMicSettings,
-          onContinueWithoutMic: _continueWithoutMicNaming,
-          onSkipNaming: _skipNaming,
-          onToggleNamingPauseResume: _toggleNamingPauseResume,
-          onSelect: _select,
-          tooltipLanguageCode:
-              HintsService.normalizeLangCode(nativeLang ?? lang),
-          onOpenDashboard: () {
-            _mountainWinDashboardTimer?.cancel();
-            unawaited(_persistUserCursor());
-            if (!sessionEnded) {
-              _finishSession();
-            }
-            unawaited(_openDashboardPreview(context, focus: 'wins'));
-          },
-          onEscapeToOpeningPanel: _exitToOpeningPanel,
-          onExitToResumePanel: _exitToResumePanelIfAvailable,
-        );
+        if (!trialIsLoading && !isNamingView && _showTapPrimerPanel) {
+          body = TapPrimerPanel(
+            autoProceedDelay: _openingPanelAutoProceedDelay,
+            onProceed: (primeAudio) {
+              unawaited(_dismissTapPrimer(primeAudio: primeAudio));
+            },
+          );
+        } else {
+          body = SessionBody(
+            ladder: ladder,
+            runsDone: comprehensionHistory.length + namingHistory.length,
+            isNaming: isNamingView,
+            imageHeight: imageHeight,
+            leftImageBytes: leftImg,
+            rightImageBytes: rightImg,
+            targetOnLeft: trial.targetOnLeft,
+            hasAnswered: hasAnswered,
+            lastSelectionIsLeft: lastSelectionIsLeft,
+            namingOutcome: namingOutcome,
+            namingStatus: namingStatus,
+            micPrimed: micPrimed,
+            micDenied: micDenied,
+            micPermanentlyDenied: micPermanentlyDenied,
+            speechPermanentlyDenied: speechPermanentlyDenied,
+            micStatusDetails: _buildMicStatusDetails(),
+            namingHold: namingHold,
+            showHourglass: showHourglass,
+            namingInProgress: namingInProgress,
+            namingStartPending: _namingStartPending,
+            micOn: micOn,
+            micStage: micStage,
+            namingPaused: namingPaused,
+            showTinySpinner:
+                trialIsLoading && (namingBlockActive || _namingTransition),
+            liveTranscript: _liveTranscript,
+            startNamingLabel: _instructionText('start_naming'),
+            retryMicLabel: _instructionText('retry_mic'),
+            settingsLabel: _instructionText('settings'),
+            withoutMicLabel: _instructionText('without_mic'),
+            targetText: showL2Text ? trial.target.text : '',
+            targetPhonetic:
+                showL2Text && showPhonetic ? trial.target.phonetic : null,
+            phoneticButtonVisible: showL2Text && hasPhoneticData,
+            phoneticOverrideActive: showPhonetic,
+            onTogglePhonetic: hasPhoneticData
+                ? () => _togglePhoneticsForAllItems(
+                      currentlyVisible: showPhonetic,
+                    )
+                : null,
+            spokenCueText:
+                !isNamingView && !trialIsLoading ? trial.target.text : null,
+            nativeText: trial.target.nativeText,
+            showNative: showNative,
+            hintEntries: hintEntries,
+            hintLabel: hintLabel,
+            hintMissingText: hintMissingText,
+            hintButtonVisible: hintAvailable,
+            hintButtonActive: hintRevealedForItem,
+            onToggleHints: _toggleHintsForCurrent,
+            hintPanelKey: _hintPanelKey,
+            audioHintEnabled: !isNamingView && !trialIsLoading,
+            onPlayAudioHint: () {
+              unawaited(_playHintAudioForItem(trial.target));
+            },
+            showDashboardButton: showDashboardButton,
+            showGlobalHourglass: showGlobalHourglass,
+            mountainTheme: _activeMountainTheme,
+            mountainYouWon: _mountainWinnerIsYou == true,
+            mountainRivalWon: _mountainWinnerIsYou == false,
+            onPrimeMic: () => unawaited(_primeMicAndStart(skipGate: true)),
+            onOpenMicSettings: _openMicSettings,
+            onContinueWithoutMic: _continueWithoutMicNaming,
+            onSkipNaming: _skipNaming,
+            onToggleNamingPauseResume: _toggleNamingPauseResume,
+            onSelect: _select,
+            tooltipLanguageCode:
+                HintsService.normalizeLangCode(nativeLang ?? lang),
+            onOpenDashboard: () {
+              _mountainWinDashboardTimer?.cancel();
+              unawaited(_persistUserCursor());
+              if (!sessionEnded) {
+                _finishSession();
+              }
+              unawaited(_openDashboardPreview(context, focus: 'wins'));
+            },
+            onEscapeToOpeningPanel: _exitToOpeningPanel,
+            onExitToResumePanel: _exitToResumePanelIfAvailable,
+          );
+        }
       }
     }
 
@@ -4262,8 +4212,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     currentTrialToken++;
     selectionEpoch++;
     pendingNextSlot = null;
-    micGateToken = -1;
-    micGateActive = false;
+    _showTapPrimerPanel = false;
   }
 
   Future<void> _flushExitLogsForDailyWords() async {

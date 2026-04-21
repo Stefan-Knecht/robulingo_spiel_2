@@ -1450,6 +1450,105 @@ class _TrialOption extends StatelessWidget {
   }
 }
 
+class TapPrimerPanel extends StatefulWidget {
+  const TapPrimerPanel({
+    super.key,
+    required this.onProceed,
+    this.autoProceedDelay = const Duration(seconds: 8),
+  });
+
+  final ValueChanged<bool> onProceed;
+  final Duration autoProceedDelay;
+
+  @override
+  State<TapPrimerPanel> createState() => _TapPrimerPanelState();
+}
+
+class _TapPrimerPanelState extends State<TapPrimerPanel> {
+  Timer? _autoProceedTimer;
+  bool _handled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _autoProceedTimer = Timer(widget.autoProceedDelay, () {
+      _trigger(primeAudio: false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoProceedTimer?.cancel();
+    super.dispose();
+  }
+
+  void _trigger({required bool primeAudio}) {
+    if (_handled) return;
+    _handled = true;
+    _autoProceedTimer?.cancel();
+    widget.onProceed(primeAudio);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final bool isLandscape = size.width > size.height;
+    final double maxWidth = isLandscape ? 540 : 420;
+    final double iconWidth =
+        isLandscape ? 320 : (size.width * 0.72).clamp(0.0, 320.0).toDouble();
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _trigger(primeAudio: true),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: Container(
+            margin: const EdgeInsets.all(24),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFFDFEFE), Color(0xFFF1F6FF)],
+              ),
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: const Color(0x1A000000), width: 1.5),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x1F000000),
+                  blurRadius: 22,
+                  offset: Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'assets/icons/tap.webp',
+                  width: iconWidth,
+                  fit: BoxFit.contain,
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Tap an image',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Widget _imageLoadFallback() {
   return Container(
     color: const Color(0xFFF3F4F6),
