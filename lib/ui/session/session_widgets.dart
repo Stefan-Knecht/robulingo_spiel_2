@@ -1510,7 +1510,7 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
               children: [
                 Image.asset(
                   'assets/icons/tap.png',
-                  width: size.width * 0.8,
+                  width: 300,
                   fit: BoxFit.contain,
                   errorBuilder: (context, error, stackTrace) =>
                       _imageLoadFallback(),
@@ -1536,9 +1536,11 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
 
 Widget _imageLoadFallback() {
   return Container(
+    width: 300,
+    height: 300,
     color: const Color(0xFFF3F4F6),
     alignment: Alignment.center,
-    child: const Icon(Icons.broken_image_outlined, color: Color(0xFF9CA3AF)),
+    child: const Icon(Icons.broken_image_outlined, size: 100, color: Color(0xFF9CA3AF)),
   );
 }
 
