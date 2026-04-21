@@ -47,6 +47,20 @@ const List<String> langChoices = [
   'tr',
   'ja',
 ];
+const Map<String, String> tapPromptTexts = {
+  'en': 'Tap an image',
+  'de': 'Bild antippen',
+  'ar': 'اضغط على صورة',
+  'fr': 'Appuyez sur une image',
+  'es': 'Toca una imagen',
+  'it': 'Tocca un\'immagine',
+  'ru': 'Нажмите на изображение',
+  'hi': 'एक छवि पर टैप करें',
+  'el': 'Πατήστε μια εικόνα',
+  'zh': '点击图片',
+  'tr': 'Bir resme dokunun',
+  'ja': '画像をタップ',
+};
 const int batchSize =
     12; // Wie viele Items wir in einem Rutsch vom Worker holen
 const double prefetchThreshold =

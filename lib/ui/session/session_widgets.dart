@@ -1455,10 +1455,14 @@ class TapPrimerPanel extends StatefulWidget {
     super.key,
     required this.onProceed,
     this.autoProceedDelay = const Duration(seconds: 8),
+    this.l1,
+    this.l2,
   });
 
   final ValueChanged<bool> onProceed;
   final Duration autoProceedDelay;
+  final String? l1;
+  final String? l2;
 
   @override
   State<TapPrimerPanel> createState() => _TapPrimerPanelState();
@@ -1492,47 +1496,27 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final bool isLandscape = size.width > size.height;
-    final double maxWidth = isLandscape ? 540 : 420;
-    final double iconWidth =
-        isLandscape ? 320 : (size.width * 0.72).clamp(0.0, 320.0).toDouble();
+    final String text = tapPromptTexts[widget.l1] ?? tapPromptTexts[widget.l2] ?? 'Tap an image';
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => _trigger(primeAudio: true),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxWidth),
-          child: Container(
-            margin: const EdgeInsets.all(24),
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFFFDFEFE), Color(0xFFF1F6FF)],
-              ),
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: const Color(0x1A000000), width: 1.5),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x1F000000),
-                  blurRadius: 22,
-                  offset: Offset(0, 10),
-                ),
-              ],
-            ),
+      child: SizedBox.expand(
+        child: Container(
+          color: Colors.white,
+          child: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
                   'assets/icons/tap.webp',
-                  width: iconWidth,
+                  width: size.width * 0.8,
+                  height: size.height * 0.8,
                   fit: BoxFit.contain,
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Tap an image',
+                Text(
+                  text,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 28,

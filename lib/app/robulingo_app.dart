@@ -3985,6 +3985,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         if (!trialIsLoading && !isNamingView && _showTapPrimerPanel) {
           body = TapPrimerPanel(
             autoProceedDelay: _openingPanelAutoProceedDelay,
+            l1: nativeLang,
+            l2: lang,
             onProceed: (primeAudio) {
               unawaited(_dismissTapPrimer(primeAudio: primeAudio));
             },
