@@ -1501,7 +1501,9 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
         math.min(size.width * 0.78, 520).clamp(280.0, 520.0).toDouble();
     final double promptHeight =
         math.min(size.height * 0.42, 340).clamp(220.0, 340.0).toDouble();
-    final String text = tapPromptTexts[widget.l1] ?? tapPromptTexts[widget.l2] ?? 'Tap an image';
+    final String text = tapPromptTexts[widget.l1] ??
+        tapPromptTexts[widget.l2] ??
+        'Tap an image';
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1516,21 +1518,35 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
                 SizedBox(
                   width: promptWidth,
                   height: promptHeight,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF3F4F6),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: FittedBox(
-                        fit: BoxFit.cover,
-                        alignment: Alignment.bottomLeft,
-                        child: Image.asset(
-                          'assets/icons/tap.png',
-                          filterQuality: FilterQuality.high,
-                          errorBuilder: (context, error, stackTrace) =>
-                              _imageLoadFallback(),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x11000000),
+                          blurRadius: 20,
+                          offset: Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            border: Border.all(color: const Color(0xFFE5E7EB)),
+                          ),
+                          child: Image.asset(
+                            'assets/icons/tap_focus.png',
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                            errorBuilder: (context, error, stackTrace) =>
+                                _tapPrimerIllustrationFallback(),
+                          ),
                         ),
                       ),
                     ),
@@ -1540,10 +1556,10 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
                 Text(
                   text,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.w700,
-                    color: Colors.black87,
+                    color: Color(0xDD000000),
                   ),
                 ),
               ],
@@ -1555,13 +1571,110 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
   }
 }
 
+Widget _tapPrimerIllustrationFallback() {
+  return DecoratedBox(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFFF8FAFC), Color(0xFFF1F5F9)],
+      ),
+    ),
+    child: Stack(
+      children: [
+        Positioned.fill(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 28, 20, 28),
+            child: Column(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _tapPrimerCard(
+                          icon: Icons.landscape_rounded,
+                          color: const Color(0xFF2563EB),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _tapPrimerCard(
+                          icon: Icons.cookie_rounded,
+                          color: const Color(0xFFF59E0B),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFD9E1EA)),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Tap the picture',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      SizedBox(width: 10),
+                      Icon(Icons.volume_up_rounded, color: Color(0xFF475569)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Positioned(
+          left: 16,
+          bottom: 36,
+          child: Icon(
+            Icons.touch_app_rounded,
+            size: 92,
+            color: Color(0xFF0F172A),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 Widget _imageLoadFallback() {
   return Container(
     width: 300,
     height: 300,
     color: const Color(0xFFF3F4F6),
     alignment: Alignment.center,
-    child: const Icon(Icons.broken_image_outlined, size: 100, color: Color(0xFF9CA3AF)),
+    child: const Icon(
+      Icons.broken_image_outlined,
+      size: 100,
+      color: Color(0xFF9CA3AF),
+    ),
+  );
+}
+
+Widget _tapPrimerCard({
+  required IconData icon,
+  required Color color,
+}) {
+  return Container(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: const Color(0xFFD9E1EA), width: 2),
+    ),
+    alignment: Alignment.center,
+    child: Icon(icon, size: 82, color: color),
   );
 }
 
