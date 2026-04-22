@@ -935,6 +935,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       lang = saved.lang;
       activeStartCurriculumKey = sanitizeStartCurriculum(saved.startKey);
       nativeLang = saved.nativeLang;
+      _tapPrimerConsumed = saved.tapPrimerSeen;
       awaitingLang = false;
       awaitingStart = false;
       awaitingNative = false;
@@ -1084,6 +1085,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       }
     }
     setState(() {
+      _tapPrimerConsumed = false;
       awaitingLang = true;
       awaitingStart = false;
       awaitingNative = false;
@@ -1223,6 +1225,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       _showTapPrimerPanel = false;
       _tapPrimerConsumed = true;
     });
+    _saveOnboardingSnapshot();
     await _startTrial(token);
   }
 
@@ -3612,6 +3615,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       nativeLang: nativeLang,
       winsYou: ladder.winsYou,
       winsRival: ladder.winsRival,
+      tapPrimerSeen: _tapPrimerConsumed,
     );
     unawaited(onboardingStore.save(data));
   }

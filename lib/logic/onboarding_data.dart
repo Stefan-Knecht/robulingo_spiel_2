@@ -4,6 +4,7 @@ class OnboardingData {
   final String? nativeLang;
   final int winsYou;
   final int winsRival;
+  final bool tapPrimerSeen;
 
   OnboardingData({
     required this.lang,
@@ -11,6 +12,7 @@ class OnboardingData {
     this.nativeLang,
     this.winsYou = 0,
     this.winsRival = 0,
+    this.tapPrimerSeen = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -19,6 +21,7 @@ class OnboardingData {
         if (nativeLang != null) 'nativeLang': nativeLang,
         'winsYou': winsYou,
         'winsRival': winsRival,
+        'tapPrimerSeen': tapPrimerSeen,
       };
 
   factory OnboardingData.fromJson(Map<String, dynamic> json) {
@@ -33,6 +36,7 @@ class OnboardingData {
       nativeLang: json['nativeLang'] as String?,
       winsYou: (json['winsYou'] as num?)?.toInt() ?? 0,
       winsRival: (json['winsRival'] as num?)?.toInt() ?? 0,
+      tapPrimerSeen: json['tapPrimerSeen'] as bool? ?? false,
     );
   }
 }
