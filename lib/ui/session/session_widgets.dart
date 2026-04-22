@@ -1498,9 +1498,9 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final double promptWidth =
-        math.min(size.width * 0.78, 520).clamp(280.0, 520.0).toDouble();
+        math.min(size.width * 0.94, 1180).clamp(320.0, 1180.0).toDouble();
     final double promptHeight =
-        math.min(size.height * 0.42, 340).clamp(220.0, 340.0).toDouble();
+        math.min(size.height * 0.76, 820).clamp(260.0, 820.0).toDouble();
     final String text = tapPromptTexts[widget.l1] ??
         tapPromptTexts[widget.l2] ??
         'Tap an image';
@@ -1541,7 +1541,7 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
                             border: Border.all(color: const Color(0xFFE5E7EB)),
                           ),
                           child: Image.asset(
-                            'assets/icons/tap_focus.png',
+                            'assets/icons/tap.png',
                             fit: BoxFit.contain,
                             filterQuality: FilterQuality.high,
                             errorBuilder: (context, error, stackTrace) =>
