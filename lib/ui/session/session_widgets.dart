@@ -4,6 +4,7 @@
 // Tücken: Erwartet Status/Callbacks aus dem App-State (Trials, Naming-Flow, Wins); kein eigener State.
 // ------------------------------------------------------------
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -1496,6 +1497,10 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
+    final double promptWidth =
+        math.min(size.width * 0.78, 520).clamp(280.0, 520.0).toDouble();
+    final double promptHeight =
+        math.min(size.height * 0.42, 340).clamp(220.0, 340.0).toDouble();
     final String text = tapPromptTexts[widget.l1] ?? tapPromptTexts[widget.l2] ?? 'Tap an image';
 
     return GestureDetector(
@@ -1508,12 +1513,28 @@ class _TapPrimerPanelState extends State<TapPrimerPanel> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset(
-                  'assets/icons/tap.png',
-                  width: 300,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) =>
-                      _imageLoadFallback(),
+                SizedBox(
+                  width: promptWidth,
+                  height: promptHeight,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F4F6),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: FittedBox(
+                        fit: BoxFit.cover,
+                        alignment: Alignment.bottomLeft,
+                        child: Image.asset(
+                          'assets/icons/tap.png',
+                          filterQuality: FilterQuality.high,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _imageLoadFallback(),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 18),
                 Text(

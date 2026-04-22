@@ -20,7 +20,8 @@ if ! command -v firebase >/dev/null 2>&1; then
 fi
 
 MODE="${1:-prod}"
-SOURCE_REF="${SOURCE_REF:-origin/main}"
+SOURCE_REF="${SOURCE_REF:-HEAD}"
+FETCH_FROM_ORIGIN="${FETCH_FROM_ORIGIN:-0}"
 CHANNEL=""
 LEGACY_FLAVOR_ARG=""
 
@@ -62,8 +63,13 @@ if [[ -n "$LEGACY_FLAVOR_ARG" ]]; then
   esac
 fi
 
-echo "Fetching latest refs from origin..."
-git fetch origin
+if [[ "$FETCH_FROM_ORIGIN" == "1" ]]; then
+ echo "Fetching latest refs from origin..."
+ git fetch origin
+else
+ echo "Using local git state at ref: $SOURCE_REF"
+ echo "Set FETCH_FROM_ORIGIN=1 to refresh remote refs before deploy."
+fi
 
 WORKTREE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/firebase-deploy.XXXXXX")"
 cleanup() {
