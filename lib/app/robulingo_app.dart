@@ -3817,6 +3817,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
 
     Widget body;
+    bool showTapPrimer = false;
     final bool showGlobalHourglass =
         loading || batchLoading || namingInProgress;
     if (loading) {
@@ -3986,7 +3987,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                 namingOutcome != null ||
                 micStage >= 1 ||
                 forceShowNamingText);
-        if (!trialIsLoading && !isNamingView && _showTapPrimerPanel) {
+        showTapPrimer = !trialIsLoading && !isNamingView && _showTapPrimerPanel;
+        if (showTapPrimer) {
           body = TapPrimerPanel(
             autoProceedDelay: _openingPanelAutoProceedDelay,
             l1: nativeLang,
@@ -4114,19 +4116,22 @@ class _RobuLingoAppState extends State<RobuLingoApp>
               )
             : null,
         body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: body,
-                  ),
+          child: showTapPrimer
+              ? body
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints:
+                            BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: body,
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ),
     );
