@@ -1,6 +1,6 @@
 name: robulingo_flutter
 description: "Minimaler RobuLingo-Viewer: Sprache wählen, Curriculum laden, nur Items mit JSON+PNG+MP3 anzeigen."
-version: 0.1.1+3
+version: 0.1.1+4
 publish_to: "none"
 
 environment:
