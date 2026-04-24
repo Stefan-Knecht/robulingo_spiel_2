@@ -1713,6 +1713,7 @@ class SessionBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const bool isWeb = kIsWeb;
+    const double sessionMenuReservedHeight = 46.0;
     final size = MediaQuery.of(context).size;
     final bool isLandscape = size.width > size.height;
     final bool compactNamingLayout = isNaming;
@@ -1723,12 +1724,14 @@ class SessionBody extends StatelessWidget {
     final double trackTopPadding =
         compactNamingLayout ? (isWeb ? 0 : 4) : (isWeb ? 2 : 8);
     final double bottomBarHeight = namingInProgress ? 48.0 : 0.0;
-    final double verticalInsets =
-        MediaQuery.of(context).padding.vertical + 32 + bottomBarHeight;
+    final double verticalInsets = MediaQuery.of(context).padding.vertical +
+        32 +
+        bottomBarHeight +
+        sessionMenuReservedHeight;
     final double availableHeight = size.height - verticalInsets;
 
     final bool shrinkHexaWeb = kIsWeb && isNaming;
-    final double namingHexaScale = shrinkHexaWeb ? 0.7 : 1.0;
+    final double namingHexaScale = shrinkHexaWeb ? 0.9 : 1.0;
     final baseTrackWidget = Padding(
       padding: EdgeInsets.only(top: trackTopPadding),
       child: HexagonTrack(
@@ -2021,7 +2024,7 @@ class SessionBody extends StatelessWidget {
     Widget layout;
     if (!isLandscape) {
       layout = SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.only(bottom: sessionMenuReservedHeight),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2294,6 +2297,23 @@ class _SessionMenuButtonState extends State<_SessionMenuButton> {
           );
         }
 
+        if (hasSessionInfo) {
+          entries.add(
+            _SessionMenuEntry(
+              tooltip: 'Microphone status',
+              leading: const Icon(
+                Icons.mic,
+                size: 24,
+                color: Colors.black87,
+              ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _showSessionInfo();
+              },
+            ),
+          );
+        }
+
         return SafeArea(
           top: false,
           child: Padding(
@@ -2307,29 +2327,51 @@ class _SessionMenuButtonState extends State<_SessionMenuButton> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: entries,
                 ),
-                if (hasSessionInfo) ...[
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFCBD5E1)),
-                    ),
-                    child: Text(
-                      widget.sessionInfoText,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF334155),
-                        height: 1.35,
-                      ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showSessionInfo() {
+    final text = widget.sessionInfoText.trim();
+    if (text.isEmpty || !mounted) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 2),
+                  child: Icon(
+                    Icons.mic,
+                    size: 22,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF334155),
+                      height: 1.35,
                     ),
                   ),
-                ],
+                ),
               ],
             ),
           ),
