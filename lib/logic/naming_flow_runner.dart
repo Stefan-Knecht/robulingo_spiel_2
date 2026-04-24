@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show VoidCallback;
+
 import '../data/models.dart';
 import 'naming_controller.dart';
 import 'naming_locale_helper.dart';
@@ -16,6 +18,7 @@ Future<NamingFlowOutcome?> runNamingFlow({
   required bool Function(String transcript, String targetText) scorer,
   required Future<void> Function(ItemData item) playHintAudioForItem,
   required void Function(String transcript) onTranscript,
+  VoidCallback? onCorrectDetected,
   required bool userInitiated,
   Duration firstWindow = const Duration(seconds: 4),
   Duration repeatWindow = const Duration(seconds: 3),
@@ -50,5 +53,6 @@ Future<NamingFlowOutcome?> runNamingFlow({
     repeatWindow: repeatWindow,
     allowRepeat: true,
     localeId: localeId,
+    onCorrectDetected: onCorrectDetected,
   );
 }

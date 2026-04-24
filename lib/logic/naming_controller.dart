@@ -330,6 +330,7 @@ class NamingController {
     Duration repeatWindow = const Duration(seconds: 3),
     bool allowRepeat = true,
     String? localeId,
+    VoidCallback? onCorrectDetected,
     bool Function()? isPaused,
     Future<void> Function()? waitUntilResumed,
   }) async {
@@ -362,6 +363,7 @@ class NamingController {
 
     if (firstCorrect || !allowRepeat) {
       if (firstCorrect) {
+        onCorrectDetected?.call();
         onPhase(NamingPhase.playingHint);
         await playHint();
         if (!_isValid(localFlow, sessionId, isCurrent)) return null;
@@ -397,6 +399,9 @@ class NamingController {
     if (!_isValid(localFlow, sessionId, isCurrent)) return null;
 
     final correct = repeatCorrect;
+    if (correct) {
+      onCorrectDetected?.call();
+    }
     onPhase(NamingPhase.finished);
     return NamingFlowOutcome(
       correct: correct,

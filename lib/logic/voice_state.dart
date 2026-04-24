@@ -25,6 +25,7 @@ class VoiceState {
   String namingStatus = '';
   String liveTranscript = '';
   bool? namingOutcome;
+  bool namingCorrectDetected = false;
   bool namingDisabled = false;
   int namingBlockRemaining = 0;
   bool namingNoMicMode = false;
@@ -200,6 +201,7 @@ class VoiceController {
     Duration repeatWindow = const Duration(seconds: 3),
     bool allowRepeat = false,
     String? localeId,
+    VoidCallback? onCorrectDetected,
   }) async {
     // Do not request permissions here (run should have been initiated explicitly).
     if (!state.micReady) {
@@ -227,6 +229,7 @@ class VoiceController {
     state.micPromptActive = false;
     state.namingHold = false;
     state.namingOutcome = null;
+    state.namingCorrectDetected = false;
     state.namingStatus = '';
     state.micStage = 0;
     state.micOn = true;
@@ -259,6 +262,7 @@ class VoiceController {
             state.micStage = 0;
             state.micOn = true;
             state.namingOutcome = null;
+            state.namingCorrectDetected = false;
             break;
           case NamingPhase.listeningRepeat:
             state.namingStatus = '';
@@ -282,6 +286,12 @@ class VoiceController {
       repeatWindow: repeatWindow,
       allowRepeat: allowRepeat,
       localeId: localeId,
+      onCorrectDetected: () {
+        if (!isCurrent()) return;
+        state.namingCorrectDetected = true;
+        onStateChanged();
+        onCorrectDetected?.call();
+      },
       isPaused: () => state.namingPaused,
       waitUntilResumed: _waitUntilResumed,
     );
@@ -296,6 +306,7 @@ class VoiceController {
     _safeMicStop();
     if (result == null) {
       state.namingOutcome = null;
+      state.namingCorrectDetected = false;
       state.namingStatus = '';
       onStateChanged();
       return null;

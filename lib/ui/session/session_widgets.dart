@@ -5,7 +5,6 @@
 // ------------------------------------------------------------
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -988,13 +987,12 @@ class NamingView extends StatelessWidget {
     required this.rightImageBytes,
     required this.targetOnLeft,
     required this.imageHeight,
+    required this.namingCorrectDetected,
     required this.namingOutcome,
-    required this.namingStatus,
     required this.micPrimed,
     required this.micDenied,
     required this.micPermanentlyDenied,
     required this.speechPermanentlyDenied,
-    required this.micStatusDetails,
     required this.namingHold,
     required this.showHourglass,
     required this.namingInProgress,
@@ -1016,13 +1014,12 @@ class NamingView extends StatelessWidget {
   final Uint8List rightImageBytes;
   final bool targetOnLeft;
   final double imageHeight;
+  final bool namingCorrectDetected;
   final bool? namingOutcome;
-  final String namingStatus;
   final bool micPrimed;
   final bool micDenied;
   final bool micPermanentlyDenied;
   final bool speechPermanentlyDenied;
-  final String micStatusDetails;
   final bool namingHold;
   final bool showHourglass;
   final bool namingInProgress;
@@ -1045,67 +1042,17 @@ class NamingView extends StatelessWidget {
     const double gapHourglass = isWeb ? 1 : 4;
     const double cardMargin = isWeb ? 2 : 6;
     const double cardPadding = isWeb ? 6 : 10;
-    final bool isCorrect = namingOutcome == true;
-    final Color borderColor = namingOutcome == null
-        ? Colors.grey.shade400
-        : (isCorrect ? Colors.green : Colors.red);
-    final Color? cardFill = namingOutcome == null
-        ? null
-        : (isCorrect ? Colors.green.shade200 : Colors.red.shade200);
+    final bool showCorrectState =
+        namingCorrectDetected || namingOutcome == true;
+    final bool showIncorrectState = namingOutcome == false;
+    final Color borderColor = showCorrectState
+        ? Colors.green
+        : (showIncorrectState ? Colors.red : Colors.grey.shade400);
+    final Color? cardFill = showCorrectState
+        ? Colors.green.shade200
+        : (showIncorrectState ? Colors.red.shade200 : null);
     final Uint8List targetImageBytes =
         targetOnLeft ? leftImageBytes : rightImageBytes;
-    final Uint8List otherImageBytes =
-        targetOnLeft ? rightImageBytes : leftImageBytes;
-
-    Widget buildImageTile(
-      Uint8List bytes, {
-      required bool isTarget,
-      required bool dimNonTarget,
-      required double tileWidth,
-      required double tileHeight,
-    }) {
-      final bool showOutcome = isTarget && namingOutcome != null;
-      final Widget image = Image.memory(
-        bytes,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => _imageLoadFallback(),
-      );
-      final Widget imageLayer = dimNonTarget
-          ? Stack(
-              fit: StackFit.expand,
-              children: [
-                ImageFiltered(
-                  imageFilter: ImageFilter.blur(sigmaX: 2.0, sigmaY: 2.0),
-                  child: image,
-                ),
-                Container(color: Colors.grey.withValues(alpha: 0.35)),
-              ],
-            )
-          : image;
-
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 3),
-        child: SizedBox(
-          width: tileWidth,
-          height: tileHeight,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                imageLayer,
-                if (showOutcome)
-                  Container(
-                    color: namingOutcome!
-                        ? Colors.green.withValues(alpha: 0.6)
-                        : Colors.red.withValues(alpha: 0.45),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
 
     return Column(
       children: [
@@ -1116,7 +1063,9 @@ class NamingView extends StatelessWidget {
           decoration: BoxDecoration(
             color: cardFill,
             border: Border.all(
-                color: borderColor, width: namingOutcome == null ? 3 : 4),
+              color: borderColor,
+              width: showCorrectState || showIncorrectState ? 4 : 3,
+            ),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Stack(
@@ -1126,52 +1075,48 @@ class NamingView extends StatelessWidget {
                 builder: (context, constraints) {
                   final double maxWidth = constraints.maxWidth.isFinite
                       ? constraints.maxWidth
-                      : imageHeight * 1.5;
-                  final double desiredWidth = imageHeight * 0.75;
-                  final double availableWidth =
-                      (maxWidth - 12).clamp(0.0, maxWidth).toDouble();
-                  final double tileWidth =
-                      (availableWidth / 2).clamp(0.0, desiredWidth).toDouble();
-                  final double tileHeight =
-                      (tileWidth * 4 / 3).clamp(0.0, imageHeight).toDouble();
+                      : imageHeight;
+                  final double frameDiameter =
+                      math.min(imageHeight, maxWidth).clamp(0.0, imageHeight);
 
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      buildImageTile(
-                        targetImageBytes,
-                        isTarget: true,
-                        dimNonTarget: false,
-                        tileWidth: tileWidth,
-                        tileHeight: tileHeight,
+                  return SizedBox(
+                    width: frameDiameter,
+                    height: frameDiameter,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                        border: Border.all(
+                          color: borderColor,
+                          width: showCorrectState || showIncorrectState ? 4 : 3,
+                        ),
                       ),
-                      buildImageTile(
-                        otherImageBytes,
-                        isTarget: false,
-                        dimNonTarget: true,
-                        tileWidth: tileWidth,
-                        tileHeight: tileHeight,
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: ClipOval(
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Image.memory(
+                                targetImageBytes,
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    _imageLoadFallback(),
+                              ),
+                              if (showCorrectState || showIncorrectState)
+                                Container(
+                                  color: showCorrectState
+                                      ? Colors.green.withValues(alpha: 0.22)
+                                      : Colors.red.withValues(alpha: 0.2),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ],
+                    ),
                   );
                 },
               ),
-              if (namingOutcome != null)
-                Positioned.fill(
-                  child: Center(
-                    child: CircleAvatar(
-                      radius: 24,
-                      backgroundColor:
-                          namingOutcome! ? Colors.green : Colors.red,
-                      child: Icon(
-                        namingOutcome! ? Icons.check : Icons.close,
-                        size: 30,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
               if (showTinySpinner)
                 const Positioned(
                   top: 8,
@@ -1208,49 +1153,6 @@ class NamingView extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
                 textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-        if (namingStatus.trim().isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3CD),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE2C98A)),
-              ),
-              child: Text(
-                namingStatus,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF6A4A00),
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-        if (micStatusDetails.trim().isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFCBD5E1)),
-              ),
-              child: Text(
-                micStatusDetails,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF334155),
-                  height: 1.35,
-                ),
               ),
             ),
           ),
@@ -1569,6 +1471,7 @@ class SessionBody extends StatelessWidget {
     required this.targetOnLeft,
     required this.hasAnswered,
     required this.lastSelectionIsLeft,
+    required this.namingCorrectDetected,
     required this.namingOutcome,
     required this.namingStatus,
     required this.micPrimed,
@@ -1632,6 +1535,7 @@ class SessionBody extends StatelessWidget {
   final bool targetOnLeft;
   final bool hasAnswered;
   final bool? lastSelectionIsLeft;
+  final bool namingCorrectDetected;
   final bool? namingOutcome;
   final String namingStatus;
   final bool micPrimed;
@@ -1749,13 +1653,12 @@ class SessionBody extends StatelessWidget {
             rightImageBytes: rightImageBytes,
             targetOnLeft: targetOnLeft,
             imageHeight: imageHeight,
+            namingCorrectDetected: namingCorrectDetected,
             namingOutcome: namingOutcome,
-            namingStatus: namingStatus,
             micPrimed: micPrimed,
             micDenied: micDenied,
             micPermanentlyDenied: micPermanentlyDenied,
             speechPermanentlyDenied: speechPermanentlyDenied,
-            micStatusDetails: micStatusDetails,
             namingHold: namingHold,
             showHourglass: showHourglass,
             namingInProgress: namingInProgress,
@@ -2062,6 +1965,11 @@ class SessionBody extends StatelessWidget {
             menuTooltip: menuTooltip,
             openDashboardTooltip: dashboardTooltip,
             exitToResumeTooltip: exitTooltip,
+            sessionInfoText: buildSessionInfoText(
+              isNaming: isNaming,
+              namingStatus: namingStatus,
+              micStatusDetails: micStatusDetails,
+            ),
             onOpenDashboard: onOpenDashboard,
             onExitToResumePanel: onExitToResumePanel,
           ),
@@ -2069,6 +1977,25 @@ class SessionBody extends StatelessWidget {
       ],
     );
   }
+}
+
+@visibleForTesting
+String buildSessionInfoText({
+  required bool isNaming,
+  required String namingStatus,
+  required String micStatusDetails,
+}) {
+  if (!isNaming) return '';
+  final parts = <String>[];
+  final trimmedStatus = namingStatus.trim();
+  if (trimmedStatus.isNotEmpty) {
+    parts.add(trimmedStatus);
+  }
+  final trimmedMic = micStatusDetails.trim();
+  if (trimmedMic.isNotEmpty) {
+    parts.add(trimmedMic);
+  }
+  return parts.join('\n\n');
 }
 
 class _HintPanel extends StatelessWidget {
@@ -2147,6 +2074,7 @@ class _SessionMenuButton extends StatefulWidget {
     required this.menuTooltip,
     required this.openDashboardTooltip,
     required this.exitToResumeTooltip,
+    required this.sessionInfoText,
     required this.onOpenDashboard,
     this.onExitToResumePanel,
   });
@@ -2154,6 +2082,7 @@ class _SessionMenuButton extends StatefulWidget {
   final String menuTooltip;
   final String openDashboardTooltip;
   final String exitToResumeTooltip;
+  final String sessionInfoText;
   final VoidCallback onOpenDashboard;
   final Future<void> Function()? onExitToResumePanel;
 
@@ -2202,6 +2131,7 @@ class _SessionMenuButtonState extends State<_SessionMenuButton> {
       ),
       builder: (sheetContext) {
         final List<Widget> entries = [];
+        final hasSessionInfo = widget.sessionInfoText.trim().isNotEmpty;
 
         entries.add(
           _SessionMenuEntry(
@@ -2247,10 +2177,39 @@ class _SessionMenuButtonState extends State<_SessionMenuButton> {
           top: false,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-            child: Row(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: entries,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: entries,
+                ),
+                if (hasSessionInfo) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFCBD5E1)),
+                    ),
+                    child: Text(
+                      widget.sessionInfoText,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF334155),
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         );

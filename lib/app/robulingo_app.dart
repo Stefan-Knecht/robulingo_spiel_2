@@ -263,6 +263,12 @@ class _RestartCurriculumMetadata {
   final int totalItems;
 }
 
+enum _MountainCelebrationResumeAction {
+  none,
+  nextTrial,
+  advanceNaming,
+}
+
 class _RobuLingoAppState extends State<RobuLingoApp>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _disposed = false;
@@ -277,8 +283,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   static const int namingProgressRepeatRatio = 2;
   static const bool debugMountainFastFinishEnabled = false;
   static const int debugMountainStartRun = 190;
-  static const Duration mountainWinDashboardDelay =
-      Duration(milliseconds: 1300);
+  static const Duration mountainWinCelebrationDelay = Duration(seconds: 5);
   static const double moveSoundVolume = 0.5;
   static const double namingBeepVolume = 0.5;
   static final AudioContext speechAudioContext = AudioContextConfig(
@@ -358,6 +363,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   set _liveTranscript(String value) => voiceState.liveTranscript = value;
   bool? get namingOutcome => voiceState.namingOutcome;
   set namingOutcome(bool? value) => voiceState.namingOutcome = value;
+  bool get namingCorrectDetected => voiceState.namingCorrectDetected;
+  set namingCorrectDetected(bool value) =>
+      voiceState.namingCorrectDetected = value;
   bool get namingDisabled => voiceState.namingDisabled;
   set namingDisabled(bool value) => voiceState.namingDisabled = value;
   int get namingBlockRemaining => voiceState.namingBlockRemaining;
@@ -445,11 +453,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool showRestartSplash =
       false; // Startbildschirm nur beim Wiederstart, nicht beim ersten Start
   bool sessionEnded = false;
+  bool _mountainCelebrationActive = false;
+  _MountainCelebrationResumeAction _mountainCelebrationResumeAction =
+      _MountainCelebrationResumeAction.none;
   String _mountainThemeDayKey = '';
   int _mountainThemeIndex = 0;
   bool? _mountainWinnerIsYou;
   Timer? _mountainThemeAdvanceTimer;
-  Timer? _mountainWinDashboardTimer;
+  Timer? _mountainCelebrationTimer;
   final Map<String, int> nativeSeenCounts =
       {}; // wie oft Ziel-Item angezeigt wurde
   final Map<String, int> phoneticSeenCounts =
@@ -598,6 +609,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       onMove: _handleLadderMove,
       accuracyProvider: () => lastTenResults,
       startIndex: mountainStartIndex,
+      winHoldDuration: mountainWinCelebrationDelay,
     );
     api = ApiClient(
       workerHost: workerHost,
@@ -836,7 +848,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     setState(() {
       _mountainWinnerIsYou = winnerIsYou;
     });
-    _mountainThemeAdvanceTimer = Timer(const Duration(milliseconds: 1300), () {
+    _mountainThemeAdvanceTimer = Timer(mountainWinCelebrationDelay, () {
       if (!mounted) return;
       final today = mountainDayKey(DateTime.now());
       final next = (_mountainThemeIndex + 1) % kMountainThemeOrder.length;
@@ -852,37 +864,62 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _handleWinYou() {
-    if (loggerReady) {
-      unawaited(logger.log('win', {'side': 'you', 'lang': lang}));
-    }
-    if (!sessionEnded) {
-      _finishSession();
-    }
-    _playFanfare();
-    _saveOnboardingSnapshot();
-    _queueMountainThemeAdvance(winnerIsYou: true);
-    _scheduleMountainWinDashboardOpen();
+    _startMountainCelebration(winnerIsYou: true);
   }
 
   void _handleWinRival() {
-    if (loggerReady) {
-      unawaited(logger.log('win', {'side': 'rival', 'lang': lang}));
-    }
-    if (!sessionEnded) {
-      _finishSession();
-    }
-    _playFanfare();
-    _saveOnboardingSnapshot();
-    _queueMountainThemeAdvance(winnerIsYou: false);
-    _scheduleMountainWinDashboardOpen();
+    _startMountainCelebration(winnerIsYou: false);
   }
 
-  void _scheduleMountainWinDashboardOpen() {
-    _mountainWinDashboardTimer?.cancel();
-    _mountainWinDashboardTimer = Timer(mountainWinDashboardDelay, () {
-      if (!mounted) return;
-      unawaited(_openDashboardPreview(context, focus: 'wins'));
+  void _startMountainCelebration({required bool winnerIsYou}) {
+    if (loggerReady) {
+      unawaited(logger
+          .log('win', {'side': winnerIsYou ? 'you' : 'rival', 'lang': lang}));
+    }
+    _mountainCelebrationTimer?.cancel();
+    setState(() {
+      _mountainCelebrationActive = true;
     });
+    unawaited(_playFanfare());
+    _saveOnboardingSnapshot();
+    _queueMountainThemeAdvance(winnerIsYou: winnerIsYou);
+    _mountainCelebrationTimer = Timer(mountainWinCelebrationDelay, () {
+      if (!mounted) return;
+      final resumeAction = _mountainCelebrationResumeAction;
+      setState(() {
+        _mountainCelebrationActive = false;
+        _mountainCelebrationResumeAction =
+            _MountainCelebrationResumeAction.none;
+      });
+      switch (resumeAction) {
+        case _MountainCelebrationResumeAction.none:
+          break;
+        case _MountainCelebrationResumeAction.nextTrial:
+          _gotoNextTrial();
+          break;
+        case _MountainCelebrationResumeAction.advanceNaming:
+          _advanceAfterNamingAttempt();
+          break;
+      }
+    });
+  }
+
+  void _queueResumeAfterMountainCelebration(
+      _MountainCelebrationResumeAction action) {
+    if (!_mountainCelebrationActive) return;
+    if (action == _MountainCelebrationResumeAction.advanceNaming ||
+        _mountainCelebrationResumeAction ==
+            _MountainCelebrationResumeAction.none) {
+      _mountainCelebrationResumeAction = action;
+    }
+  }
+
+  void _clearMountainCelebrationState() {
+    _mountainCelebrationTimer?.cancel();
+    _mountainCelebrationTimer = null;
+    _mountainCelebrationResumeAction = _MountainCelebrationResumeAction.none;
+    _mountainCelebrationActive = false;
+    _mountainWinnerIsYou = null;
   }
 
   Future<void> _openHistoryPanel() async {
@@ -2416,6 +2453,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         lastCorrect = null;
         lastSelectionIsLeft = null;
         namingOutcome = null;
+        namingCorrectDetected = false;
         namingHold = false;
         namingStatus = '';
         _liveTranscript = '';
@@ -2986,6 +3024,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       micPromptActive = false;
       namingHold = false;
       namingOutcome = null;
+      namingCorrectDetected = false;
       namingStatus = _noMicNamingText('continue_without_recording');
       _liveTranscript = '';
       micStage = 0;
@@ -3034,14 +3073,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         micController.stop();
       } catch (_) {}
     }
-    if (moves > 0) {
-      unawaited(_runNamingRewardSteps(token: token, steps: moves));
-    }
     setState(() {
       if (wasCorrect) {
         namingStatus = '';
       }
       namingOutcome = wasCorrect;
+      namingCorrectDetected = wasCorrect;
       _liveTranscript = _liveTranscript;
       hasAnswered = false;
     });
@@ -3054,6 +3091,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       if (token != currentTrialToken) return;
       _advanceAfterNamingAttempt();
     });
+  }
+
+  void _handleNamingCorrectDetected({required int token, required int steps}) {
+    if (!mounted || token != currentTrialToken || steps <= 0) return;
+    if (!namingCorrectDetected) {
+      setState(() {
+        namingCorrectDetected = true;
+      });
+    }
+    unawaited(_runNamingRewardSteps(token: token, steps: steps));
   }
 
   String _buildMicStatusDetails() {
@@ -3131,6 +3178,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _advanceAfterNamingAttempt() {
+    if (_mountainCelebrationActive) {
+      _queueResumeAfterMountainCelebration(
+        _MountainCelebrationResumeAction.advanceNaming,
+      );
+      return;
+    }
     final currentUuid = currentTrial?.target.uuid ?? currentSlot.targetUuid;
     if (currentUuid.isEmpty) {
       _gotoNextTrial();
@@ -3211,6 +3264,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                 _liveTranscript = text;
               });
             },
+            onCorrectDetected: () {
+              _handleNamingCorrectDetected(token: token, steps: 1);
+            },
             userInitiated: userInitiated,
             firstWindow: const Duration(seconds: namingFirstWindowSec),
             repeatWindow: const Duration(seconds: namingRepeatWindowSec),
@@ -3224,6 +3280,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       );
       setState(() {
         namingOutcome = null;
+        namingCorrectDetected = false;
         namingHold = false;
         namingStatus = _instructionText('naming_interrupted');
         _liveTranscript = '';
@@ -3324,6 +3381,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     voiceController.cancelActive();
     setState(() {
       namingOutcome = null;
+      namingCorrectDetected = false;
       namingStatus = '';
     });
     _advanceAfterNamingAttempt();
@@ -3358,6 +3416,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       namingBlockRemaining = 0;
       namingNoMicMode = true;
       namingOutcome = null;
+      namingCorrectDetected = false;
       namingStatus = '';
       micDenied = true;
       micPrimed = true;
@@ -3371,6 +3430,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     if (currentTrial == null ||
         hasAnswered ||
         namingInProgress ||
+        _mountainCelebrationActive ||
         _isNamingTrial()) {
       return;
     }
@@ -3452,6 +3512,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   void _advanceToNext(int epoch, {int? token}) {
+    if (_mountainCelebrationActive) {
+      _queueResumeAfterMountainCelebration(
+        _MountainCelebrationResumeAction.nextTrial,
+      );
+      return;
+    }
     final t = token ?? currentTrialToken;
     final bool initialSkip = shouldSkipComprehensionAutoAdvance(
       namingHold: namingHold,
@@ -3470,12 +3536,24 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       if (delayedSkip) {
         return;
       }
+      if (_mountainCelebrationActive) {
+        _queueResumeAfterMountainCelebration(
+          _MountainCelebrationResumeAction.nextTrial,
+        );
+        return;
+      }
       _gotoNextTrial();
     });
   }
 
   void _gotoNextTrial() {
     if (_disposed || !mounted) return;
+    if (_mountainCelebrationActive) {
+      _queueResumeAfterMountainCelebration(
+        _MountainCelebrationResumeAction.nextTrial,
+      );
+      return;
+    }
     if (_namingSessionBusy) {
       debugPrint(
           '[trial][next-blocked] namingBusy=true token=$currentTrialToken idx=$trialIndex');
@@ -3701,7 +3779,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     micController.dispose();
     nativeSelectTimer?.cancel();
     _mountainThemeAdvanceTimer?.cancel();
-    _mountainWinDashboardTimer?.cancel();
+    _clearMountainCelebrationState();
     _resumeEmojiAckRetryTimer?.cancel();
     _namingStartAutoTimer?.cancel();
     _keyboardFocusNode.dispose();
@@ -4000,6 +4078,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             targetOnLeft: trial.targetOnLeft,
             hasAnswered: hasAnswered,
             lastSelectionIsLeft: lastSelectionIsLeft,
+            namingCorrectDetected: namingCorrectDetected,
             namingOutcome: namingOutcome,
             namingStatus: namingStatus,
             micPrimed: micPrimed,
@@ -4060,7 +4139,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             tooltipLanguageCode:
                 HintsService.normalizeLangCode(nativeLang ?? lang),
             onOpenDashboard: () {
-              _mountainWinDashboardTimer?.cancel();
+              _mountainCelebrationTimer?.cancel();
               unawaited(_persistUserCursor());
               if (!sessionEnded) {
                 _finishSession();
@@ -4128,7 +4207,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   Future<void> _openDashboardPreview(BuildContext context,
       {required String focus}) async {
-    _mountainWinDashboardTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _clearMountainCelebrationState();
+      });
+    } else {
+      _clearMountainCelebrationState();
+    }
     _invalidateActiveSessionFlow();
     voiceController.cancelActive();
     await _stopAllSessionAudioPlayers();
@@ -4245,6 +4330,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await _stopAllSessionAudioPlayers();
     await _flushExitLogsForDailyWords();
     setState(() {
+      _clearMountainCelebrationState();
       _invalidateActiveSessionFlow();
       lang = resumeLang;
       activeStartCurriculumKey = resumeStartKey;
@@ -4278,6 +4364,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       unawaited(logger.endSession());
     }
     setState(() {
+      _clearMountainCelebrationState();
       _invalidateActiveSessionFlow();
       awaitingLang = true;
       awaitingStart = false;
