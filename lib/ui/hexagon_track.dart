@@ -119,7 +119,7 @@ class HexagonTrack extends StatelessWidget {
       builder: (context, constraints) {
         const double aspectRatio = 3 / 2;
         const double fallbackWidth = 900;
-        const double mountainWidthShare = 0.78;
+        const double mountainWidthShare = 0.68;
         final double baseWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : (constraints.maxHeight.isFinite
@@ -135,7 +135,7 @@ class HexagonTrack extends StatelessWidget {
         final double sideWidth = (totalWidth - mountainWidth) / 2;
         final double mountainLeft = (totalWidth - mountainWidth) / 2;
         final double iconSize =
-            (mountainHeight * 0.34).clamp(24.0, sideWidth * 0.98).toDouble();
+            (mountainHeight * 0.5).clamp(32.0, sideWidth * 0.98).toDouble();
 
         return SizedBox(
           width: totalWidth,

@@ -60,6 +60,9 @@ class HexagonController {
     this.rivalIdleBoostPerDay = 0.02,
     this.rivalIdleBoostMax = 0.10,
     this.rivalMinProbRatio = 0.8,
+    this.rivalEarlyLeadWindow = 12,
+    this.rivalEarlyLeadCorrectBoost = 0.10,
+    this.rivalEarlyLeadBonusMoveMaxProb = 0.35,
     this.winHoldDuration = const Duration(milliseconds: 1200),
     Random? random,
   })  : _rand = random ?? Random(),
@@ -92,6 +95,9 @@ class HexagonController {
   final double rivalIdleBoostPerDay;
   final double rivalIdleBoostMax;
   final double rivalMinProbRatio;
+  final int rivalEarlyLeadWindow;
+  final double rivalEarlyLeadCorrectBoost;
+  final double rivalEarlyLeadBonusMoveMaxProb;
   final Duration winHoldDuration;
   final Random _rand;
   final MountainTracks _tracks;
@@ -312,12 +318,15 @@ class HexagonController {
     final moodOffset = rivalMoodOffsets[_rivalMood.index];
     final idleBoost = _idleBoost();
     final minProbRatio = rivalMinProbRatio.clamp(0.0, 1.0);
+    final earlyLeadFactor = _earlyLeadFactor(history.length);
 
     double pCorrect;
     if (history.length < 10 && _lastPlayerCorrect != null) {
       final base =
           _lastPlayerCorrect! ? rivalCoupledProb : (1 - rivalCoupledProb);
-      final boostedBase = (base + moodOffset + idleBoost).clamp(0.0, 1.0);
+      final earlyBoost = rivalEarlyLeadCorrectBoost * earlyLeadFactor;
+      final boostedBase =
+          (base + moodOffset + idleBoost + earlyBoost).clamp(0.0, 1.0);
       final minProb = (boostedBase * minProbRatio).clamp(0.0, boostedBase);
       pCorrect = minProb + (boostedBase - minProb) * catchup;
     } else {
@@ -333,6 +342,32 @@ class HexagonController {
     final rivalCorrect = _rand.nextDouble() < pCorrect;
     _lastRivalCorrect = rivalCorrect;
     return _applyMove(rivalCorrect, isYou: false);
+  }
+
+  double _earlyLeadFactor(int historyLength) {
+    final window = max(0, rivalEarlyLeadWindow);
+    if (window == 0 || historyLength >= window) return 0.0;
+    return 1.0 - (historyLength / window);
+  }
+
+  MoveKind? _maybeApplyEarlyRivalBonusStep() {
+    final history = accuracyProvider();
+    final leadGap = state.rivalProgress - state.youProgress;
+    if (leadGap > 0) return null;
+
+    final factor = _earlyLeadFactor(history.length);
+    if (factor <= 0) return null;
+
+    final catchupMultiplier = leadGap < 0 ? 1.0 : 0.55;
+    final probability = (rivalEarlyLeadBonusMoveMaxProb *
+            factor *
+            catchupMultiplier *
+            (1.0 + _idleBoost()))
+        .clamp(0.0, 1.0);
+    if (_rand.nextDouble() >= probability) return null;
+
+    _lastRivalCorrect = true;
+    return _applyMove(true, isYou: false);
   }
 
   void _scheduleRivalMove() {
@@ -357,6 +392,12 @@ class HexagonController {
       onMove?.call(
         MoveEvent(isYou: false, kind: kind, isCorrect: _lastRivalCorrect),
       );
+      final bonusKind = _maybeApplyEarlyRivalBonusStep();
+      if (bonusKind != null) {
+        onMove?.call(
+          MoveEvent(isYou: false, kind: bonusKind, isCorrect: true),
+        );
+      }
       onChanged();
       _scheduleNextRivalMove();
     });

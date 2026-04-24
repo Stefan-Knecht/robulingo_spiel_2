@@ -3999,8 +3999,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         final double baseImageHeight = isLandscape
             ? min(size.height * 0.38, min(size.width * 0.55, 320.0))
             : min(size.height * 0.38, 320.0);
-        final double imageHeight =
-            kIsWeb && isNamingView ? baseImageHeight * 0.68 : baseImageHeight;
+        final double imageHeight = baseImageHeight;
         final bool showDashboardButton = ladder.hasFlagAppeared ||
             ladder.winsYou > 0 ||
             ladder.winsRival > 0;
