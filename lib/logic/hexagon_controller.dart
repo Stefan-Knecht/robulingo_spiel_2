@@ -60,6 +60,7 @@ class HexagonController {
     this.rivalIdleBoostPerDay = 0.02,
     this.rivalIdleBoostMax = 0.10,
     this.rivalMinProbRatio = 0.8,
+    this.winHoldDuration = const Duration(milliseconds: 1200),
     Random? random,
   })  : _rand = random ?? Random(),
         _tracks = buildDefaultMountainTracks() {
@@ -91,6 +92,7 @@ class HexagonController {
   final double rivalIdleBoostPerDay;
   final double rivalIdleBoostMax;
   final double rivalMinProbRatio;
+  final Duration winHoldDuration;
   final Random _rand;
   final MountainTracks _tracks;
   final HexagonState state = HexagonState();
@@ -380,7 +382,7 @@ class HexagonController {
     });
     onYouWin();
 
-    Future.delayed(const Duration(milliseconds: 1200), () {
+    Future.delayed(winHoldDuration, () {
       _youFlagTimer?.cancel();
       state
         ..youFlagAngle = 0.0
@@ -418,7 +420,7 @@ class HexagonController {
     });
     onRivalWin();
 
-    Future.delayed(const Duration(milliseconds: 1200), () {
+    Future.delayed(winHoldDuration, () {
       _rivalFlagTimer?.cancel();
       state
         ..rivalFlagAngle = 0.0
