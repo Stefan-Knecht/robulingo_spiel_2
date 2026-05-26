@@ -28,10 +28,12 @@ class ResumeStateController {
   Future<void> pushEntry({
     required String userId,
     required ResumeStateEntry entry,
+    bool fetchExisting = true,
   }) async {
     if (userId.isEmpty) return;
-    final existing =
-        state ?? await service.fetch(userId: userId) ?? ResumeState(userId: userId, entries: []);
+    final existing = state ??
+        (fetchExisting ? await service.fetch(userId: userId) : null) ??
+        ResumeState(userId: userId, entries: []);
     final updated = <ResumeStateEntry>[];
     bool replaced = false;
     for (final e in existing.entries) {

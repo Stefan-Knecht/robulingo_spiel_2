@@ -251,11 +251,13 @@ class ApiClient {
       throw ApiException('Audio missing ${entry.uuid} lang=$lang');
     }
     final localAudioByKey = <String, Uri>{};
-    for (final key in audioKeys) {
-      try {
-        localAudioByKey[key] = await _cacheAudioKeyToLocalUri(key);
-      } catch (_) {
-        // Keep remote fallback for this key.
+    if (!kIsWeb) {
+      for (final key in audioKeys) {
+        try {
+          localAudioByKey[key] = await _cacheAudioKeyToLocalUri(key);
+        } catch (_) {
+          // Keep remote fallback for this key.
+        }
       }
     }
     final audioVariants = <Uri>[];

@@ -117,9 +117,9 @@ class _LangSelectorState extends State<LangSelector> {
         child: Container(
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFFE8F1FF) : Colors.white,
+            color: selected ? const Color(0xFFDFF4E7) : Colors.white,
             border: Border.all(
-              color: selected ? const Color(0xFF2F6FED) : Colors.black,
+              color: selected ? const Color(0xFF0F8A3B) : Colors.black,
               width: selected ? 3 : 2,
             ),
             borderRadius: BorderRadius.circular(18),
@@ -131,7 +131,7 @@ class _LangSelectorState extends State<LangSelector> {
               ),
               if (selected)
                 const BoxShadow(
-                  color: Color(0x223F7BFA),
+                  color: Color(0x220F8A3B),
                   blurRadius: 10,
                   offset: Offset(0, 3),
                 ),

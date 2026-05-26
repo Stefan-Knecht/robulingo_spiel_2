@@ -5,6 +5,8 @@ class OnboardingData {
   final int winsYou;
   final int winsRival;
   final bool tapPrimerSeen;
+  final String? lastModuleRowId;
+  final String? lastModuleMode;
 
   OnboardingData({
     required this.lang,
@@ -13,6 +15,8 @@ class OnboardingData {
     this.winsYou = 0,
     this.winsRival = 0,
     this.tapPrimerSeen = false,
+    this.lastModuleRowId,
+    this.lastModuleMode,
   });
 
   Map<String, dynamic> toJson() => {
@@ -22,6 +26,8 @@ class OnboardingData {
         'winsYou': winsYou,
         'winsRival': winsRival,
         'tapPrimerSeen': tapPrimerSeen,
+        if (lastModuleRowId != null) 'lastModuleRowId': lastModuleRowId,
+        if (lastModuleMode != null) 'lastModuleMode': lastModuleMode,
       };
 
   factory OnboardingData.fromJson(Map<String, dynamic> json) {
@@ -37,6 +43,8 @@ class OnboardingData {
       winsYou: (json['winsYou'] as num?)?.toInt() ?? 0,
       winsRival: (json['winsRival'] as num?)?.toInt() ?? 0,
       tapPrimerSeen: json['tapPrimerSeen'] as bool? ?? false,
+      lastModuleRowId: json['lastModuleRowId'] as String?,
+      lastModuleMode: json['lastModuleMode'] as String?,
     );
   }
 }

@@ -37,6 +37,7 @@ const AppFlavorConfig _robuLingoFlavor = AppFlavorConfig(
     'start_curriculum_a.json',
     'start_curriculum_b.json',
     'start_curriculum_t.json',
+    'start_curriculum_realtalk_cafe.json',
     'start_curriculum_dialog.json',
     'start_curriculum_s.json',
     'start_curriculum_l.json',
@@ -53,13 +54,16 @@ const AppFlavorConfig _dailyWordsFlavor = AppFlavorConfig(
   id: 'dailywords',
   brandLogoAsset: 'assets/icons/DailyWords.webp',
   dashboardLandingUrl: 'https://www.dailywords-project.org/',
-  realTalkUrl: 'https://dailywords-project.org/realtalk',
+  realTalkUrl: 'https://realtalk.dailywords-project.org/therapy/',
   consentInfoUrl: 'https://www.dailywords-project.org/trial',
   registerInfoUrl: 'https://www.dailywords-project.org/register/',
   allowedStartCurricula: <String>[
     'start_curriculum_a.json',
     'start_curriculum_b.json',
+    'start_curriculum_t.json',
+    'start_curriculum_realtalk_cafe.json',
     'start_curriculum_dialog.json',
+    'start_curriculum_l.json',
   ],
   allowPickManifest: false,
   defaultStartCurriculum: 'start_curriculum_a.json',
@@ -75,10 +79,28 @@ final String _rawAppFlavor =
         .toLowerCase();
 
 String _resolveFlavorId() {
+  final params = _launchQueryParameters();
+  final queryFlavor =
+      (params['app_flavor'] ?? params['flavor'] ?? params['app'] ?? '')
+          .trim()
+          .toLowerCase();
+  if (queryFlavor == 'dailywords') return 'dailywords';
+  if (queryFlavor == 'robulingo') return 'robulingo';
   final host = Uri.base.host.trim().toLowerCase();
   if (host.contains('dailywords')) return 'dailywords';
   if (host.contains('robulingo')) return 'robulingo';
   return _rawAppFlavor;
+}
+
+Map<String, String> _launchQueryParameters() {
+  final out = Map<String, String>.from(Uri.base.queryParameters);
+  final fragment = Uri.base.fragment.trim();
+  if (fragment.isEmpty) return out;
+  final normalized = fragment.startsWith('/') ? fragment : '/$fragment';
+  final parsed = Uri.tryParse(normalized);
+  if (parsed == null) return out;
+  out.addAll(parsed.queryParameters);
+  return out;
 }
 
 final AppFlavorConfig activeFlavor =

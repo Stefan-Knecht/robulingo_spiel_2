@@ -58,6 +58,7 @@ import 'package:robulingo_flutter/logic/voice_state.dart';
 import 'package:robulingo_flutter/logic/naming_locale_helper.dart';
 import 'package:robulingo_flutter/logic/mountain_background_cycle.dart';
 import 'package:robulingo_flutter/ui/dashboard/dashboard_screen.dart';
+import 'package:robulingo_flutter/ui/dailywords_module_selector.dart';
 import 'package:robulingo_flutter/ui/history_panel.dart';
 import 'package:robulingo_flutter/ui/lang_selector.dart';
 import 'package:robulingo_flutter/ui/mic_progress_bar.dart';
@@ -332,6 +333,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool awaitingPickNative = false;
   bool pickListLoading = false;
   String? pickListError;
+  String? lastModuleRowId;
+  DailywordsModuleMode? lastModuleMode;
   List<String> pickManifestKeys = [];
   final Map<String, Future<List<CurriculumEntry>>> pickMappingFutures = {};
   final Map<String, Future<String>> pickManifestLabelFutures = {};
@@ -478,6 +481,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   int _restartPanelInfoRequest = 0;
   bool _lifecyclePersisting = false;
   bool _historyPanelHasSupervisorInfo = false;
+  bool _historyPanelOpenFromQuery = false;
+  bool _historyPanelOpenScheduledFromQuery = false;
+  bool _historyPanelQueryDialogClosed = false;
   final FocusNode _keyboardFocusNode = FocusNode(debugLabel: 'AppKeyboard');
   bool _micControllerDisposed = false;
   bool _updateCheckStarted = false;
@@ -633,7 +639,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _initUserId();
     _historyPanelHasSupervisorInfo = historyPanelHasSupervisorInfo();
     unawaited(_restoreHistoryPanelDraft());
-    _loadSavedOnboarding();
+    if (!_startDirectTrainingFromQuery()) {
+      _loadSavedOnboarding();
+    }
     unawaited(_loadMountainThemeCycle());
     unawaited(_checkForAppUpdateAtStartup());
   }
@@ -693,7 +701,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   Future<void> _initUserId() async {
     try {
-      final id = await userIdentity.loadOrCreate();
+      final requestedId = _userIdFromQuery();
+      final id = requestedId ?? await userIdentity.loadOrCreate();
+      if (requestedId != null) {
+        await userIdentity.save(requestedId);
+      }
       if (!mounted) return;
       setState(() {
         userId = id;
@@ -716,6 +728,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     } catch (e) {
       debugPrint('[user-identity][init][error] $e');
     }
+  }
+
+  String? _userIdFromQuery() {
+    final params = _launchQueryParameters();
+    final raw = (params['user_id'] ??
+            params['learner_id'] ??
+            params['uid'] ??
+            params['participant_id'] ??
+            '')
+        .trim();
+    if (raw.isEmpty) return null;
+    if (!RegExp(r'^[A-Za-z0-9._:-]{6,96}$').hasMatch(raw)) return null;
+    return raw;
   }
 
   Future<void> _restoreHistoryPanelDraft() async {
@@ -922,6 +947,58 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _mountainWinnerIsYou = null;
   }
 
+  Map<String, String> _launchQueryParameters() {
+    final out = Map<String, String>.from(Uri.base.queryParameters);
+    final fragment = Uri.base.fragment.trim();
+    if (fragment.isEmpty) return out;
+    final normalized = fragment.startsWith('/') ? fragment : '/$fragment';
+    final parsed = Uri.tryParse(normalized);
+    if (parsed == null) return out;
+    out.addAll(parsed.queryParameters);
+    return out;
+  }
+
+  bool _historyPanelRequestedByQuery() {
+    final params = _launchQueryParameters();
+    final open = params['open']?.trim().toLowerCase();
+    final panel = params['panel']?.trim().toLowerCase();
+    final target = open?.isNotEmpty == true ? open : panel;
+    const supervisorRegistrationTargets = {
+      'consent',
+      'history',
+      'learner-consent',
+      'learner_consent',
+      'progress',
+      'supervision',
+      'supervisor-registration',
+      'supervisor_registration',
+      'supervisor-register',
+      'supervisor_register',
+      'supervisor',
+    };
+    return supervisorRegistrationTargets.contains(target);
+  }
+
+  void _scheduleOpenHistoryPanelFromQueryIfRequested() {
+    if (_historyPanelOpenFromQuery || _historyPanelOpenScheduledFromQuery) {
+      return;
+    }
+    if (!_historyPanelRequestedByQuery()) return;
+    _historyPanelOpenScheduledFromQuery = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _historyPanelOpenScheduledFromQuery = false;
+      if (!mounted || _disposed || _historyPanelOpenFromQuery) return;
+      _historyPanelOpenFromQuery = true;
+      unawaited(() async {
+        await _openHistoryPanel();
+        if (!mounted || _disposed) return;
+        setState(() {
+          _historyPanelQueryDialogClosed = true;
+        });
+      }());
+    });
+  }
+
   Future<void> _openHistoryPanel() async {
     await showHistoryPanel(
       context: context,
@@ -972,6 +1049,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       lang = saved.lang;
       activeStartCurriculumKey = sanitizeStartCurriculum(saved.startKey);
       nativeLang = saved.nativeLang;
+      lastModuleRowId = saved.lastModuleRowId;
+      lastModuleMode = _dailywordsModuleModeFromName(saved.lastModuleMode);
       _tapPrimerConsumed = saved.tapPrimerSeen;
       awaitingLang = false;
       awaitingStart = false;
@@ -984,6 +1063,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     ladderController.setWins(you: saved.winsYou, rival: saved.winsRival);
     await _loadLastSessionWins();
     unawaited(_updateRestartModuleProgress());
+  }
+
+  DailywordsModuleMode? _dailywordsModuleModeFromName(String? value) {
+    if (value == DailywordsModuleMode.training.name) {
+      return DailywordsModuleMode.training;
+    }
+    if (value == DailywordsModuleMode.dialog.name) {
+      return DailywordsModuleMode.dialog;
+    }
+    return null;
   }
 
   Future<void> _loadResumeStateFallback() async {
@@ -1018,11 +1107,122 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(_updateRestartModuleProgress());
   }
 
-  Future<void> _persistProgressSnapshot() async {
+  bool _startDirectTrainingFromQuery() {
+    final params = _launchQueryParameters();
+    final directRequested = params['direct'] == '1' ||
+        params['skip_resume'] == '1' ||
+        params['resume'] == '0' ||
+        params['mode']?.trim().toLowerCase() == '2afc';
+    if (!directRequested) return false;
+
+    final requestedStart = _directStartCurriculumFromQuery(params);
+    if (requestedStart == null) return false;
+
+    final requestedLang = _normalizeSupportedLanguageCode(params['l2']) ??
+        _normalizeSupportedLanguageCode(params['lang']) ??
+        _normalizeSupportedLanguageCode(params['locale']) ??
+        lang;
+    final requestedNativeLang =
+        _normalizeSupportedLanguageCode(params['l1']) ?? requestedLang;
+    final requestedTrainingDepth = _trainingDepthModeFromQuery(params);
+
+    lang = requestedLang;
+    nativeLang = requestedNativeLang;
+    if (requestedTrainingDepth != null) {
+      trainingDepthMode = requestedTrainingDepth;
+      presentationPolicy.updateConfig(
+        presentationConfigForDepth(requestedTrainingDepth),
+      );
+    }
+    activeStartCurriculumKey = requestedStart;
+    awaitingLang = false;
+    awaitingStart = false;
+    awaitingNative = false;
+    showRestartSplash = false;
+    loading = true;
+    error = null;
+    lastModuleMode = DailywordsModuleMode.training;
+    lastModuleRowId ??= _moduleRowIdForStart(requestedStart);
+    unawaited(_loadInitial(
+      startKey: requestedStart,
+      showTapPrimer: false,
+      preferLanguageSpecificStart: false,
+      initialDownloadLimit: 2,
+      ignoreSavedCursor: true,
+    ));
+    return true;
+  }
+
+  TrainingDepthMode? _trainingDepthModeFromQuery(Map<String, String> params) {
+    final raw = (params['intensity'] ??
+            params['training_depth'] ??
+            params['depth'] ??
+            '')
+        .trim()
+        .toLowerCase();
+    switch (raw) {
+      case 'default':
+      case 'defaultmode':
+      case 'default_mode':
+        return TrainingDepthMode.defaultMode;
+      case 'deep':
+      case 'deeper':
+        return TrainingDepthMode.deep;
+    }
+    return null;
+  }
+
+  String? _directStartCurriculumFromQuery(Map<String, String> params) {
+    for (final key in const ['start', 'module', 'curriculum']) {
+      final raw = params[key]?.trim();
+      if (raw == null || raw.isEmpty || raw.toLowerCase() == '2afc') {
+        continue;
+      }
+      return sanitizeStartCurriculum(raw);
+    }
+    switch (params['pack']?.trim().toLowerCase()) {
+      case 'cafe':
+        return sanitizeStartCurriculum('start_curriculum_realtalk_cafe.json');
+      case 'toddler':
+      case 'first_words':
+        return sanitizeStartCurriculum('start_curriculum_b.json');
+      case 'bergstube':
+      case 'bergstube_peter':
+      case 'peter':
+        return sanitizeStartCurriculum('start_curriculum_t.json');
+      case 'taverna':
+      case 'taverna_lara':
+      case 'lara':
+        return sanitizeStartCurriculum('start_curriculum_l.json');
+      case 'therapeutin':
+      case 'dailywords':
+      case 'daily_words':
+        return sanitizeStartCurriculum('start_curriculum_a.json');
+    }
+    return null;
+  }
+
+  String _moduleRowIdForStart(String startKey) {
+    switch (sanitizeStartCurriculum(startKey).trim().toLowerCase()) {
+      case 'start_curriculum_realtalk_cafe.json':
+        return 'cafe';
+      case 'start_curriculum_t.json':
+        return 'peter';
+      case 'start_curriculum_l.json':
+        return 'lara';
+      case 'start_curriculum_b.json':
+        return 'first_words';
+      case 'start_curriculum_a.json':
+      default:
+        return 'dailywords';
+    }
+  }
+
+  Future<void> _persistProgressSnapshot({bool skipRemoteFetch = false}) async {
     if (_lifecyclePersisting) return;
     _lifecyclePersisting = true;
     try {
-      await _pushResumeState();
+      await _pushResumeState(fetchExistingResume: !skipRemoteFetch);
       await _persistUserCursor();
       await _persistRefillerQueue();
     } finally {
@@ -1211,6 +1411,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _initializePresentationPolicy({
     int? fallbackCursorIndex,
     bool showTapPrimer = false,
+    bool ignoreSavedCursor = false,
   }) async {
     final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
     final List<String> curriculumUuids = (curriculum.isNotEmpty)
@@ -1223,17 +1424,19 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         ? await refillerStore.load(userId: uid, startKey: startKey, lang: lang)
         : RefillerState(queue: const []);
 
-    final cursorIndex = await resolveCursorIndex(
-          startKey: startKey,
-          lang: lang,
-          curriculumUuids: curriculumUuids,
-          userId: userId,
-          nativeLang: nativeLang,
-          deltaCursor: userDelta?.cursor,
-          resumeStateController: resumeStateController,
-        ) ??
-        fallbackCursorIndex ??
-        0;
+    final cursorIndex = ignoreSavedCursor
+        ? (fallbackCursorIndex ?? 0)
+        : await resolveCursorIndex(
+              startKey: startKey,
+              lang: lang,
+              curriculumUuids: curriculumUuids,
+              userId: userId,
+              nativeLang: nativeLang,
+              deltaCursor: userDelta?.cursor,
+              resumeStateController: resumeStateController,
+            ) ??
+            fallbackCursorIndex ??
+            0;
 
     final startIndex = max(0, cursorIndex - 5);
     presentationPolicy.initializeComprehensionBlock(
@@ -1664,6 +1867,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _primeAudioForUserGesture(source);
     _resumeEmojiAckPending = true;
     _resetResumeEmojiAckRetryState();
+    if (activeFlavor.id == 'dailywords') {
+      _openModuleSelectorFromResume();
+      return;
+    }
     unawaited(_startFromSplash());
   }
 
@@ -1674,14 +1881,106 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       awaitingLang = false;
       awaitingStart = true;
       activeStartCurriculumKey = null;
-      nativeLang = null;
+      nativeLang = activeFlavor.id == 'dailywords' ? l : null;
+      lastModuleRowId ??= 'dailywords';
+      lastModuleMode ??= DailywordsModuleMode.training;
       hintPack = null;
       hintRevealedUuid = null;
     });
   }
 
+  Future<void> _onSelectDailywordsModule(DailywordsModuleChoice choice) async {
+    setState(() {
+      lastModuleRowId = choice.rowId;
+      lastModuleMode = choice.mode;
+    });
+
+    if (choice.mode == DailywordsModuleMode.training) {
+      final startKey = choice.startKey;
+      if (startKey == null || startKey.trim().isEmpty) return;
+      await _onSelectStart(startKey);
+      return;
+    }
+
+    final uri = _buildDailywordsRealTalkUri(choice);
+    if (uri != null) {
+      _saveOnboardingSnapshot();
+      await _openRealTalk(uri);
+    }
+  }
+
+  Uri? _buildDailywordsRealTalkUri(DailywordsModuleChoice choice) {
+    final rawUrl = activeFlavor.realTalkUrl?.trim();
+    if (rawUrl == null || rawUrl.isEmpty) return null;
+    final base = Uri.tryParse(rawUrl);
+    if (base == null) return null;
+
+    var path = base.path.isEmpty ? '/' : base.path;
+    final dialogPath = choice.dialogPath?.trim();
+    if (dialogPath != null && dialogPath.isNotEmpty) {
+      final cleanBase =
+          path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+      final cleanDialog =
+          dialogPath.startsWith('/') ? dialogPath.substring(1) : dialogPath;
+      if (cleanBase.split('/').last == cleanDialog.split('/').first) {
+        path = cleanBase.isEmpty ? '/$cleanDialog' : cleanBase;
+      } else {
+        path = '$cleanBase/$cleanDialog';
+      }
+    }
+
+    final queryParameters = Map<String, String>.from(base.queryParameters);
+    final l2 = lang.trim().toLowerCase();
+    final l1 = (nativeLang?.trim().isNotEmpty == true
+            ? nativeLang!.trim()
+            : Localizations.localeOf(context).languageCode)
+        .toLowerCase();
+    if (l1.isNotEmpty) {
+      queryParameters['l1'] = l1;
+    }
+    if (l2.isNotEmpty) {
+      queryParameters['l2'] = l2;
+      final localeId = speechLocaleOverrides[l2];
+      if (localeId != null && localeId.isNotEmpty) {
+        queryParameters['locale'] = localeId;
+      }
+    }
+    final sceneId = choice.dialogSceneId?.trim();
+    if (sceneId != null && sceneId.isNotEmpty) {
+      queryParameters['module'] = sceneId;
+    }
+    queryParameters['topic'] = choice.rowId;
+    if (choice.startKey?.trim().isNotEmpty == true) {
+      queryParameters['start'] = choice.startKey!.trim();
+    }
+    queryParameters['return_to'] = activeFlavor.dashboardLandingUrl;
+    return base.replace(
+      path: path,
+      queryParameters: queryParameters.isEmpty ? null : queryParameters,
+    );
+  }
+
   Future<void> _onSelectStart(String fileName) async {
     final selectedStart = sanitizeStartCurriculum(fileName);
+    if (activeFlavor.id == 'dailywords') {
+      nativeSelectTimer?.cancel();
+      final selectedNativeLang =
+          nativeLang?.trim().isNotEmpty == true ? nativeLang : lang;
+      setState(() {
+        nativeLang = selectedNativeLang;
+        awaitingStart = false;
+        awaitingNative = false;
+        activeStartCurriculumKey = selectedStart;
+      });
+      unawaited(_loadHintPack(forceRefresh: true));
+      await _loadInitial(
+        startKey: selectedStart,
+        showTapPrimer: true,
+        preferLanguageSpecificStart: false,
+        initialDownloadLimit: 2,
+      );
+      return;
+    }
     nativeSelectTimer?.cancel();
     nativeSelectTimer = Timer(_openingPanelAutoProceedDelay, () {
       if (!mounted || !awaitingNative) return;
@@ -1691,6 +1990,26 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       awaitingStart = false;
       awaitingNative = true;
       activeStartCurriculumKey = selectedStart;
+    });
+  }
+
+  void _onModuleTargetLanguageChange(String languageCode) {
+    final normalized = languageCode.trim().toLowerCase();
+    if (!langChoices.contains(normalized)) return;
+    setState(() {
+      lang = normalized;
+      hintPack = null;
+      hintRevealedUuid = null;
+    });
+  }
+
+  void _onModuleNativeLanguageChange(String languageCode) {
+    final normalized = languageCode.trim().toLowerCase();
+    if (!langChoices.contains(normalized)) return;
+    setState(() {
+      nativeLang = normalized;
+      hintPack = null;
+      hintRevealedUuid = null;
     });
   }
 
@@ -1927,15 +2246,29 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   String? _landingLanguageFromQuery() {
-    final raw = Uri.base.queryParameters['lang']?.trim();
-    if (raw == null || raw.isEmpty) return null;
-    final candidate = raw.toLowerCase().split(RegExp(r'[-_]')).first;
+    final raw = _launchQueryParameters()['lang']?.trim();
+    final queryCandidate = _normalizeSupportedLanguageCode(raw);
+    if (queryCandidate != null) return queryCandidate;
+    for (final locale in PlatformDispatcher.instance.locales) {
+      final candidate = _normalizeSupportedLanguageCode(locale.languageCode);
+      if (candidate != null) return candidate;
+    }
+    return _normalizeSupportedLanguageCode(
+        PlatformDispatcher.instance.locale.languageCode);
+  }
+
+  String? _normalizeSupportedLanguageCode(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final candidate = raw.trim().toLowerCase().split(RegExp(r'[-_]')).first;
     return langChoices.contains(candidate) ? candidate : null;
   }
 
   Future<void> _loadInitial({
     String? startKey,
     bool showTapPrimer = false,
+    bool preferLanguageSpecificStart = true,
+    int initialDownloadLimit = initialItemDownloadLimit,
+    bool ignoreSavedCursor = false,
   }) async {
     // Initialer Ladepfad: UI zurücksetzen, Curriculum holen,
     // dann so viele Batches laden, bis mindestens 1 valides Item da ist
@@ -1951,7 +2284,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       startKey: requestedStartKey,
       previousStartKey: previousStartKey,
       defaultStartCurriculum: activeFlavor.defaultStartCurriculum,
-      resolveStartKeyForLang: _startCurriculumKeyForLanguage,
+      resolveStartKeyForLang: preferLanguageSpecificStart
+          ? _startCurriculumKeyForLanguage
+          : (startKey) async => sanitizeStartCurriculum(startKey),
       resetCursorOnNextLoad: resetCursorOnNextLoad,
       persistUserCursor: () async {},
       loggerReady: loggerReady,
@@ -2069,7 +2404,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
       await loadSeedsAndInitialBatches(
         loadSeeds: _loadSeeds,
-        initialItemDownloadLimit: initialItemDownloadLimit,
+        initialItemDownloadLimit: initialDownloadLimit,
         batchSize: batchSize,
         itemsLength: () => items.length,
         curriculumLength: () => curriculum.length,
@@ -2088,7 +2423,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           loading = false;
         });
         if (mounted) {
-          await _initializePresentationPolicy(showTapPrimer: showTapPrimer);
+          await _initializePresentationPolicy(
+            showTapPrimer: showTapPrimer,
+            ignoreSavedCursor: ignoreSavedCursor,
+          );
         }
       }
     } catch (e) {
@@ -2258,7 +2596,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     return idx;
   }
 
-  Future<void> _pushResumeState() async {
+  Future<void> _pushResumeState({bool fetchExistingResume = true}) async {
     final uid = userId;
     if (uid == null || uid.isEmpty) return;
     final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
@@ -2288,7 +2626,11 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       winsYou: ladder.winsYou,
       winsRival: ladder.winsRival,
     );
-    await resumeStateController.pushEntry(userId: uid, entry: entry);
+    await resumeStateController.pushEntry(
+      userId: uid,
+      entry: entry,
+      fetchExisting: fetchExistingResume,
+    );
   }
 
   Future<bool> _loadBatch(int offset, {int? maxEntries}) async {
@@ -3694,6 +4036,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       winsYou: ladder.winsYou,
       winsRival: ladder.winsRival,
       tapPrimerSeen: _tapPrimerConsumed,
+      lastModuleRowId: lastModuleRowId,
+      lastModuleMode: lastModuleMode?.name,
     );
     unawaited(onboardingStore.save(data));
   }
@@ -3795,6 +4139,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
 
   @override
   Widget build(BuildContext context) {
+    _scheduleOpenHistoryPanelFromQueryIfRequested();
+    if (_historyPanelRequestedByQuery() && !_historyPanelQueryDialogClosed) {
+      return _wrapWithKeyboardShortcuts(
+        const Scaffold(
+          body: SafeArea(
+            child: SizedBox.expand(),
+          ),
+        ),
+      );
+    }
     if (awaitingLang) {
       final landingLanguage = _landingLanguageFromQuery();
       return _wrapWithKeyboardShortcuts(
@@ -3803,9 +4157,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             child: LangSelector(
               onSelect: _onSelectLang,
               initialSelectedLanguage: landingLanguage,
-              autoSelectDelay: landingLanguage == null
-                  ? Duration.zero
-                  : _openingPanelAutoProceedDelay,
+              autoSelectDelay:
+                  landingLanguage == null || _historyPanelRequestedByQuery()
+                      ? Duration.zero
+                      : _openingPanelAutoProceedDelay,
             ),
           ),
         ),
@@ -3838,17 +4193,32 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       return _wrapWithKeyboardShortcuts(
         Scaffold(
           body: SafeArea(
-            child: StartCurriculumSelector(
-              onSelect: _onSelectStart,
-              targetLanguageCode: lang,
-              nativeLanguageCode: nativeLang,
-              onOpenRealTalk: _openRealTalk,
-              onPickSelected:
-                  activeFlavor.allowPickManifest ? _enterPickFlow : null,
-              showHistoryButton: true,
-              onOpenHistory: _openHistoryPanel,
-              historyHasSupervisorInfo: _historyPanelHasSupervisorInfo,
-            ),
+            child: activeFlavor.id == 'dailywords'
+                ? DailywordsModuleSelector(
+                    targetLanguageCode: lang,
+                    nativeLanguageCode: nativeLang,
+                    recommendedRowId: lastModuleRowId ?? 'dailywords',
+                    recommendedMode:
+                        lastModuleMode ?? DailywordsModuleMode.training,
+                    showHistoryButton: true,
+                    onOpenHistory: _openHistoryPanel,
+                    historyHasSupervisorInfo: _historyPanelHasSupervisorInfo,
+                    onTargetLanguageChange: _onModuleTargetLanguageChange,
+                    onNativeLanguageChange: _onModuleNativeLanguageChange,
+                    onSelect: (choice) =>
+                        unawaited(_onSelectDailywordsModule(choice)),
+                  )
+                : StartCurriculumSelector(
+                    onSelect: _onSelectStart,
+                    targetLanguageCode: lang,
+                    nativeLanguageCode: nativeLang,
+                    onOpenRealTalk: _openRealTalk,
+                    onPickSelected:
+                        activeFlavor.allowPickManifest ? _enterPickFlow : null,
+                    showHistoryButton: true,
+                    onOpenHistory: _openHistoryPanel,
+                    historyHasSupervisorInfo: _historyPanelHasSupervisorInfo,
+                  ),
           ),
         ),
       );
@@ -3876,6 +4246,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           viewCount: dashboardViewCount,
           targetLanguage: lang,
           nativeLanguage: nativeLang,
+          onTargetLanguageChange: _onModuleTargetLanguageChange,
+          onNativeLanguageChange: _onModuleNativeLanguageChange,
           onRestart: () => _restartOnboarding(),
           onStart: () => _handleResumeStartGesture('resume-start-arrow'),
           onSelectModule: _openModuleSelectorFromResume,
@@ -4155,6 +4527,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
             },
             onEscapeToOpeningPanel: _exitToOpeningPanel,
             onExitToResumePanel: _exitToResumePanelIfAvailable,
+            onReturnToModuleSelection: _returnToModuleSelectionFromTraining,
           );
         }
       }
@@ -4392,6 +4765,109 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       currentSlot = const PresentationSlot(
           mode: PresentationMode.comprehension, targetUuid: '');
     });
+  }
+
+  Future<void> _returnToModuleSelectionFromTraining() async {
+    final realTalkReturnUrl = _realTalkReturnUrlFromQuery();
+    voiceController.cancelActive();
+    _mountainCelebrationTimer?.cancel();
+    await _runReturnStep(
+      'stop-audio',
+      _stopAllSessionAudioPlayers,
+      timeout: const Duration(milliseconds: 900),
+    );
+    await _runReturnStep(
+      'persist-progress',
+      () => _persistProgressSnapshot(skipRemoteFetch: true),
+      timeout: const Duration(milliseconds: 1600),
+    );
+    if (loggerReady && sessionStart != null && !sessionEnded) {
+      await _runReturnStep(
+        'logger-end-session',
+        logger.endSession,
+        timeout: const Duration(milliseconds: 900),
+      );
+    }
+    if (realTalkReturnUrl != null) {
+      final opened = await _openReturnUrl(realTalkReturnUrl);
+      if (opened) return;
+      if (!mounted) return;
+      setState(() {
+        error = 'Rückkehr zur RealTalk-Modulauswahl fehlgeschlagen.';
+      });
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _clearMountainCelebrationState();
+      _invalidateActiveSessionFlow();
+      awaitingLang = false;
+      awaitingStart = true;
+      awaitingNative = false;
+      awaitingPickNative = false;
+      pickFlowActive = false;
+      showRestartSplash = false;
+      loading = false;
+      error = null;
+      sessionEnded = true;
+      currentTrial = null;
+      _lastDisplayTrial = null;
+      _namingTransition = false;
+      lastModuleRowId = _moduleRowIdForStart(
+          activeStartCurriculumKey ?? defaultStartCurriculum);
+      lastModuleMode = DailywordsModuleMode.training;
+      currentSlot = const PresentationSlot(
+          mode: PresentationMode.comprehension, targetUuid: '');
+    });
+  }
+
+  Future<void> _runReturnStep(
+    String label,
+    Future<void> Function() action, {
+    required Duration timeout,
+  }) async {
+    try {
+      await action().timeout(timeout);
+    } on TimeoutException {
+      debugPrint('[module-selection-return][$label][timeout]');
+    } catch (e) {
+      debugPrint('[module-selection-return][$label][error] $e');
+    }
+  }
+
+  Future<bool> _openReturnUrl(Uri uri) async {
+    try {
+      return await launchUrl(
+        uri,
+        mode: LaunchMode.platformDefault,
+        webOnlyWindowName: '_self',
+      ).timeout(const Duration(milliseconds: 1200));
+    } on TimeoutException {
+      debugPrint('[module-selection-return][launch-timeout] $uri');
+      return false;
+    } catch (e) {
+      debugPrint('[module-selection-return][launch-error] $e');
+      return false;
+    }
+  }
+
+  Uri? _realTalkReturnUrlFromQuery() {
+    final params = _launchQueryParameters();
+    final source = params['source']?.trim().toLowerCase();
+    final rawReturnTo = params['return_to']?.trim();
+    if (rawReturnTo != null && rawReturnTo.isNotEmpty) {
+      final parsed = Uri.tryParse(rawReturnTo);
+      if (parsed != null &&
+          (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+        return parsed;
+      }
+    }
+    if (source != 'realtalk') return null;
+    final host = Uri.base.host.toLowerCase();
+    if (host == '127.0.0.1' || host == 'localhost') {
+      return Uri.parse('http://127.0.0.1:8092/');
+    }
+    return Uri.parse('https://realtalk.dailywords-project.org/');
   }
 
   void _finishSession() {
