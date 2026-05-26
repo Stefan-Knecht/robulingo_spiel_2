@@ -250,6 +250,7 @@ class RestartSplash extends StatefulWidget {
     required this.viewCount,
     required this.onStart,
     required this.onSelectModule,
+    required this.onExportLogs,
     required this.selectedTrainingDepth,
     required this.onSelectTrainingDepth,
     required this.moduleProgress,
@@ -270,6 +271,7 @@ class RestartSplash extends StatefulWidget {
   final int viewCount;
   final VoidCallback onStart;
   final VoidCallback onSelectModule;
+  final Future<String> Function() onExportLogs;
   final TrainingDepthMode selectedTrainingDepth;
   final ValueChanged<TrainingDepthMode> onSelectTrainingDepth;
   final RestartModuleProgress moduleProgress;
@@ -696,6 +698,7 @@ class _RestartSplashState extends State<RestartSplash> {
                 moduleIconAsset: widget.moduleProgress.iconAsset,
                 changeModuleTooltip: tooltipChangeModule,
                 onClose: _closeMenu,
+                onExportLogs: widget.onExportLogs,
                 onOpenModuleSelection: () {
                   _closeMenu();
                   widget.onSelectModule();
@@ -756,6 +759,7 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
     required this.moduleIconAsset,
     required this.changeModuleTooltip,
     required this.onClose,
+    required this.onExportLogs,
     required this.onOpenModuleSelection,
     required this.onSelectTrainingDepth,
     this.onTargetLanguageChange,
@@ -768,6 +772,7 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
   final String moduleIconAsset;
   final String changeModuleTooltip;
   final VoidCallback onClose;
+  final Future<String> Function() onExportLogs;
   final VoidCallback onOpenModuleSelection;
   final ValueChanged<TrainingDepthMode> onSelectTrainingDepth;
   final ValueChanged<String>? onTargetLanguageChange;
@@ -780,6 +785,7 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
 
 class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
   double _speechRate = 1.0;
+  bool _exportingLogs = false;
 
   @override
   Widget build(BuildContext context) {
@@ -814,15 +820,13 @@ class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
                       ),
                     ),
                     _RestartIconMenuButton(
-                      icon: Icons.file_download_outlined,
-                      tooltip: _restartT(l1, 'export_debug'),
-                      onPressed: () {},
-                    ),
-                    const SizedBox(width: 8),
-                    _RestartIconMenuButton(
-                      icon: Icons.description_outlined,
-                      tooltip: _restartT(l1, 'export_dialog'),
-                      onPressed: () {},
+                      icon: _exportingLogs
+                          ? Icons.hourglass_empty
+                          : Icons.file_download_outlined,
+                      tooltip: _restartT(l1, 'export_logs'),
+                      onPressed: _exportingLogs
+                          ? null
+                          : () => unawaited(_handleExportLogs(l1)),
                     ),
                     const SizedBox(width: 8),
                     TextButton(
@@ -973,6 +977,26 @@ class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
       ),
     );
   }
+
+  Future<void> _handleExportLogs(String languageCode) async {
+    if (_exportingLogs) return;
+    setState(() {
+      _exportingLogs = true;
+    });
+    String message;
+    try {
+      message = await widget.onExportLogs();
+    } catch (_) {
+      message = _restartT(languageCode, 'export_failed');
+    }
+    if (!mounted) return;
+    setState(() {
+      _exportingLogs = false;
+    });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 }
 
 class _RestartLanguageDropdown extends StatelessWidget {
@@ -1018,7 +1042,7 @@ class _RestartIconMenuButton extends StatelessWidget {
 
   final IconData icon;
   final String tooltip;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1226,6 +1250,8 @@ const _restartMenuNoteStyle = TextStyle(
 const Map<String, Map<String, String>> _restartLocalizedText = {
   'en': {
     'options': 'Options',
+    'export_logs': 'Export logs',
+    'export_failed': 'Export failed.',
     'export_debug': 'Export debug log',
     'export_dialog': 'Export dialog log',
     'close': 'Close',
@@ -1253,6 +1279,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'de': {
     'options': 'Optionen',
+    'export_logs': 'Logs exportieren',
+    'export_failed': 'Export fehlgeschlagen.',
     'export_debug': 'Debug-Protokoll exportieren',
     'export_dialog': 'Dialog-Protokoll exportieren',
     'close': 'Schliessen',
@@ -1280,6 +1308,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'fr': {
     'options': 'Options',
+    'export_logs': 'Exporter les journaux',
+    'export_failed': 'Export echoue.',
     'export_debug': 'Exporter le journal de debug',
     'export_dialog': 'Exporter le journal du dialogue',
     'close': 'Fermer',
@@ -1302,6 +1332,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'es': {
     'options': 'Opciones',
+    'export_logs': 'Exportar registros',
+    'export_failed': 'Error al exportar.',
     'export_debug': 'Exportar registro de depuracion',
     'export_dialog': 'Exportar registro de dialogo',
     'close': 'Cerrar',
@@ -1323,6 +1355,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'it': {
     'options': 'Opzioni',
+    'export_logs': 'Esporta log',
+    'export_failed': 'Esportazione non riuscita.',
     'export_debug': 'Esporta log di debug',
     'export_dialog': 'Esporta log dialogo',
     'close': 'Chiudi',
@@ -1345,6 +1379,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'el': {
     'options': 'Epiloges',
+    'export_logs': 'Exagogi log',
+    'export_failed': 'I exagogi apetyche.',
     'export_debug': 'Exagogi debug log',
     'export_dialog': 'Exagogi dialog log',
     'close': 'Kleisimo',
@@ -1367,6 +1403,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'ru': {
     'options': 'Nastroiki',
+    'export_logs': 'Eksport zhurnalov',
+    'export_failed': 'Eksport ne udalsya.',
     'export_debug': 'Eksport debug zhurnala',
     'export_dialog': 'Eksport dialoga',
     'close': 'Zakryt',
@@ -1389,6 +1427,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'tr': {
     'options': 'Secenekler',
+    'export_logs': 'Kayitlari disa aktar',
+    'export_failed': 'Disa aktarma basarisiz.',
     'export_debug': 'Debug kaydini disa aktar',
     'export_dialog': 'Diyalog kaydini disa aktar',
     'close': 'Kapat',
@@ -1411,6 +1451,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'ar': {
     'options': 'الخيارات',
+    'export_logs': 'تصدير السجلات',
+    'export_failed': 'فشل التصدير.',
     'export_debug': 'تصدير سجل التصحيح',
     'export_dialog': 'تصدير سجل الحوار',
     'close': 'إغلاق',
@@ -1432,6 +1474,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'zh': {
     'options': '选项',
+    'export_logs': '导出日志',
+    'export_failed': '导出失败。',
     'export_debug': '导出调试日志',
     'export_dialog': '导出对话日志',
     'close': '关闭',
@@ -1453,6 +1497,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'ja': {
     'options': 'オプション',
+    'export_logs': 'ログを書き出す',
+    'export_failed': '書き出しに失敗しました。',
     'export_debug': 'デバッグログを書き出す',
     'export_dialog': '対話ログを書き出す',
     'close': '閉じる',
@@ -1474,6 +1520,8 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
   },
   'hi': {
     'options': 'विकल्प',
+    'export_logs': 'लॉग निर्यात करें',
+    'export_failed': 'निर्यात विफल रहा।',
     'export_debug': 'डिबग लॉग निर्यात करें',
     'export_dialog': 'संवाद लॉग निर्यात करें',
     'close': 'बंद करें',
