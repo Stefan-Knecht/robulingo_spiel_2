@@ -343,6 +343,13 @@ class _RestartSplashState extends State<RestartSplash> {
     _cancelAutoProceed();
   }
 
+  void _openMenu() {
+    _cancelAutoProceed();
+    setState(() {
+      _menuOpen = true;
+    });
+  }
+
   void _closeMenu() {
     setState(() {
       _menuOpen = false;
@@ -514,7 +521,7 @@ class _RestartSplashState extends State<RestartSplash> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        const SizedBox(width: 72, height: 72),
+                        _RestartMenuButton(size: 72, onPressed: _openMenu),
                         Tooltip(
                           message: tooltipStartLearning,
                           child: GestureDetector(
@@ -577,7 +584,7 @@ class _RestartSplashState extends State<RestartSplash> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const SizedBox(width: 64, height: 64),
+                      _RestartMenuButton(size: 64, onPressed: _openMenu),
                       Tooltip(
                         message: tooltipStartLearning,
                         child: GestureDetector(
@@ -764,6 +771,42 @@ class _RestartSplashState extends State<RestartSplash> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _RestartMenuButton extends StatelessWidget {
+  const _RestartMenuButton({
+    required this.size,
+    required this.onPressed,
+  });
+
+  final double size;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xfffffbf4),
+      elevation: 1,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onPressed,
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xffe5d7c4)),
+          ),
+          child: Icon(
+            Icons.menu,
+            size: size * 0.58,
+            color: const Color(0xff4a2c12),
+          ),
+        ),
       ),
     );
   }
