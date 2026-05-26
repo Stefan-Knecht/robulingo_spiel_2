@@ -479,6 +479,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     total: 0,
   );
   int _restartPanelInfoRequest = 0;
+  Map<String, DailywordsModuleProgress> dailywordsModuleProgressByStartKey =
+      const {};
+  int _dailywordsModuleProgressRequest = 0;
   bool _lifecyclePersisting = false;
   bool _historyPanelHasSupervisorInfo = false;
   bool _historyPanelOpenFromQuery = false;
@@ -1368,6 +1371,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       pickListLoading = false;
       pickListError = null;
     });
+    unawaited(_updateDailywordsModuleProgress());
   }
 
   Future<void> _updateRestartModuleProgress() async {
@@ -1486,6 +1490,39 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       debugPrint('[restart][curriculum-info] $e');
       return const _RestartCurriculumMetadata(totalItems: 0);
     }
+  }
+
+  Future<void> _updateDailywordsModuleProgress() async {
+    if (activeFlavor.id != 'dailywords' || !awaitingStart) return;
+    final int requestId = ++_dailywordsModuleProgressRequest;
+    final uid = userId;
+    ResumeState? fetchedState;
+    if (uid != null && uid.isNotEmpty) {
+      fetchedState = resumeStateController.state ??
+          await resumeStateController.fetchAndSet(uid);
+    }
+    final next = <String, DailywordsModuleProgress>{};
+    for (final startKey in dailywordsTrainingStartKeys) {
+      final metadata = await _fetchRestartCurriculumMetadata(startKey);
+      final entry = fetchedState?.entryForStartKey(startKey) ??
+          resumeStateController.entryForStartKey(startKey);
+      final completed = metadata.totalItems > 0
+          ? (entry?.cursor ?? 0).clamp(0, metadata.totalItems)
+          : 0;
+      next[startKey] = DailywordsModuleProgress(
+        completed: completed,
+        total: metadata.totalItems,
+      );
+    }
+    if (!mounted ||
+        requestId != _dailywordsModuleProgressRequest ||
+        activeFlavor.id != 'dailywords' ||
+        !awaitingStart) {
+      return;
+    }
+    setState(() {
+      dailywordsModuleProgressByStartKey = Map.unmodifiable(next);
+    });
   }
 
   String _moduleIconForStart(String startKey) {
@@ -1887,6 +1924,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintPack = null;
       hintRevealedUuid = null;
     });
+    unawaited(_updateDailywordsModuleProgress());
   }
 
   Future<void> _onSelectDailywordsModule(DailywordsModuleChoice choice) async {
@@ -2001,6 +2039,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintPack = null;
       hintRevealedUuid = null;
     });
+    unawaited(_updateDailywordsModuleProgress());
   }
 
   void _onModuleNativeLanguageChange(String languageCode) {
@@ -2011,6 +2050,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintPack = null;
       hintRevealedUuid = null;
     });
+    unawaited(_updateDailywordsModuleProgress());
   }
 
   void _enterPickFlow() {
@@ -4190,6 +4230,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
 
     if (awaitingStart) {
+      if (activeFlavor.id == 'dailywords' &&
+          dailywordsModuleProgressByStartKey.isEmpty) {
+        unawaited(_updateDailywordsModuleProgress());
+      }
       return _wrapWithKeyboardShortcuts(
         Scaffold(
           body: SafeArea(
@@ -4205,6 +4249,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                     historyHasSupervisorInfo: _historyPanelHasSupervisorInfo,
                     onTargetLanguageChange: _onModuleTargetLanguageChange,
                     onNativeLanguageChange: _onModuleNativeLanguageChange,
+                    progressByStartKey: dailywordsModuleProgressByStartKey,
                     onSelect: (choice) =>
                         unawaited(_onSelectDailywordsModule(choice)),
                   )

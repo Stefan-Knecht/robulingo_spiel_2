@@ -24,6 +24,21 @@ class DailywordsModuleChoice {
   final String? dialogPath;
 }
 
+class DailywordsModuleProgress {
+  const DailywordsModuleProgress({
+    required this.completed,
+    required this.total,
+  });
+
+  final int completed;
+  final int total;
+
+  double get ratio {
+    if (total <= 0) return 0;
+    return (completed / total).clamp(0.0, 1.0).toDouble();
+  }
+}
+
 class DailywordsModuleSelector extends StatefulWidget {
   const DailywordsModuleSelector({
     super.key,
@@ -36,6 +51,8 @@ class DailywordsModuleSelector extends StatefulWidget {
     this.historyHasSupervisorInfo = false,
     this.onTargetLanguageChange,
     this.onNativeLanguageChange,
+    this.progressByStartKey = const {},
+    this.autoProceedDelay = const Duration(seconds: 6),
     required this.onSelect,
   });
 
@@ -48,6 +65,8 @@ class DailywordsModuleSelector extends StatefulWidget {
   final bool historyHasSupervisorInfo;
   final void Function(String languageCode)? onTargetLanguageChange;
   final void Function(String languageCode)? onNativeLanguageChange;
+  final Map<String, DailywordsModuleProgress> progressByStartKey;
+  final Duration autoProceedDelay;
   final void Function(DailywordsModuleChoice choice) onSelect;
 
   @override
@@ -59,6 +78,34 @@ class _DailywordsModuleSelectorState extends State<DailywordsModuleSelector> {
   bool _menuOpen = false;
   String _inputLanguageMode = 'l2';
   double _speechRate = 1.0;
+  Timer? _autoProceedTimer;
+  bool _autoProceedCanceled = false;
+  bool _selectionTriggered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleAutoProceed();
+  }
+
+  @override
+  void didUpdateWidget(covariant DailywordsModuleSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.recommendedRowId != widget.recommendedRowId ||
+        oldWidget.recommendedMode != widget.recommendedMode ||
+        oldWidget.targetLanguageCode != widget.targetLanguageCode ||
+        oldWidget.nativeLanguageCode != widget.nativeLanguageCode) {
+      _selectionTriggered = false;
+      _autoProceedCanceled = false;
+      _scheduleAutoProceed();
+    }
+  }
+
+  @override
+  void dispose() {
+    _autoProceedTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -118,6 +165,7 @@ class _DailywordsModuleSelectorState extends State<DailywordsModuleSelector> {
                                   compact: compact,
                                   recommended: recommended,
                                   languageCode: l1,
+                                  progressByStartKey: widget.progressByStartKey,
                                   onSelect: _selectChoice,
                                 ),
                               ),
@@ -209,10 +257,32 @@ class _DailywordsModuleSelectorState extends State<DailywordsModuleSelector> {
     );
   }
 
-  void _cancelAutoProceed() {}
+  void _scheduleAutoProceed() {
+    if (_autoProceedCanceled || _selectionTriggered) return;
+    _autoProceedTimer?.cancel();
+    _autoProceedTimer = Timer(widget.autoProceedDelay, () {
+      if (!mounted || _autoProceedCanceled || _selectionTriggered) return;
+      _selectChoice(_resolveRecommendedChoice(), autoProceed: true);
+    });
+  }
 
-  void _selectChoice(DailywordsModuleChoice choice) {
-    _cancelAutoProceed();
+  void _cancelAutoProceed() {
+    if (_autoProceedCanceled) return;
+    _autoProceedCanceled = true;
+    _autoProceedTimer?.cancel();
+    _autoProceedTimer = null;
+  }
+
+  void _selectChoice(DailywordsModuleChoice choice,
+      {bool autoProceed = false}) {
+    if (_selectionTriggered) return;
+    _selectionTriggered = true;
+    if (!autoProceed) {
+      _cancelAutoProceed();
+    } else {
+      _autoProceedTimer?.cancel();
+      _autoProceedTimer = null;
+    }
     widget.onSelect(choice);
   }
 
@@ -653,6 +723,7 @@ class _ModuleGrid extends StatelessWidget {
     required this.compact,
     required this.recommended,
     required this.languageCode,
+    required this.progressByStartKey,
     required this.onSelect,
   });
 
@@ -660,6 +731,7 @@ class _ModuleGrid extends StatelessWidget {
   final bool compact;
   final DailywordsModuleChoice recommended;
   final String languageCode;
+  final Map<String, DailywordsModuleProgress> progressByStartKey;
   final void Function(DailywordsModuleChoice choice) onSelect;
 
   @override
@@ -734,6 +806,7 @@ class _ModuleGrid extends StatelessWidget {
                           ),
                         ),
                         languageCode: languageCode,
+                        progress: progressByStartKey[row.startKey],
                         onSelect: onSelect,
                       ),
                     ),
@@ -889,6 +962,7 @@ class _ActionTableCell extends StatelessWidget {
     required this.recommended,
     required this.languageCode,
     required this.onSelect,
+    this.progress,
     this.iconScale = 1.0,
   });
 
@@ -899,6 +973,7 @@ class _ActionTableCell extends StatelessWidget {
   final bool recommended;
   final String languageCode;
   final void Function(DailywordsModuleChoice choice) onSelect;
+  final DailywordsModuleProgress? progress;
   final double iconScale;
 
   @override
@@ -906,6 +981,7 @@ class _ActionTableCell extends StatelessWidget {
     final diameter = min(height * 0.56, 136.0);
     final borderColor = recommended ? const Color(0xff0f8a3b) : Colors.black;
     final background = recommended ? const Color(0xffe2f7e9) : Colors.white;
+    final showProgress = choice.mode == DailywordsModuleMode.training;
     return SizedBox(
       height: height,
       child: Center(
@@ -920,37 +996,54 @@ class _ActionTableCell extends StatelessWidget {
               child: InkWell(
                 customBorder: const CircleBorder(),
                 onTap: enabled ? () => onSelect(choice) : null,
-                child: Container(
+                child: SizedBox(
                   width: diameter,
-                  height: diameter,
-                  decoration: BoxDecoration(
-                    color: background,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: borderColor,
-                      width: recommended ? 5 : 4,
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0xff000000),
-                        offset: Offset(0, 9),
-                        blurRadius: 0,
-                        spreadRadius: -2,
+                  height: showProgress ? diameter + 24 : diameter,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    alignment: Alignment.topCenter,
+                    children: [
+                      Container(
+                        width: diameter,
+                        height: diameter,
+                        decoration: BoxDecoration(
+                          color: background,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: borderColor,
+                            width: recommended ? 5 : 4,
+                          ),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0xff000000),
+                              offset: Offset(0, 9),
+                              blurRadius: 0,
+                              spreadRadius: -2,
+                            ),
+                            BoxShadow(
+                              color: Color(0x22000000),
+                              offset: Offset(0, 14),
+                              blurRadius: 0,
+                              spreadRadius: -8,
+                            ),
+                          ],
+                        ),
+                        child: Transform.scale(
+                          scale: iconScale,
+                          child: Padding(
+                            padding: EdgeInsets.all(diameter * 0.05),
+                            child: Image.asset(iconAsset, fit: BoxFit.contain),
+                          ),
+                        ),
                       ),
-                      BoxShadow(
-                        color: Color(0x22000000),
-                        offset: Offset(0, 14),
-                        blurRadius: 0,
-                        spreadRadius: -8,
-                      ),
+                      if (showProgress)
+                        Positioned(
+                          top: diameter + 12,
+                          left: 0,
+                          right: 0,
+                          child: _ModuleProgressBar(progress: progress),
+                        ),
                     ],
-                  ),
-                  child: Transform.scale(
-                    scale: iconScale,
-                    child: Padding(
-                      padding: EdgeInsets.all(diameter * 0.05),
-                      child: Image.asset(iconAsset, fit: BoxFit.contain),
-                    ),
                   ),
                 ),
               ),
@@ -961,6 +1054,64 @@ class _ActionTableCell extends StatelessWidget {
     );
   }
 }
+
+class _ModuleProgressBar extends StatelessWidget {
+  const _ModuleProgressBar({required this.progress});
+
+  final DailywordsModuleProgress? progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = progress?.ratio ?? 0.0;
+    final percent = (ratio * 100).round().clamp(0, 100);
+    return Row(
+      children: [
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: Stack(
+              children: [
+                Container(
+                  height: 8,
+                  color: const Color(0xffe5d7c4),
+                ),
+                FractionallySizedBox(
+                  widthFactor: ratio,
+                  child: Container(
+                    height: 8,
+                    color: const Color(0xff215da8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 34,
+          child: Text(
+            '$percent%',
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: Color(0xff2b2117),
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+const List<String> dailywordsTrainingStartKeys = [
+  'start_curriculum_a.json',
+  'start_curriculum_realtalk_cafe.json',
+  'start_curriculum_t.json',
+  'start_curriculum_l.json',
+  'start_curriculum_b.json',
+];
 
 class _DailywordsModuleRow {
   const _DailywordsModuleRow({

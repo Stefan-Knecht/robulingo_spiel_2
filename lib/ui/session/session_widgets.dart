@@ -375,8 +375,6 @@ class _RestartSplashState extends State<RestartSplash> {
         _resumeTooltipText('change_module', tooltipLanguage);
     final tooltipStartLearning =
         _resumeTooltipText('start_learning', tooltipLanguage);
-    final tooltipCurriculumCovered =
-        _resumeTooltipText('curriculum_covered', tooltipLanguage);
     final tooltipYou = _resumeTooltipText('you', tooltipLanguage);
     final tooltipYourRival = _resumeTooltipText('your_rival', tooltipLanguage);
     final historyIconAsset = widget.historyHasSupervisorInfo
@@ -537,12 +535,6 @@ class _RestartSplashState extends State<RestartSplash> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Tooltip(
-                            message: tooltipCurriculumCovered,
-                            child: _RestartModuleProgressIndicator(
-                                widget.moduleProgress),
-                          ),
-                          const SizedBox(height: 6),
                           TextButton(
                             style: TextButton.styleFrom(
                               minimumSize: Size.zero,
@@ -600,12 +592,6 @@ class _RestartSplashState extends State<RestartSplash> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Tooltip(
-                          message: tooltipCurriculumCovered,
-                          child: _RestartModuleProgressIndicator(
-                              widget.moduleProgress),
-                        ),
-                        const SizedBox(height: 4),
                         TextButton(
                           style: TextButton.styleFrom(
                             minimumSize: Size.zero,
@@ -1422,56 +1408,6 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
     'runtime_unavailable': 'Diese Sitzung nutzt die lokale Trainings-Runtime.',
   },
 };
-
-class _RestartModuleProgressIndicator extends StatelessWidget {
-  const _RestartModuleProgressIndicator(this.progress);
-
-  final RestartModuleProgress progress;
-
-  @override
-  Widget build(BuildContext context) {
-    final double progressRatio =
-        (progress.total > 0 ? (progress.completed / progress.total) : 0.0)
-            .clamp(0.0, 1.0);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildBar(
-          context,
-          ratio: progressRatio,
-          color: Theme.of(context).colorScheme.primary,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBar(BuildContext context,
-      {required double ratio, required Color color}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return Stack(
-            children: [
-              Container(
-                width: double.infinity,
-                height: 6,
-                color: Colors.grey.shade300,
-              ),
-              FractionallySizedBox(
-                widthFactor: ratio,
-                child: Container(
-                  height: 6,
-                  color: color,
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
 
 class NamingView extends StatelessWidget {
   const NamingView({
