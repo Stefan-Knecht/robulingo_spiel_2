@@ -250,7 +250,6 @@ class RestartSplash extends StatefulWidget {
     required this.viewCount,
     required this.onStart,
     required this.onSelectModule,
-    required this.onExportLogs,
     required this.selectedTrainingDepth,
     required this.onSelectTrainingDepth,
     required this.moduleProgress,
@@ -271,7 +270,6 @@ class RestartSplash extends StatefulWidget {
   final int viewCount;
   final VoidCallback onStart;
   final VoidCallback onSelectModule;
-  final Future<String> Function() onExportLogs;
   final TrainingDepthMode selectedTrainingDepth;
   final ValueChanged<TrainingDepthMode> onSelectTrainingDepth;
   final RestartModuleProgress moduleProgress;
@@ -698,7 +696,6 @@ class _RestartSplashState extends State<RestartSplash> {
                 moduleIconAsset: widget.moduleProgress.iconAsset,
                 changeModuleTooltip: tooltipChangeModule,
                 onClose: _closeMenu,
-                onExportLogs: widget.onExportLogs,
                 onOpenModuleSelection: () {
                   _closeMenu();
                   widget.onSelectModule();
@@ -759,7 +756,6 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
     required this.moduleIconAsset,
     required this.changeModuleTooltip,
     required this.onClose,
-    required this.onExportLogs,
     required this.onOpenModuleSelection,
     required this.onSelectTrainingDepth,
     this.onTargetLanguageChange,
@@ -772,7 +768,6 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
   final String moduleIconAsset;
   final String changeModuleTooltip;
   final VoidCallback onClose;
-  final Future<String> Function() onExportLogs;
   final VoidCallback onOpenModuleSelection;
   final ValueChanged<TrainingDepthMode> onSelectTrainingDepth;
   final ValueChanged<String>? onTargetLanguageChange;
@@ -785,7 +780,6 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
 
 class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
   double _speechRate = 1.0;
-  bool _exportingLogs = false;
 
   @override
   Widget build(BuildContext context) {
@@ -819,16 +813,6 @@ class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
                         ),
                       ),
                     ),
-                    _RestartIconMenuButton(
-                      icon: _exportingLogs
-                          ? Icons.hourglass_empty
-                          : Icons.file_download_outlined,
-                      tooltip: _restartT(l1, 'export_logs'),
-                      onPressed: _exportingLogs
-                          ? null
-                          : () => unawaited(_handleExportLogs(l1)),
-                    ),
-                    const SizedBox(width: 8),
                     TextButton(
                       onPressed: widget.onClose,
                       child: Text(_restartT(l1, 'close')),
@@ -977,26 +961,6 @@ class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
       ),
     );
   }
-
-  Future<void> _handleExportLogs(String languageCode) async {
-    if (_exportingLogs) return;
-    setState(() {
-      _exportingLogs = true;
-    });
-    String message;
-    try {
-      message = await widget.onExportLogs();
-    } catch (_) {
-      message = _restartT(languageCode, 'export_failed');
-    }
-    if (!mounted) return;
-    setState(() {
-      _exportingLogs = false;
-    });
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text(message)),
-    );
-  }
 }
 
 class _RestartLanguageDropdown extends StatelessWidget {
@@ -1029,34 +993,6 @@ class _RestartLanguageDropdown extends StatelessWidget {
           : (value) {
               if (value != null) onChanged!(value);
             },
-    );
-  }
-}
-
-class _RestartIconMenuButton extends StatelessWidget {
-  const _RestartIconMenuButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        style: IconButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: const Color(0xff2b2117),
-          side: const BorderSide(color: Color(0xffe5d7c4)),
-        ),
-      ),
     );
   }
 }

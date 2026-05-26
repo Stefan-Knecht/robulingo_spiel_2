@@ -441,18 +441,6 @@ class _BurgerMenuPanel extends StatelessWidget {
                         ),
                       ),
                     ),
-                    _IconMenuButton(
-                      icon: Icons.file_download_outlined,
-                      tooltip: _t(ui, 'export_debug'),
-                      onPressed: () {},
-                    ),
-                    const SizedBox(width: 8),
-                    _IconMenuButton(
-                      icon: Icons.description_outlined,
-                      tooltip: _t(ui, 'export_dialog'),
-                      onPressed: () {},
-                    ),
-                    const SizedBox(width: 8),
                     TextButton(
                       onPressed: onClose,
                       child: Text(_t(ui, 'close')),
@@ -599,34 +587,6 @@ class _LanguageDropdown extends StatelessWidget {
           : (value) {
               if (value != null) onChanged!(value);
             },
-    );
-  }
-}
-
-class _IconMenuButton extends StatelessWidget {
-  const _IconMenuButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        style: IconButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: const Color(0xff2b2117),
-          side: const BorderSide(color: Color(0xffe5d7c4)),
-        ),
-      ),
     );
   }
 }

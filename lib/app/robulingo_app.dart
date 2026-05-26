@@ -67,7 +67,6 @@ import 'package:robulingo_flutter/ui/realtalk_screen.dart';
 import 'package:robulingo_flutter/ui/session/session_widgets.dart';
 import 'package:robulingo_flutter/ui/start_curriculum_selector.dart';
 import 'package:robulingo_flutter/ui/training_calendar_panel.dart';
-import 'package:robulingo_flutter/util/download_text.dart';
 import 'package:robulingo_flutter/utils/platform_info.dart';
 import 'package:robulingo_flutter/utils/text_utils.dart';
 
@@ -4296,7 +4295,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           onNativeLanguageChange: _onModuleNativeLanguageChange,
           onStart: () => _handleResumeStartGesture('resume-start-arrow'),
           onSelectModule: _openModuleSelectorFromResume,
-          onExportLogs: _exportCombinedLogs,
           selectedTrainingDepth: trainingDepthMode,
           onSelectTrainingDepth: _selectTrainingDepthMode,
           moduleProgress: restartModuleProgress,
@@ -4672,44 +4670,6 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         ),
       ),
     );
-  }
-
-  Future<String> _exportCombinedLogs() async {
-    final protocolText = protocolLog.buildText().trimRight();
-    List<String> eventLines = const [];
-    try {
-      final storage = LogStorage();
-      eventLines = await storage.readLines();
-    } catch (_) {
-      eventLines = const [];
-    }
-    final now = DateTime.now();
-    String two(int value) => value < 10 ? '0$value' : '$value';
-    final stamp =
-        '${now.year}${two(now.month)}${two(now.day)}_${two(now.hour)}${two(now.minute)}${two(now.second)}';
-    final fileName =
-        kIsWeb ? 'DailyWords_logs.txt' : 'DailyWords_logs_$stamp.txt';
-    final buffer = StringBuffer()
-      ..writeln('# DailyWords Logs')
-      ..writeln('Exported: ${now.toIso8601String()}')
-      ..writeln()
-      ..writeln('## Dialog / Protocol')
-      ..writeln(protocolText.isEmpty ? 'No protocol entries.' : protocolText)
-      ..writeln()
-      ..writeln('## Event Log NDJSON');
-    if (eventLines.isEmpty) {
-      buffer.writeln('No event log entries.');
-    } else {
-      for (final line in eventLines) {
-        buffer.writeln(line);
-      }
-    }
-    if (kIsWeb) {
-      await downloadTextFile(filename: fileName, contents: buffer.toString());
-      return 'Download gestartet: $fileName';
-    }
-    final protocolResult = await protocolLog.export();
-    return '$protocolResult Event-Log-Eintraege: ${eventLines.length}.';
   }
 
   Future<void> _stopAllSessionAudioPlayers() async {
