@@ -248,14 +248,11 @@ class RestartSplash extends StatefulWidget {
     required this.wins,
     required this.rivalWins,
     required this.viewCount,
-    required this.onRestart,
     required this.onStart,
     required this.onSelectModule,
-    required this.onOpenHistory,
     required this.selectedTrainingDepth,
     required this.onSelectTrainingDepth,
     required this.moduleProgress,
-    required this.historyHasSupervisorInfo,
     required this.userId,
     required this.workerHost,
     required this.apiPrefix,
@@ -271,14 +268,11 @@ class RestartSplash extends StatefulWidget {
   final int wins;
   final int rivalWins;
   final int viewCount;
-  final VoidCallback onRestart;
   final VoidCallback onStart;
   final VoidCallback onSelectModule;
-  final VoidCallback onOpenHistory;
   final TrainingDepthMode selectedTrainingDepth;
   final ValueChanged<TrainingDepthMode> onSelectTrainingDepth;
   final RestartModuleProgress moduleProgress;
-  final bool historyHasSupervisorInfo;
   final String? userId;
   final String workerHost;
   final String apiPrefix;
@@ -369,44 +363,14 @@ class _RestartSplashState extends State<RestartSplash> {
       l1: widget.nativeLanguage,
       l2: widget.targetLanguage,
     );
-    final tooltipChooseTargetLanguage =
-        _resumeTooltipText('choose_target_language', tooltipLanguage);
     final tooltipChangeModule =
         _resumeTooltipText('change_module', tooltipLanguage);
     final tooltipStartLearning =
         _resumeTooltipText('start_learning', tooltipLanguage);
     final tooltipYou = _resumeTooltipText('you', tooltipLanguage);
     final tooltipYourRival = _resumeTooltipText('your_rival', tooltipLanguage);
-    final historyIconAsset = widget.historyHasSupervisorInfo
-        ? 'assets/icons/eye_red.webp'
-        : 'assets/icons/eye.webp';
     final startArrowAsset =
         _startArrowAssetForLastTraining(widget.fallbackDatesUtc);
-
-    Future<void> openDailyWordsProjectFromMenu() async {
-      final normalized = _normalizedLangCode(tooltipLanguage);
-      final supported = <String>{
-        'en',
-        'de',
-        'fr',
-        'es',
-        'it',
-        'ru',
-        'ar',
-        'tr',
-        'el',
-        'hi',
-        'ja',
-        'zh',
-      };
-      final uri = (normalized.isNotEmpty &&
-              normalized != 'en' &&
-              supported.contains(normalized))
-          ? Uri.https('www.dailywords-project.org', '/', {'lang': normalized})
-          : Uri.parse('https://www.dailywords-project.org/');
-      _cancelAutoProceed();
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
 
     Widget buildCalendarSection() {
       return Padding(
@@ -730,25 +694,11 @@ class _RestartSplashState extends State<RestartSplash> {
                 nativeLanguageCode: widget.nativeLanguage,
                 selectedTrainingDepth: widget.selectedTrainingDepth,
                 moduleIconAsset: widget.moduleProgress.iconAsset,
-                historyIconAsset: historyIconAsset,
-                chooseTargetLanguageTooltip: tooltipChooseTargetLanguage,
                 changeModuleTooltip: tooltipChangeModule,
                 onClose: _closeMenu,
-                onChooseTargetLanguage: () {
-                  _closeMenu();
-                  widget.onRestart();
-                },
                 onOpenModuleSelection: () {
                   _closeMenu();
                   widget.onSelectModule();
-                },
-                onOpenHistory: () {
-                  _closeMenu();
-                  widget.onOpenHistory();
-                },
-                onOpenDailyWordsProject: () {
-                  _closeMenu();
-                  unawaited(openDailyWordsProjectFromMenu());
                 },
                 onSelectTrainingDepth: widget.onSelectTrainingDepth,
                 onTargetLanguageChange: widget.onTargetLanguageChange,
@@ -804,14 +754,9 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
     this.nativeLanguageCode,
     required this.selectedTrainingDepth,
     required this.moduleIconAsset,
-    required this.historyIconAsset,
-    required this.chooseTargetLanguageTooltip,
     required this.changeModuleTooltip,
     required this.onClose,
-    required this.onChooseTargetLanguage,
     required this.onOpenModuleSelection,
-    required this.onOpenHistory,
-    required this.onOpenDailyWordsProject,
     required this.onSelectTrainingDepth,
     this.onTargetLanguageChange,
     this.onNativeLanguageChange,
@@ -821,14 +766,9 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
   final String? nativeLanguageCode;
   final TrainingDepthMode selectedTrainingDepth;
   final String moduleIconAsset;
-  final String historyIconAsset;
-  final String chooseTargetLanguageTooltip;
   final String changeModuleTooltip;
   final VoidCallback onClose;
-  final VoidCallback onChooseTargetLanguage;
   final VoidCallback onOpenModuleSelection;
-  final VoidCallback onOpenHistory;
-  final VoidCallback onOpenDailyWordsProject;
   final ValueChanged<TrainingDepthMode> onSelectTrainingDepth;
   final ValueChanged<String>? onTargetLanguageChange;
   final ValueChanged<String>? onNativeLanguageChange;
@@ -839,7 +779,6 @@ class _RestartBurgerMenuPanel extends StatefulWidget {
 }
 
 class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
-  String _inputLanguageMode = 'l2';
   double _speechRate = 1.0;
 
   @override
@@ -945,31 +884,6 @@ class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
-                Text(_restartT(l1, 'input'), style: _restartMenuLabelStyle),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  initialValue: _inputLanguageMode,
-                  decoration: _restartMenuInputDecoration(),
-                  items: [
-                    DropdownMenuItem(
-                      value: 'l2',
-                      child: Text(
-                        '${langFlags[l2] ?? ''} ${_restartT(l1, 'l2_direct')}',
-                      ),
-                    ),
-                    DropdownMenuItem(
-                      value: 'l1',
-                      child: Text(
-                        '${langFlags[l1] ?? ''} ${_restartT(l1, 'l1_to_l2')}',
-                      ),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() => _inputLanguageMode = value);
-                  },
-                ),
                 const SizedBox(height: 20),
                 _RestartMenuSectionTitle(_restartT(l1, 'training_depth')),
                 const SizedBox(height: 8),
@@ -1033,49 +947,6 @@ class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
                     if (value == null) return;
                     setState(() => _speechRate = value);
                   },
-                ),
-                const SizedBox(height: 20),
-                _RestartMenuSectionTitle(_restartT(l1, 'session')),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _RestartActionButton(
-                        label: _restartT(l1, 'history'),
-                        onPressed: widget.onOpenHistory,
-                        leading: Image.asset(
-                          widget.historyIconAsset,
-                          width: 22,
-                          height: 22,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _RestartActionButton(
-                        label: _restartT(l1, 'home'),
-                        onPressed: widget.onOpenDailyWordsProject,
-                        leading: Image.asset(
-                          'assets/icons/home.webp',
-                          width: 22,
-                          height: 22,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _RestartActionButton(
-                  label: widget.chooseTargetLanguageTooltip,
-                  onPressed: widget.onChooseTargetLanguage,
-                  leading: Image.asset(
-                    'assets/icons/toolbox.webp',
-                    width: 22,
-                    height: 22,
-                    fit: BoxFit.contain,
-                  ),
                 ),
                 const SizedBox(height: 20),
                 _RestartMenuSectionTitle(_restartT(l1, 'fallback')),
@@ -1406,6 +1277,221 @@ const Map<String, Map<String, String>> _restartLocalizedText = {
     'fallback': 'Fallback',
     'controlled': 'Kontrollierte Antwort',
     'runtime_unavailable': 'Diese Sitzung nutzt die lokale Trainings-Runtime.',
+  },
+  'fr': {
+    'options': 'Options',
+    'export_debug': 'Exporter le journal de debug',
+    'export_dialog': 'Exporter le journal du dialogue',
+    'close': 'Fermer',
+    'module': 'Module',
+    'module_selection': 'Choix du module',
+    'languages': 'Langues',
+    'training_depth': 'Profondeur d entrainement',
+    'default_learning': 'Apprentissage standard',
+    'deeper_learning': 'Apprentissage approfondi',
+    'tempo': 'Rythme',
+    'speech_rate': 'Vitesse de parole',
+    'rate_slow': 'Lent',
+    'rate_somewhat_slow': 'Un peu lent',
+    'rate_almost_normal': 'Presque normal',
+    'rate_normal': 'Normal',
+    'fallback': 'Fallback',
+    'controlled': 'Reponse controlee',
+    'runtime_unavailable':
+        'Cette session utilise le moteur local d entrainement.',
+  },
+  'es': {
+    'options': 'Opciones',
+    'export_debug': 'Exportar registro de depuracion',
+    'export_dialog': 'Exportar registro de dialogo',
+    'close': 'Cerrar',
+    'module': 'Modulo',
+    'module_selection': 'Seleccion de modulo',
+    'languages': 'Idiomas',
+    'training_depth': 'Profundidad de entrenamiento',
+    'default_learning': 'Aprendizaje estandar',
+    'deeper_learning': 'Aprendizaje profundo',
+    'tempo': 'Ritmo',
+    'speech_rate': 'Velocidad de habla',
+    'rate_slow': 'Lento',
+    'rate_somewhat_slow': 'Algo lento',
+    'rate_almost_normal': 'Casi normal',
+    'rate_normal': 'Normal',
+    'fallback': 'Fallback',
+    'controlled': 'Respuesta controlada',
+    'runtime_unavailable': 'Esta sesion usa el motor local de entrenamiento.',
+  },
+  'it': {
+    'options': 'Opzioni',
+    'export_debug': 'Esporta log di debug',
+    'export_dialog': 'Esporta log dialogo',
+    'close': 'Chiudi',
+    'module': 'Modulo',
+    'module_selection': 'Scelta modulo',
+    'languages': 'Lingue',
+    'training_depth': 'Profondita allenamento',
+    'default_learning': 'Apprendimento standard',
+    'deeper_learning': 'Apprendimento approfondito',
+    'tempo': 'Tempo',
+    'speech_rate': 'Velocita voce',
+    'rate_slow': 'Lento',
+    'rate_somewhat_slow': 'Abbastanza lento',
+    'rate_almost_normal': 'Quasi normale',
+    'rate_normal': 'Normale',
+    'fallback': 'Fallback',
+    'controlled': 'Risposta controllata',
+    'runtime_unavailable':
+        'Questa sessione usa il motore locale di allenamento.',
+  },
+  'el': {
+    'options': 'Epiloges',
+    'export_debug': 'Exagogi debug log',
+    'export_dialog': 'Exagogi dialog log',
+    'close': 'Kleisimo',
+    'module': 'Module',
+    'module_selection': 'Epilogi module',
+    'languages': 'Glosses',
+    'training_depth': 'Bathos ekpaidefsis',
+    'default_learning': 'Vasiki ekmathisi',
+    'deeper_learning': 'Pio vathia ekmathisi',
+    'tempo': 'Tempo',
+    'speech_rate': 'Tachytita omilias',
+    'rate_slow': 'Arga',
+    'rate_somewhat_slow': 'Ligo arga',
+    'rate_almost_normal': 'Schedon kanonika',
+    'rate_normal': 'Kanonika',
+    'fallback': 'Fallback',
+    'controlled': 'Elegchomeni apantisi',
+    'runtime_unavailable':
+        'Afti i synedria chrismopoiei tin topiki runtime ekpaidefsis.',
+  },
+  'ru': {
+    'options': 'Nastroiki',
+    'export_debug': 'Eksport debug zhurnala',
+    'export_dialog': 'Eksport dialoga',
+    'close': 'Zakryt',
+    'module': 'Modul',
+    'module_selection': 'Vybor modula',
+    'languages': 'Yazyki',
+    'training_depth': 'Glubina trenirovki',
+    'default_learning': 'Obychnoe obuchenie',
+    'deeper_learning': 'Glubokoe obuchenie',
+    'tempo': 'Temp',
+    'speech_rate': 'Skorost rechi',
+    'rate_slow': 'Medlenno',
+    'rate_somewhat_slow': 'Nemnogo medlenno',
+    'rate_almost_normal': 'Pochti normalno',
+    'rate_normal': 'Normalno',
+    'fallback': 'Fallback',
+    'controlled': 'Kontroliruemyi otvet',
+    'runtime_unavailable':
+        'Eta sessiya ispolzuet lokalnuyu trenirovochnuyu sredu.',
+  },
+  'tr': {
+    'options': 'Secenekler',
+    'export_debug': 'Debug kaydini disa aktar',
+    'export_dialog': 'Diyalog kaydini disa aktar',
+    'close': 'Kapat',
+    'module': 'Modul',
+    'module_selection': 'Modul secimi',
+    'languages': 'Diller',
+    'training_depth': 'Alistirma derinligi',
+    'default_learning': 'Standart ogrenme',
+    'deeper_learning': 'Derin ogrenme',
+    'tempo': 'Tempo',
+    'speech_rate': 'Konusma hizi',
+    'rate_slow': 'Yavas',
+    'rate_somewhat_slow': 'Biraz yavas',
+    'rate_almost_normal': 'Neredeyse normal',
+    'rate_normal': 'Normal',
+    'fallback': 'Fallback',
+    'controlled': 'Kontrollu yanit',
+    'runtime_unavailable':
+        'Bu oturum yerel alistirma calisma zamanini kullanir.',
+  },
+  'ar': {
+    'options': 'الخيارات',
+    'export_debug': 'تصدير سجل التصحيح',
+    'export_dialog': 'تصدير سجل الحوار',
+    'close': 'إغلاق',
+    'module': 'الوحدة',
+    'module_selection': 'اختيار الوحدة',
+    'languages': 'اللغات',
+    'training_depth': 'عمق التدريب',
+    'default_learning': 'تعلم عادي',
+    'deeper_learning': 'تعلم أعمق',
+    'tempo': 'السرعة',
+    'speech_rate': 'سرعة الكلام',
+    'rate_slow': 'بطيء',
+    'rate_somewhat_slow': 'بطيء قليلا',
+    'rate_almost_normal': 'شبه طبيعي',
+    'rate_normal': 'طبيعي',
+    'fallback': 'بديل',
+    'controlled': 'رد مضبوط',
+    'runtime_unavailable': 'تستخدم هذه الجلسة محرك التدريب المحلي.',
+  },
+  'zh': {
+    'options': '选项',
+    'export_debug': '导出调试日志',
+    'export_dialog': '导出对话日志',
+    'close': '关闭',
+    'module': '模块',
+    'module_selection': '模块选择',
+    'languages': '语言',
+    'training_depth': '训练深度',
+    'default_learning': '标准学习',
+    'deeper_learning': '深入学习',
+    'tempo': '速度',
+    'speech_rate': '语速',
+    'rate_slow': '慢',
+    'rate_somewhat_slow': '稍慢',
+    'rate_almost_normal': '接近正常',
+    'rate_normal': '正常',
+    'fallback': '备用',
+    'controlled': '受控回答',
+    'runtime_unavailable': '本次会话使用本地训练运行时。',
+  },
+  'ja': {
+    'options': 'オプション',
+    'export_debug': 'デバッグログを書き出す',
+    'export_dialog': '対話ログを書き出す',
+    'close': '閉じる',
+    'module': 'モジュール',
+    'module_selection': 'モジュール選択',
+    'languages': '言語',
+    'training_depth': '練習の深さ',
+    'default_learning': '標準学習',
+    'deeper_learning': '深い学習',
+    'tempo': 'テンポ',
+    'speech_rate': '発話速度',
+    'rate_slow': '遅い',
+    'rate_somewhat_slow': '少し遅い',
+    'rate_almost_normal': 'ほぼ普通',
+    'rate_normal': '普通',
+    'fallback': 'フォールバック',
+    'controlled': '制御された応答',
+    'runtime_unavailable': 'このセッションはローカル訓練ランタイムを使います。',
+  },
+  'hi': {
+    'options': 'विकल्प',
+    'export_debug': 'डिबग लॉग निर्यात करें',
+    'export_dialog': 'संवाद लॉग निर्यात करें',
+    'close': 'बंद करें',
+    'module': 'मॉड्यूल',
+    'module_selection': 'मॉड्यूल चयन',
+    'languages': 'भाषाएँ',
+    'training_depth': 'अभ्यास की गहराई',
+    'default_learning': 'सामान्य सीखना',
+    'deeper_learning': 'गहरा सीखना',
+    'tempo': 'गति',
+    'speech_rate': 'बोलने की गति',
+    'rate_slow': 'धीमा',
+    'rate_somewhat_slow': 'थोड़ा धीमा',
+    'rate_almost_normal': 'लगभग सामान्य',
+    'rate_normal': 'सामान्य',
+    'fallback': 'वैकल्पिक',
+    'controlled': 'नियंत्रित उत्तर',
+    'runtime_unavailable': 'यह सत्र स्थानीय प्रशिक्षण रनटाइम का उपयोग करता है।',
   },
 };
 
