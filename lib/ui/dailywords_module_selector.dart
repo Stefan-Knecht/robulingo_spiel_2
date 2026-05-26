@@ -441,9 +441,17 @@ class _BurgerMenuPanel extends StatelessWidget {
                         ),
                       ),
                     ),
-                    TextButton(
-                      onPressed: onClose,
-                      child: Text(_t(ui, 'close')),
+                    Tooltip(
+                      message: _t(ui, 'close'),
+                      child: IconButton(
+                        onPressed: onClose,
+                        icon: const Icon(Icons.close),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xff2b2117),
+                          side: const BorderSide(color: Color(0xffe5d7c4)),
+                        ),
+                      ),
                     ),
                   ],
                 ),

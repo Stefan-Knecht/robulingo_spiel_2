@@ -813,9 +813,17 @@ class _RestartBurgerMenuPanelState extends State<_RestartBurgerMenuPanel> {
                         ),
                       ),
                     ),
-                    TextButton(
-                      onPressed: widget.onClose,
-                      child: Text(_restartT(l1, 'close')),
+                    Tooltip(
+                      message: _restartT(l1, 'close'),
+                      child: IconButton(
+                        onPressed: widget.onClose,
+                        icon: const Icon(Icons.close),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xff2b2117),
+                          side: const BorderSide(color: Color(0xffe5d7c4)),
+                        ),
+                      ),
                     ),
                   ],
                 ),
