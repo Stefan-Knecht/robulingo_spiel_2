@@ -289,7 +289,7 @@ class RestartSplash extends StatefulWidget {
 }
 
 class _RestartSplashState extends State<RestartSplash> {
-  static const Duration _autoProceedDelay = Duration(seconds: 6);
+  static const Duration _autoProceedDelay = Duration(seconds: 5);
 
   bool _resumeFeedbackVisible = false;
   bool _menuOpen = false;
@@ -330,7 +330,7 @@ class _RestartSplashState extends State<RestartSplash> {
     _startTriggered = true;
     _autoProceedTimer?.cancel();
     _autoProceedTimer = null;
-    widget.onStart();
+    widget.onSelectModule();
   }
 
   void _handleAnyPointerDown(PointerDownEvent event) {

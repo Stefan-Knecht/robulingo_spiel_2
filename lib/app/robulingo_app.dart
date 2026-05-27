@@ -642,7 +642,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _initUserId();
     _historyPanelHasSupervisorInfo = historyPanelHasSupervisorInfo();
     unawaited(_restoreHistoryPanelDraft());
-    if (!_startDirectTrainingFromQuery()) {
+    if (!_startDirectTrainingFromQuery() && !_startCalendarFromQuery()) {
       _loadSavedOnboarding();
     }
     unawaited(_loadMountainThemeCycle());
@@ -1153,6 +1153,44 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       initialDownloadLimit: 2,
       ignoreSavedCursor: true,
     ));
+    return true;
+  }
+
+  bool _startCalendarFromQuery() {
+    final params = _launchQueryParameters();
+    final open = params['open']?.trim().toLowerCase();
+    final panel = params['panel']?.trim().toLowerCase();
+    final target = open?.isNotEmpty == true ? open : panel;
+    if (target != 'calendar' &&
+        target != 'resume' &&
+        target != 'restart' &&
+        target != 'module-start') {
+      return false;
+    }
+
+    final requestedLang = _normalizeSupportedLanguageCode(params['l2']) ??
+        _normalizeSupportedLanguageCode(params['lang']) ??
+        _normalizeSupportedLanguageCode(params['locale']) ??
+        lang;
+    final requestedNativeLang =
+        _normalizeSupportedLanguageCode(params['l1']) ?? requestedLang;
+    final requestedStart =
+        _directStartCurriculumFromQuery(params) ?? defaultStartCurriculum;
+
+    lang = requestedLang;
+    nativeLang = requestedNativeLang;
+    activeStartCurriculumKey = requestedStart;
+    awaitingLang = false;
+    awaitingStart = false;
+    awaitingNative = false;
+    showRestartSplash = true;
+    loading = false;
+    error = null;
+    lastModuleMode ??= DailywordsModuleMode.training;
+    lastModuleRowId ??= _moduleRowIdForStart(requestedStart);
+    unawaited(_loadHintPack());
+    unawaited(_updateRestartModuleProgress());
+    unawaited(_updateDailywordsModuleProgress());
     return true;
   }
 
@@ -4250,6 +4288,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
                     onTargetLanguageChange: _onModuleTargetLanguageChange,
                     onNativeLanguageChange: _onModuleNativeLanguageChange,
                     progressByStartKey: dailywordsModuleProgressByStartKey,
+                    autoProceedDelay: _openingPanelAutoProceedDelay,
                     onSelect: (choice) =>
                         unawaited(_onSelectDailywordsModule(choice)),
                   )
