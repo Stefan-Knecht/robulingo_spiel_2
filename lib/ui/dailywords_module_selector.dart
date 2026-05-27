@@ -1515,7 +1515,7 @@ const List<_DailywordsModuleRow> _moduleRows = [
     id: 'cafe',
     sceneAsset: 'assets/icons/module_cafe.webp',
     startKey: 'start_curriculum_realtalk_cafe.json',
-    dialogSceneId: 'cafe',
+    dialogSceneId: 'robo_cafe',
   ),
   _DailywordsModuleRow(
     id: 'peter',
