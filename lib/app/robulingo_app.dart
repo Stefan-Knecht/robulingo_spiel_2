@@ -30,6 +30,7 @@ import 'package:robulingo_flutter/logic/item_stats.dart';
 import 'package:robulingo_flutter/logic/hexagon_controller.dart';
 import 'package:robulingo_flutter/logic/ladder_controller.dart'
     show MoveEvent, MoveKind;
+import 'package:robulingo_flutter/logic/local_progress_store.dart';
 import 'package:robulingo_flutter/logic/log_storage.dart';
 import 'package:robulingo_flutter/logic/naming_controller.dart';
 import 'package:robulingo_flutter/logic/onboarding_store.dart';
@@ -316,6 +317,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   final AudioPlayer namingBeepPlayer2 = AudioPlayer();
   final OnboardingStore onboardingStore = OnboardingStore();
   final SessionCacheStore sessionCacheStore = SessionCacheStore();
+  final LocalProgressStore localProgressStore = LocalProgressStore();
   final MountainThemeCycleStore mountainThemeCycleStore =
       MountainThemeCycleStore();
   final UserDeltaStore userDeltaStore = UserDeltaStore();
@@ -487,6 +489,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   bool _historyPanelOpenFromQuery = false;
   bool _historyPanelOpenScheduledFromQuery = false;
   bool _historyPanelQueryDialogClosed = false;
+  bool _directTrainingRequestedFromQuery = false;
+  final Set<String> _directTrainingScreenLogs = <String>{};
   final FocusNode _keyboardFocusNode = FocusNode(debugLabel: 'AppKeyboard');
   bool _micControllerDisposed = false;
   bool _updateCheckStarted = false;
@@ -1046,6 +1050,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _loadSavedOnboarding() async {
+    if (_isDailyWordsDirectExecutionMode) {
+      _logDirectTrainingState('skip_saved_onboarding');
+      return;
+    }
     final saved = await onboardingStore.load();
     if (!mounted || saved == null) return;
     setState(() {
@@ -1079,10 +1087,16 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   }
 
   Future<void> _loadResumeStateFallback() async {
+    if (_isDailyWordsDirectExecutionMode) {
+      _logDirectTrainingState('skip_resume_fallback');
+      return;
+    }
     final uid = userId;
     if (uid == null || uid.isEmpty) return;
     final state = await resumeStateController.fetchAndSet(uid);
-    if (state == null || state.entries.isEmpty) return;
+    if (state == null) return;
+    await _applyRemoteResumePreferences(state, _launchQueryParameters());
+    if (state.entries.isEmpty) return;
     final latest = state.mostRecentEntry();
     if (latest == null) return;
     if (!mounted) return;
@@ -1110,17 +1124,76 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(_updateRestartModuleProgress());
   }
 
+  Future<void> _applyRemoteResumePreferences(
+    ResumeState state,
+    Map<String, String> params,
+  ) async {
+    if (activeFlavor.id != 'dailywords' || !mounted) return;
+    final hasExplicitL2 =
+        _normalizeSupportedLanguageCode(params['l2']) != null ||
+            _normalizeSupportedLanguageCode(params['l2_locale']) != null ||
+            _normalizeSupportedLanguageCode(params['locale']) != null;
+    final hasExplicitL1 =
+        _normalizeSupportedLanguageCode(params['l1']) != null ||
+            _normalizeSupportedLanguageCode(params['l1_locale']) != null;
+    final hasExplicitStart = _directStartCurriculumFromQuery(params) != null;
+    if (hasExplicitL1 && hasExplicitL2 && hasExplicitStart) return;
+
+    final latest = state.mostRecentEntry();
+    final remoteL2 = _normalizeSupportedLanguageCode(state.lastLang) ??
+        _normalizeSupportedLanguageCode(latest?.lang);
+    final remoteL1 = _normalizeSupportedLanguageCode(state.lastNativeLang) ??
+        _normalizeSupportedLanguageCode(latest?.nativeLang);
+    final rawRemoteStart =
+        state.lastStartKey ?? latest?.startKey ?? activeStartCurriculumKey;
+    final remoteStart =
+        rawRemoteStart == null ? null : sanitizeStartCurriculum(rawRemoteStart);
+    final remoteModuleMode =
+        _dailywordsModuleModeFromName(state.lastModuleMode);
+    final remoteModuleRow = state.lastModuleRowId?.trim();
+
+    if (remoteL2 == null && remoteL1 == null && remoteStart == null) return;
+    setState(() {
+      if (!hasExplicitL2 && remoteL2 != null) {
+        lang = remoteL2;
+      }
+      if (!hasExplicitL1 && remoteL1 != null) {
+        nativeLang = remoteL1;
+      }
+      if (!hasExplicitStart && remoteStart != null) {
+        activeStartCurriculumKey = remoteStart;
+      }
+      if (remoteModuleRow != null && remoteModuleRow.isNotEmpty) {
+        lastModuleRowId = remoteModuleRow;
+      }
+      if (remoteModuleMode != null) {
+        lastModuleMode = remoteModuleMode;
+      }
+    });
+    _saveOnboardingSnapshot(startKey: activeStartCurriculumKey);
+    unawaited(_loadHintPack());
+    unawaited(_updateRestartModuleProgress());
+    unawaited(_updateDailywordsModuleProgress());
+  }
+
   bool _startDirectTrainingFromQuery() {
     final params = _launchQueryParameters();
     final directRequested = params['direct'] == '1' ||
         params['skip_resume'] == '1' ||
         params['resume'] == '0' ||
         params['mode']?.trim().toLowerCase() == '2afc';
-    if (!directRequested) return false;
+    if (!directRequested) {
+      _logDirectTrainingState('not_requested', params: params);
+      return false;
+    }
 
     final requestedStart = _directStartCurriculumFromQuery(params);
-    if (requestedStart == null) return false;
+    if (requestedStart == null) {
+      _logDirectTrainingState('missing_start', params: params);
+      return false;
+    }
 
+    _directTrainingRequestedFromQuery = true;
     final requestedLang = _normalizeSupportedLanguageCode(params['l2']) ??
         _normalizeSupportedLanguageCode(params['lang']) ??
         _normalizeSupportedLanguageCode(params['locale']) ??
@@ -1128,6 +1201,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final requestedNativeLang =
         _normalizeSupportedLanguageCode(params['l1']) ?? requestedLang;
     final requestedTrainingDepth = _trainingDepthModeFromQuery(params);
+    _logDirectTrainingState(
+      'accepted',
+      params: params,
+      startKey: requestedStart,
+      targetLang: requestedLang,
+      nativeLang: requestedNativeLang,
+    );
 
     lang = requestedLang;
     nativeLang = requestedNativeLang;
@@ -1154,6 +1234,62 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       ignoreSavedCursor: true,
     ));
     return true;
+  }
+
+  bool get _isDailyWordsDirectExecutionMode =>
+      activeFlavor.id == 'dailywords' && _directTrainingRequestedFromQuery;
+
+  void _clearDirectTrainingExecutionMode(String reason) {
+    if (!_directTrainingRequestedFromQuery) return;
+    debugPrint('[direct-training][$reason] cleared');
+    _directTrainingRequestedFromQuery = false;
+    _directTrainingScreenLogs.clear();
+  }
+
+  void _logDirectTrainingState(
+    String event, {
+    Map<String, String>? params,
+    String? startKey,
+    String? targetLang,
+    String? nativeLang,
+    String? screen,
+  }) {
+    final key = [
+      event,
+      screen ?? '',
+      startKey ?? '',
+      targetLang ?? '',
+      nativeLang ?? '',
+    ].join('|');
+    if (!_directTrainingScreenLogs.add(key)) return;
+    debugPrint(
+      '[direct-training][$event] '
+      'flavor=${activeFlavor.id} '
+      'screen=${screen ?? '-'} '
+      'start=${startKey ?? activeStartCurriculumKey ?? '-'} '
+      'l2=${targetLang ?? lang} '
+      'l1=${nativeLang ?? this.nativeLang ?? '-'} '
+      'awaitingLang=$awaitingLang '
+      'awaitingStart=$awaitingStart '
+      'awaitingNative=$awaitingNative '
+      'showRestartSplash=$showRestartSplash '
+      'loading=$loading '
+      'error=${error ?? '-'} '
+      'params=${params ?? const <String, String>{}}',
+    );
+  }
+
+  Widget _buildDirectTrainingExecutionGate(String screen) {
+    _logDirectTrainingState('render_gate', screen: screen);
+    return _wrapWithKeyboardShortcuts(
+      Scaffold(
+        body: SafeArea(
+          child: error != null
+              ? Center(child: Text('Fehler: $error'))
+              : const Center(child: CircularProgressIndicator()),
+        ),
+      ),
+    );
   }
 
   bool _startCalendarFromQuery() {
@@ -1191,7 +1327,47 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(_loadHintPack());
     unawaited(_updateRestartModuleProgress());
     unawaited(_updateDailywordsModuleProgress());
+    unawaited(_applySavedCalendarLanguages(params));
     return true;
+  }
+
+  Future<void> _applySavedCalendarLanguages(Map<String, String> params) async {
+    if (activeFlavor.id != 'dailywords') return;
+    final hasExplicitL2 =
+        _normalizeSupportedLanguageCode(params['l2']) != null ||
+            _normalizeSupportedLanguageCode(params['l2_locale']) != null ||
+            _normalizeSupportedLanguageCode(params['locale']) != null;
+    final hasExplicitL1 =
+        _normalizeSupportedLanguageCode(params['l1']) != null ||
+            _normalizeSupportedLanguageCode(params['l1_locale']) != null;
+    final hasExplicitStart = _directStartCurriculumFromQuery(params) != null;
+    if (hasExplicitL1 && hasExplicitL2) return;
+
+    final saved = await onboardingStore.load();
+    if (!mounted || saved == null) return;
+    if (resumeStateController.state?.hasLanguagePreferences == true) return;
+    final savedL2 = _normalizeSupportedLanguageCode(saved.lang);
+    final savedL1 = _normalizeSupportedLanguageCode(saved.nativeLang);
+    if (savedL2 == null && savedL1 == null) return;
+
+    setState(() {
+      if (!hasExplicitL2 && savedL2 != null) {
+        lang = savedL2;
+      }
+      if (!hasExplicitL1) {
+        nativeLang = savedL1 ?? nativeLang;
+      }
+      if (!hasExplicitStart &&
+          (activeStartCurriculumKey == null ||
+              activeStartCurriculumKey == defaultStartCurriculum)) {
+        activeStartCurriculumKey = sanitizeStartCurriculum(saved.startKey);
+      }
+      lastModuleRowId ??= saved.lastModuleRowId;
+      lastModuleMode ??= _dailywordsModuleModeFromName(saved.lastModuleMode);
+    });
+    unawaited(_loadHintPack());
+    unawaited(_updateRestartModuleProgress());
+    unawaited(_updateDailywordsModuleProgress());
   }
 
   TrainingDepthMode? _trainingDepthModeFromQuery(Map<String, String> params) {
@@ -1351,6 +1527,12 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await onboardingStore.clear();
     await sessionCacheStore.clear();
     if (userId != null && userId!.isNotEmpty) {
+      await localProgressStore.clear(
+        userId: userId!,
+        startKey: sanitizeStartCurriculum(
+          activeStartCurriculumKey ?? defaultStartCurriculum,
+        ),
+      );
       if (enableRemoteUserDelta) {
         final resetDelta = UserCurriculumDelta(cursor: -1);
         unawaited(userDeltaStore.save(userId!, resetDelta));
@@ -1398,7 +1580,9 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await _loadInitial();
   }
 
-  void _openModuleSelectorFromResume() {
+  Future<void> _openModuleSelectorFromResume() async {
+    await _refreshRemoteResumePreferencesForModuleSelection();
+    if (!mounted) return;
     setState(() {
       showRestartSplash = false;
       awaitingLang = false;
@@ -1410,6 +1594,17 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       pickListError = null;
     });
     unawaited(_updateDailywordsModuleProgress());
+  }
+
+  Future<void> _refreshRemoteResumePreferencesForModuleSelection() async {
+    if (activeFlavor.id != 'dailywords' || _isDailyWordsDirectExecutionMode) {
+      return;
+    }
+    final uid = userId;
+    if (uid == null || uid.isEmpty) return;
+    final state = await resumeStateController.fetchAndSet(uid);
+    if (state == null) return;
+    await _applyRemoteResumePreferences(state, _launchQueryParameters());
   }
 
   Future<void> _updateRestartModuleProgress() async {
@@ -1466,19 +1661,60 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         ? await refillerStore.load(userId: uid, startKey: startKey, lang: lang)
         : RefillerState(queue: const []);
 
-    final cursorIndex = ignoreSavedCursor
-        ? (fallbackCursorIndex ?? 0)
-        : await resolveCursorIndex(
-              startKey: startKey,
-              lang: lang,
-              curriculumUuids: curriculumUuids,
-              userId: userId,
-              nativeLang: nativeLang,
-              deltaCursor: userDelta?.cursor,
-              resumeStateController: resumeStateController,
-            ) ??
-            fallbackCursorIndex ??
-            0;
+    final localProgressResolution = ignoreSavedCursor
+        ? null
+        : await _localProgressCursorForStartKey(
+            startKey: startKey,
+            curriculumUuids: curriculumUuids,
+          );
+    final savedCursorResolution = ignoreSavedCursor
+        ? null
+        : await resolveCursor(
+            startKey: startKey,
+            lang: lang,
+            curriculumUuids: curriculumUuids,
+            userId: userId,
+            nativeLang: nativeLang,
+            deltaCursor: userDelta?.cursor,
+            resumeStateController: resumeStateController,
+          );
+    final durableResolution =
+        _newerCursorResolution(localProgressResolution, savedCursorResolution);
+    final sessionCacheResolution = ignoreSavedCursor
+        ? null
+        : await _sessionCacheCursorForStartKey(
+            startKey: startKey,
+            curriculumUuids: curriculumUuids,
+          );
+    final fallbackResolution = fallbackCursorIndex == null
+        ? null
+        : CursorResolution(
+            cursor: fallbackCursorIndex,
+            source: 'explicit_fallback',
+            uuid: fallbackCursorIndex >= 0 &&
+                    fallbackCursorIndex < curriculumUuids.length
+                ? curriculumUuids[fallbackCursorIndex]
+                : null,
+          );
+    final zeroResolution = CursorResolution(
+      cursor: 0,
+      source: 'start_at_zero',
+      uuid: curriculumUuids.first,
+    );
+    final chosenResolution = ignoreSavedCursor
+        ? (fallbackResolution ?? zeroResolution)
+        : (durableResolution ??
+            fallbackResolution ??
+            sessionCacheResolution ??
+            zeroResolution);
+    final cursorIndex = chosenResolution.cursor;
+    _logResumeDecision(
+      startKey: startKey,
+      resolution: chosenResolution,
+      ignoredSavedCursor: ignoreSavedCursor,
+      fallbackUsed: fallbackResolution != null &&
+          chosenResolution.source == fallbackResolution.source,
+    );
 
     final startIndex = max(0, cursorIndex - 5);
     presentationPolicy.initializeComprehensionBlock(
@@ -1496,12 +1732,112 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await _applySlot(slot, advanceToken: false);
   }
 
+  CursorResolution? _newerCursorResolution(
+    CursorResolution? first,
+    CursorResolution? second,
+  ) {
+    if (first == null) return second;
+    if (second == null) return first;
+    final firstUpdated = first.updatedAt;
+    final secondUpdated = second.updatedAt;
+    if (firstUpdated != null && secondUpdated != null) {
+      return firstUpdated.isAfter(secondUpdated) ? first : second;
+    }
+    if (firstUpdated != null) return first;
+    if (secondUpdated != null) return second;
+    return first.cursor >= second.cursor ? first : second;
+  }
+
+  Future<CursorResolution?> _localProgressCursorForStartKey({
+    required String startKey,
+    required List<String> curriculumUuids,
+  }) async {
+    final uid = userId;
+    if (uid == null || uid.isEmpty) return null;
+    final snapshot = await localProgressStore.load(
+      userId: uid,
+      startKey: sanitizeStartCurriculum(startKey),
+    );
+    if (snapshot == null) return null;
+    if (snapshot.cursor < 0 || snapshot.cursor >= curriculumUuids.length) {
+      return null;
+    }
+    final uuid = curriculumUuids[snapshot.cursor];
+    if (snapshot.uuid.isNotEmpty && snapshot.uuid != uuid) {
+      final idx = curriculumUuids.indexOf(snapshot.uuid);
+      if (idx >= 0) {
+        return CursorResolution(
+          cursor: idx,
+          source: 'local_next_cursor',
+          uuid: snapshot.uuid,
+          updatedAt: snapshot.updatedAt,
+        );
+      }
+    }
+    return CursorResolution(
+      cursor: snapshot.cursor,
+      source: 'local_next_cursor',
+      uuid: uuid,
+      updatedAt: snapshot.updatedAt,
+    );
+  }
+
+  Future<CursorResolution?> _sessionCacheCursorForStartKey({
+    required String startKey,
+    required List<String> curriculumUuids,
+  }) async {
+    final restored = await readSessionCache(sessionCacheStore);
+    if (restored == null) return null;
+    if (sanitizeStartCurriculum(restored.startKey) !=
+        sanitizeStartCurriculum(startKey)) {
+      return null;
+    }
+    final savedUuid = restored.savedUuid;
+    if (savedUuid == null || savedUuid.isEmpty) return null;
+    final idx = curriculumUuids.indexOf(savedUuid);
+    return idx >= 0
+        ? CursorResolution(
+            cursor: idx,
+            source: 'session_cache',
+            uuid: savedUuid,
+          )
+        : null;
+  }
+
+  void _logResumeDecision({
+    required String startKey,
+    required CursorResolution resolution,
+    required bool ignoredSavedCursor,
+    required bool fallbackUsed,
+  }) {
+    final uuid = resolution.uuid ??
+        (resolution.cursor >= 0 && resolution.cursor < curriculum.length
+            ? curriculum[resolution.cursor].uuid
+            : null);
+    debugPrint(
+      '[resume-decision] start=$startKey cursor=${resolution.cursor} '
+      'uuid=${uuid ?? '-'} source=${resolution.source} '
+      'updatedAt=${resolution.updatedAt?.toUtc().toIso8601String() ?? '-'} '
+      'ignoredSavedCursor=$ignoredSavedCursor fallbackUsed=$fallbackUsed',
+    );
+    if (!loggerReady) return;
+    unawaited(logger.log('resume_decision', {
+      'start_key': startKey,
+      'cursor': resolution.cursor,
+      if (uuid != null) 'uuid': uuid,
+      'source': resolution.source,
+      if (resolution.updatedAt != null)
+        'updated_at': resolution.updatedAt!.toUtc().toIso8601String(),
+      'ignored_saved_cursor': ignoredSavedCursor,
+      'fallback_used': fallbackUsed,
+    }));
+  }
+
   Future<void> _dismissTapPrimer({required bool primeAudio}) async {
     if (!_showTapPrimerPanel) return;
     final token = currentTrialToken;
-    if (primeAudio) {
-      await _primeAudioForUserGestureAsync('tap-primer');
-    }
+    await _primeAudioForUserGestureAsync(
+        primeAudio ? 'tap-primer' : 'tap-primer-auto');
     if (!mounted || token != currentTrialToken) return;
     setState(() {
       _showTapPrimerPanel = false;
@@ -1943,7 +2279,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     _resumeEmojiAckPending = true;
     _resetResumeEmojiAckRetryState();
     if (activeFlavor.id == 'dailywords') {
-      _openModuleSelectorFromResume();
+      unawaited(_openModuleSelectorFromResume());
       return;
     }
     unawaited(_startFromSplash());
@@ -1962,6 +2298,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintPack = null;
       hintRevealedUuid = null;
     });
+    _saveOnboardingSnapshot();
+    unawaited(_pushResumeLanguagePreferences());
     unawaited(_updateDailywordsModuleProgress());
   }
 
@@ -1972,12 +2310,15 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     });
 
     if (choice.mode == DailywordsModuleMode.training) {
+      await _primeAudioForUserGestureAsync('dailywords-module-training');
+      unawaited(_pushResumeLanguagePreferences());
       final startKey = choice.startKey;
       if (startKey == null || startKey.trim().isEmpty) return;
       await _onSelectStart(startKey);
       return;
     }
 
+    unawaited(_pushResumeLanguagePreferences());
     final uri = _buildDailywordsRealTalkUri(choice);
     if (uri != null) {
       _saveOnboardingSnapshot();
@@ -2024,8 +2365,14 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     final sceneId = choice.dialogSceneId?.trim();
     if (sceneId != null && sceneId.isNotEmpty) {
       queryParameters['module'] = sceneId;
+      queryParameters['scene'] = sceneId;
     }
     queryParameters['topic'] = choice.rowId;
+    final uid = userId?.trim();
+    if (uid != null && uid.isNotEmpty) {
+      queryParameters['user_id'] = uid;
+      queryParameters['learner_id'] = uid;
+    }
     if (choice.startKey?.trim().isNotEmpty == true) {
       queryParameters['start'] = choice.startKey!.trim();
     }
@@ -2039,6 +2386,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
   Future<void> _onSelectStart(String fileName) async {
     final selectedStart = sanitizeStartCurriculum(fileName);
     if (activeFlavor.id == 'dailywords') {
+      await _primeAudioForUserGestureAsync('dailywords-start-training');
       nativeSelectTimer?.cancel();
       final selectedNativeLang =
           nativeLang?.trim().isNotEmpty == true ? nativeLang : lang;
@@ -2049,6 +2397,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         activeStartCurriculumKey = selectedStart;
       });
       unawaited(_loadHintPack(forceRefresh: true));
+      _saveOnboardingSnapshot(startKey: selectedStart);
+      unawaited(_pushResumeLanguagePreferences());
       await _loadInitial(
         startKey: selectedStart,
         showTapPrimer: true,
@@ -2077,6 +2427,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintPack = null;
       hintRevealedUuid = null;
     });
+    _saveOnboardingSnapshot();
+    unawaited(_pushResumeLanguagePreferences());
     unawaited(_updateDailywordsModuleProgress());
   }
 
@@ -2088,6 +2440,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintPack = null;
       hintRevealedUuid = null;
     });
+    _saveOnboardingSnapshot();
+    unawaited(_pushResumeLanguagePreferences());
     unawaited(_updateDailywordsModuleProgress());
   }
 
@@ -2317,6 +2671,8 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       hintRevealedUuid = null;
     });
     unawaited(_loadHintPack(forceRefresh: true));
+    _saveOnboardingSnapshot(startKey: sanitizeStartCurriculum(startKey));
+    unawaited(_pushResumeLanguagePreferences());
     await _loadInitial(
       startKey: sanitizeStartCurriculum(startKey),
       showTapPrimer: true,
@@ -2553,6 +2909,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         userId: userId!, startKey: startKey);
     delta ??= await userDeltaStore.load(userId!);
     if (resetCursorOnNextLoad) {
+      await localProgressStore.clear(
+        userId: userId!,
+        startKey: sanitizeStartCurriculum(startKey),
+      );
       final resetDelta = (delta ?? UserCurriculumDelta()).withCursor(-1);
       userDelta = resetDelta;
       curriculum = resetDelta.applyTo(curriculum);
@@ -2637,7 +2997,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       if (presentationPolicy.isCurrentSlotFromRefiller) return;
       uuid = currentTrial?.target.uuid ?? currentSlot.targetUuid;
     }
-    if (uuid == null || uuid.isEmpty) return;
+    if (uuid.isEmpty) return;
     final cursor = curriculum.indexWhere((e) => e.uuid == uuid);
     if (cursor < 0) return;
     protocolLog.addNote('Cursor: startKey=$startKey cursor=$cursor uuid=$uuid');
@@ -2647,6 +3007,36 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     unawaited(userDeltaStore.save(userId!, nextDelta));
     unawaited(userCurriculumService.pushDelta(
         userId: userId!, startKey: startKey, delta: nextDelta));
+  }
+
+  Future<void> _persistNextCursorAfterAnswer(
+    String answeredUuid, {
+    required String source,
+  }) async {
+    final uid = userId;
+    if (uid == null || uid.isEmpty || curriculum.isEmpty) return;
+    if (answeredUuid.isEmpty) return;
+    final currentIdx = curriculum.indexWhere((e) => e.uuid == answeredUuid);
+    if (currentIdx < 0) return;
+    final nextIdx = (currentIdx + 1) % curriculum.length;
+    final nextUuid = curriculum[nextIdx].uuid;
+    final startKey = sanitizeStartCurriculum(
+      activeStartCurriculumKey ?? defaultStartCurriculum,
+    );
+    await localProgressStore.save(
+      LocalProgressSnapshot(
+        userId: uid,
+        startKey: startKey,
+        cursor: nextIdx,
+        uuid: nextUuid,
+        updatedAt: DateTime.now().toUtc(),
+        source: source,
+      ),
+    );
+    debugPrint(
+      '[progress][local-next] start=$startKey current=$currentIdx:$answeredUuid '
+      'next=$nextIdx:$nextUuid source=$source',
+    );
   }
 
   Future<void> _persistRefillerQueue() async {
@@ -2668,7 +3058,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       if (presentationPolicy.isCurrentSlotFromRefiller) return null;
       uuid = currentTrial?.target.uuid ?? currentSlot.targetUuid;
     }
-    if (uuid == null || uuid.isEmpty) return null;
+    if (uuid.isEmpty) return null;
     final idx = curriculum.indexWhere((e) => e.uuid == uuid);
     if (idx < 0) return null;
     return idx;
@@ -2707,6 +3097,27 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await resumeStateController.pushEntry(
       userId: uid,
       entry: entry,
+      fetchExisting: fetchExistingResume,
+    );
+  }
+
+  Future<void> _pushResumeLanguagePreferences({
+    bool fetchExistingResume = true,
+  }) async {
+    if (activeFlavor.id != 'dailywords') return;
+    final uid = userId;
+    if (uid == null || uid.isEmpty) return;
+    final l2 = _normalizeSupportedLanguageCode(lang);
+    if (l2 == null) return;
+    final l1 = _normalizeSupportedLanguageCode(nativeLang) ?? l2;
+    final startKey = activeStartCurriculumKey ?? defaultStartCurriculum;
+    await resumeStateController.pushLanguagePreferences(
+      userId: uid,
+      lang: l2,
+      nativeLang: l1,
+      startKey: startKey,
+      moduleRowId: lastModuleRowId,
+      moduleMode: lastModuleMode?.name,
       fetchExisting: fetchExistingResume,
     );
   }
@@ -3727,6 +4138,10 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     );
     _lastAnsweredCursorUuid = uuid;
     _lastNonRefillerCursorUuid = uuid;
+    await _persistNextCursorAfterAnswer(
+      uuid,
+      source: 'naming_answer',
+    );
     if (loggerReady) {
       unawaited(logger.log('naming_result',
           {'lang': lang, 'uuid': uuid, 'correct': wasCorrect}));
@@ -3930,6 +4345,13 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       lastSelectionIsLeft = choseLeft;
       pendingNextSlot = decision.nextSlot;
     });
+    if (!mounted || currentEpoch != selectionEpoch) return;
+    if (!isRefiller) {
+      await _persistNextCursorAfterAnswer(
+        trial.target.uuid,
+        source: 'comprehension_answer',
+      );
+    }
     if (!mounted || currentEpoch != selectionEpoch) return;
     _advanceToNext(currentEpoch, token: token);
   }
@@ -4227,6 +4649,23 @@ class _RobuLingoAppState extends State<RobuLingoApp>
         ),
       );
     }
+    if (_isDailyWordsDirectExecutionMode &&
+        (awaitingLang ||
+            awaitingStart ||
+            awaitingNative ||
+            pickFlowActive ||
+            showRestartSplash)) {
+      final screen = awaitingLang
+          ? 'language_selector'
+          : awaitingStart
+              ? 'module_selector'
+              : awaitingNative
+                  ? 'native_language_selector'
+                  : pickFlowActive
+                      ? 'pick_flow'
+                      : 'resume_splash';
+      return _buildDirectTrainingExecutionGate(screen);
+    }
     if (awaitingLang) {
       final landingLanguage = _landingLanguageFromQuery();
       return _wrapWithKeyboardShortcuts(
@@ -4333,7 +4772,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
           onTargetLanguageChange: _onModuleTargetLanguageChange,
           onNativeLanguageChange: _onModuleNativeLanguageChange,
           onStart: () => _handleResumeStartGesture('resume-start-arrow'),
-          onSelectModule: _openModuleSelectorFromResume,
+          onSelectModule: () => unawaited(_openModuleSelectorFromResume()),
           selectedTrainingDepth: trainingDepthMode,
           onSelectTrainingDepth: _selectTrainingDepthMode,
           moduleProgress: restartModuleProgress,
@@ -4794,6 +5233,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     await _stopAllSessionAudioPlayers();
     await _flushExitLogsForDailyWords();
     setState(() {
+      _clearDirectTrainingExecutionMode('exit_to_resume_panel');
       _clearMountainCelebrationState();
       _invalidateActiveSessionFlow();
       lang = resumeLang;
@@ -4828,6 +5268,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
       unawaited(logger.endSession());
     }
     setState(() {
+      _clearDirectTrainingExecutionMode('exit_to_opening_panel');
       _clearMountainCelebrationState();
       _invalidateActiveSessionFlow();
       awaitingLang = true;
@@ -4880,6 +5321,7 @@ class _RobuLingoAppState extends State<RobuLingoApp>
     }
     if (!mounted) return;
     setState(() {
+      _clearDirectTrainingExecutionMode('return_to_module_selection');
       _clearMountainCelebrationState();
       _invalidateActiveSessionFlow();
       awaitingLang = false;

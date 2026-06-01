@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:robulingo_flutter/data/resume_state_service.dart';
+import 'package:robulingo_flutter/data/supervisor_dashboard_service.dart';
 import 'package:robulingo_flutter/data/supervisor_link_service.dart';
 import 'package:robulingo_flutter/logic/history_hint_loader.dart';
 import 'package:robulingo_flutter/ui/history_panel.dart';
@@ -78,6 +79,7 @@ void main() {
       bool hasPattern(String pattern) =>
           flutterErrors.any((e) => e.exceptionAsString().contains(pattern));
 
+      FlutterError.onError = oldOnError;
       expect(
         hasPattern('TextEditingController was used after being disposed'),
         isFalse,
@@ -110,6 +112,11 @@ Widget _buildHostApp({required HistoryHintLoader hintLoader}) {
     apiPrefix: '/api',
     client: mockHttp,
   );
+  final supervisorDashboardService = SupervisorDashboardService(
+    workerHost: 'example.com',
+    apiPrefix: '/api',
+    client: mockHttp,
+  );
 
   return MaterialApp(
     home: Builder(
@@ -127,6 +134,7 @@ Widget _buildHostApp({required HistoryHintLoader hintLoader}) {
                     nativeLang: null,
                     resumeState: null,
                     resumeStateService: resumeService,
+                    supervisorDashboardService: supervisorDashboardService,
                     supervisorLinkService: supervisorService,
                     hintLoader: hintLoader,
                     onApplyUserId: (_, __) async {},

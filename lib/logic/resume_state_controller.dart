@@ -16,7 +16,10 @@ class ResumeStateController {
   Future<ResumeState?> fetchAndSet(String userId) async {
     if (userId.isEmpty) return null;
     final fetched = await service.fetch(userId: userId);
-    if (fetched == null || fetched.entries.isEmpty) return null;
+    if (fetched == null ||
+        (fetched.entries.isEmpty && !fetched.hasLanguagePreferences)) {
+      return null;
+    }
     state = fetched;
     return fetched;
   }
@@ -45,7 +48,41 @@ class ResumeStateController {
       }
     }
     if (!replaced) updated.add(entry);
-    final next = ResumeState(userId: userId, entries: updated);
+    final next = existing.copyWith(
+      userId: userId,
+      entries: updated,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    state = next;
+    await service.push(userId: userId, state: next);
+  }
+
+  Future<void> pushLanguagePreferences({
+    required String userId,
+    required String lang,
+    required String? nativeLang,
+    required String? startKey,
+    required String? moduleRowId,
+    required String? moduleMode,
+    bool fetchExisting = true,
+  }) async {
+    if (userId.isEmpty || lang.trim().isEmpty) return;
+    final existing = state ??
+        (fetchExisting ? await service.fetch(userId: userId) : null) ??
+        ResumeState(userId: userId, entries: []);
+    final next = existing.copyWith(
+      userId: userId,
+      lastLang: lang.trim().toLowerCase(),
+      lastNativeLang: nativeLang?.trim().isEmpty == true
+          ? null
+          : nativeLang?.trim().toLowerCase(),
+      lastStartKey: startKey?.trim().isEmpty == true ? null : startKey?.trim(),
+      lastModuleRowId:
+          moduleRowId?.trim().isEmpty == true ? null : moduleRowId?.trim(),
+      lastModuleMode:
+          moduleMode?.trim().isEmpty == true ? null : moduleMode?.trim(),
+      updatedAt: DateTime.now().toUtc(),
+    );
     state = next;
     await service.push(userId: userId, state: next);
   }
@@ -58,8 +95,6 @@ class ResumeStateController {
     final entry = entryForStartKey(startKey);
     if (entry == null) return null;
     if (entry.cursor < 0) return null;
-    if (entry.lang != lang) return null;
-    if ((entry.nativeLang ?? '') != (nativeLang ?? '')) return null;
     return entry.cursor;
   }
 }

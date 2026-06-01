@@ -57,15 +57,34 @@ class ResumeStateEntry {
 class ResumeState {
   final String userId;
   final List<ResumeStateEntry> entries;
+  final String? lastLang;
+  final String? lastNativeLang;
+  final String? lastStartKey;
+  final String? lastModuleRowId;
+  final String? lastModuleMode;
+  final DateTime? updatedAt;
 
   ResumeState({
     required this.userId,
     required this.entries,
+    this.lastLang,
+    this.lastNativeLang,
+    this.lastStartKey,
+    this.lastModuleRowId,
+    this.lastModuleMode,
+    this.updatedAt,
   });
 
   Map<String, dynamic> toJson() => {
         'userId': userId,
         'entries': entries.map((e) => e.toJson()).toList(),
+        if (lastLang != null) 'lastLang': lastLang,
+        if (lastNativeLang != null) 'lastNativeLang': lastNativeLang,
+        if (lastStartKey != null) 'lastStartKey': lastStartKey,
+        if (lastModuleRowId != null) 'lastModuleRowId': lastModuleRowId,
+        if (lastModuleMode != null) 'lastModuleMode': lastModuleMode,
+        if (updatedAt != null)
+          'updatedAt': updatedAt!.toUtc().toIso8601String(),
       };
 
   factory ResumeState.fromJson(Map<String, dynamic> json) {
@@ -82,8 +101,48 @@ class ResumeState {
         }
       }
     }
-    return ResumeState(userId: userId, entries: entries);
+    final rawUpdatedAt = (json['updatedAt'] as String?)?.trim();
+    return ResumeState(
+      userId: userId,
+      entries: entries,
+      lastLang: _clean(json['lastLang']),
+      lastNativeLang: _clean(json['lastNativeLang']),
+      lastStartKey: _clean(json['lastStartKey']),
+      lastModuleRowId: _clean(json['lastModuleRowId']),
+      lastModuleMode: _clean(json['lastModuleMode']),
+      updatedAt: rawUpdatedAt != null ? DateTime.tryParse(rawUpdatedAt) : null,
+    );
   }
+
+  static String? _clean(Object? value) {
+    final text = (value as String?)?.trim();
+    return text == null || text.isEmpty ? null : text;
+  }
+
+  bool get hasLanguagePreferences =>
+      (lastLang != null && lastLang!.trim().isNotEmpty) ||
+      (lastNativeLang != null && lastNativeLang!.trim().isNotEmpty);
+
+  ResumeState copyWith({
+    String? userId,
+    List<ResumeStateEntry>? entries,
+    String? lastLang,
+    String? lastNativeLang,
+    String? lastStartKey,
+    String? lastModuleRowId,
+    String? lastModuleMode,
+    DateTime? updatedAt,
+  }) =>
+      ResumeState(
+        userId: userId ?? this.userId,
+        entries: entries ?? this.entries,
+        lastLang: lastLang ?? this.lastLang,
+        lastNativeLang: lastNativeLang ?? this.lastNativeLang,
+        lastStartKey: lastStartKey ?? this.lastStartKey,
+        lastModuleRowId: lastModuleRowId ?? this.lastModuleRowId,
+        lastModuleMode: lastModuleMode ?? this.lastModuleMode,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
 
   ResumeStateEntry? mostRecentEntry() {
     if (entries.isEmpty) return null;

@@ -1509,7 +1509,7 @@ const List<_DailywordsModuleRow> _moduleRows = [
     id: 'dailywords',
     sceneAsset: 'assets/icons/module_house.webp',
     startKey: 'start_curriculum_a.json',
-    dialogPath: '/therapy/',
+    dialogSceneId: 'therapy',
   ),
   _DailywordsModuleRow(
     id: 'cafe',

@@ -13,7 +13,7 @@ Finder _buttonForAsset(String assetName) {
 }
 
 void main() {
-  testWidgets('auto-selects the cross module after four seconds of inactivity',
+  testWidgets('auto-selects the cross module after eight seconds of inactivity',
       (tester) async {
     String? selected;
 
@@ -25,7 +25,7 @@ void main() {
       ),
     );
 
-    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(seconds: 7));
     expect(selected, isNull);
 
     await tester.pump(const Duration(seconds: 1));
