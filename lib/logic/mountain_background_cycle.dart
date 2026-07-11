@@ -1,6 +1,4 @@
-import 'package:flutter/foundation.dart' show debugPrint;
-import 'package:flutter/services.dart' show MissingPluginException;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:robulingo_flutter/logic/app_key_value_store.dart';
 
 const List<String> kMountainThemeOrder = <String>[
   'default',
@@ -33,24 +31,10 @@ class MountainThemeCycleStore {
   static String? _fallbackDayKey;
   static int _fallbackThemeIndex = 0;
 
-  Future<SharedPreferences?> _tryGetPrefs() async {
-    try {
-      return await SharedPreferences.getInstance();
-    } on MissingPluginException catch (error, stackTrace) {
-      debugPrint('[mountain-theme][prefs-unavailable] $error');
-      debugPrint('[mountain-theme][stack] $stackTrace');
-      return null;
-    } catch (error, stackTrace) {
-      debugPrint('[mountain-theme][prefs-error] $error');
-      debugPrint('[mountain-theme][stack] $stackTrace');
-      return null;
-    }
-  }
-
   Future<MountainThemeCycleSnapshot> loadForToday({DateTime? now}) async {
     final todayKey = mountainDayKey(now ?? DateTime.now());
-    final prefs = await _tryGetPrefs();
-    if (prefs == null) {
+    final store = await openAppKeyValueStore('mountain-theme', 'load');
+    if (store == null) {
       if (_fallbackDayKey != todayKey) {
         _fallbackDayKey = todayKey;
         _fallbackThemeIndex = 0;
@@ -61,16 +45,16 @@ class MountainThemeCycleStore {
         themeIndex: _fallbackThemeIndex,
       );
     }
-    final storedDay = prefs.getString(_dayStorageKey);
+    final storedDay = store.getString(_dayStorageKey);
     if (storedDay != todayKey) {
-      await prefs.setString(_dayStorageKey, todayKey);
-      await prefs.setInt(_indexStorageKey, 0);
+      await store.setString(_dayStorageKey, todayKey);
+      await store.setInt(_indexStorageKey, 0);
       return MountainThemeCycleSnapshot(dayKey: todayKey, themeIndex: 0);
     }
-    final raw = prefs.getInt(_indexStorageKey) ?? 0;
+    final raw = store.getInt(_indexStorageKey) ?? 0;
     final normalized = _normalizeThemeIndex(raw);
     if (raw != normalized) {
-      await prefs.setInt(_indexStorageKey, normalized);
+      await store.setInt(_indexStorageKey, normalized);
     }
     return MountainThemeCycleSnapshot(
       dayKey: todayKey,
@@ -83,14 +67,14 @@ class MountainThemeCycleStore {
     required int themeIndex,
   }) async {
     final normalized = _normalizeThemeIndex(themeIndex);
-    final prefs = await _tryGetPrefs();
-    if (prefs == null) {
+    final store = await openAppKeyValueStore('mountain-theme', 'save');
+    if (store == null) {
       _fallbackDayKey = dayKey;
       _fallbackThemeIndex = normalized;
       return;
     }
-    await prefs.setString(_dayStorageKey, dayKey);
-    await prefs.setInt(_indexStorageKey, normalized);
+    await store.setString(_dayStorageKey, dayKey);
+    await store.setInt(_indexStorageKey, normalized);
   }
 
   int _normalizeThemeIndex(int index) {

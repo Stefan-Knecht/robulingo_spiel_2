@@ -76,7 +76,6 @@ class DailywordsModuleSelector extends StatefulWidget {
 
 class _DailywordsModuleSelectorState extends State<DailywordsModuleSelector> {
   bool _menuOpen = false;
-  String _inputLanguageMode = 'l2';
   double _speechRate = 1.0;
   Timer? _autoProceedTimer;
   bool _autoProceedCanceled = false;
@@ -229,14 +228,10 @@ class _DailywordsModuleSelectorState extends State<DailywordsModuleSelector> {
               targetLanguageCode: widget.targetLanguageCode,
               nativeLanguageCode: widget.nativeLanguageCode,
               languageCode: l1,
-              inputLanguageMode: _inputLanguageMode,
               speechRate: _speechRate,
               onClose: () => setState(() => _menuOpen = false),
               onTargetLanguageChange: widget.onTargetLanguageChange,
               onNativeLanguageChange: widget.onNativeLanguageChange,
-              onInputLanguageModeChange: (value) {
-                setState(() => _inputLanguageMode = value);
-              },
               onSpeechRateChange: (value) {
                 setState(() => _speechRate = value);
               },
@@ -389,24 +384,20 @@ class _BurgerMenuPanel extends StatelessWidget {
     required this.targetLanguageCode,
     this.nativeLanguageCode,
     required this.languageCode,
-    required this.inputLanguageMode,
     required this.speechRate,
     required this.onClose,
     this.onTargetLanguageChange,
     this.onNativeLanguageChange,
-    required this.onInputLanguageModeChange,
     required this.onSpeechRateChange,
   });
 
   final String targetLanguageCode;
   final String? nativeLanguageCode;
   final String languageCode;
-  final String inputLanguageMode;
   final double speechRate;
   final VoidCallback onClose;
   final void Function(String languageCode)? onTargetLanguageChange;
   final void Function(String languageCode)? onNativeLanguageChange;
-  final void Function(String mode) onInputLanguageModeChange;
   final void Function(double rate) onSpeechRateChange;
 
   @override
@@ -485,29 +476,6 @@ class _BurgerMenuPanel extends StatelessWidget {
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 14),
-                Text(_t(ui, 'input'), style: _menuLabelStyle),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  initialValue: inputLanguageMode,
-                  decoration: _menuInputDecoration(),
-                  items: [
-                    DropdownMenuItem(
-                      value: 'l2',
-                      child:
-                          Text('${langFlags[l2] ?? ''} ${_t(ui, 'l2_direct')}'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'l1',
-                      child: Text(
-                        '${langFlags[l1] ?? ''} ${_t(ui, 'l1_to_l2')}',
-                      ),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) onInputLanguageModeChange(value);
-                  },
                 ),
                 const SizedBox(height: 20),
                 _MenuSectionTitle(_t(ui, 'tempo')),

@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:robulingo_flutter/logic/app_key_value_store.dart';
 
 class LocalProgressSnapshot {
   const LocalProgressSnapshot({
@@ -57,8 +57,9 @@ class LocalProgressStore {
 
   Future<void> save(LocalProgressSnapshot snapshot) async {
     if (!snapshot.isUsable) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
+    final store = await openAppKeyValueStore('local-progress', 'save');
+    if (store == null) return;
+    await store.setString(
       _key(userId: snapshot.userId, startKey: snapshot.startKey),
       jsonEncode(snapshot.toJson()),
     );
@@ -69,9 +70,10 @@ class LocalProgressStore {
     required String startKey,
   }) async {
     if (userId.isEmpty || startKey.isEmpty) return null;
+    final store = await openAppKeyValueStore('local-progress', 'load');
+    if (store == null) return null;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_key(userId: userId, startKey: startKey));
+      final raw = store.getString(_key(userId: userId, startKey: startKey));
       if (raw == null || raw.isEmpty) return null;
       final data = jsonDecode(raw);
       if (data is! Map) return null;
@@ -89,7 +91,8 @@ class LocalProgressStore {
     required String startKey,
   }) async {
     if (userId.isEmpty || startKey.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_key(userId: userId, startKey: startKey));
+    final store = await openAppKeyValueStore('local-progress', 'clear');
+    if (store == null) return;
+    await store.remove(_key(userId: userId, startKey: startKey));
   }
 }
